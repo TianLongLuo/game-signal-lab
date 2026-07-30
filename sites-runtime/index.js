@@ -1933,7 +1933,8 @@ async function serveStatic(request, env, path) {
   let response;
   if (env.ASSETS?.fetch) {
     response = await env.ASSETS.fetch(new Request(target, request));
-  } else {
+  }
+  if (!response || response.status === 404) {
     const asset = EMBEDDED_STATIC_ASSETS?.[target.pathname];
     if (!asset) {
       response = new Response("Not found", { status: 404 });

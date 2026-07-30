@@ -32,3 +32,17 @@ test("built Sites worker serves embedded static assets without an ASSETS binding
   const missing = await worker.fetch(new Request(`${ORIGIN}/missing.txt`), {}, {});
   assert.equal(missing.status, 404);
 });
+
+test("built Sites worker falls back when the production ASSETS binding returns 404", async () => {
+  const env = {
+    ASSETS: {
+      async fetch() {
+        return new Response("asset binding miss", { status: 404 });
+      },
+    },
+  };
+  const home = await worker.fetch(new Request(`${ORIGIN}/`), env, {});
+  assert.equal(home.status, 200);
+  assert.match(home.headers.get("content-type"), /^text\/html/);
+  assert.match(await home.text(), /GAME Signal Lab/);
+});
