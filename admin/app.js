@@ -389,6 +389,8 @@ async function handleLogin(event) {
     const message =
       error instanceof ApiError && error.status === 401
         ? "用户名或密码不正确。"
+        : error instanceof ApiError && error.status === 429
+          ? "登录尝试次数过多，请 15 分钟后再试。"
         : "登录失败，请稍后重试或联系系统管理员。";
     loginMessage.textContent = message;
     document.querySelector("#admin-password").value = "";
