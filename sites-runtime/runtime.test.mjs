@@ -194,6 +194,16 @@ test("health endpoint is available without touching persistent bindings", async 
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
 });
 
+test("password derivation stays within the deployed Sites PBKDF2 limit", async () => {
+  const source = await readFile(new URL("./index.js", import.meta.url), "utf8");
+  const match = source.match(/const PASSWORD_ITERATIONS = ([\d_]+);/);
+  assert.ok(match, "password iteration constant must remain explicit");
+  assert.ok(
+    Number(match[1].replaceAll("_", "")) <= 100_000,
+    "Sites rejects PBKDF2 iteration counts above 100,000"
+  );
+});
+
 test("robots and sitemap use the deployed request origin", async () => {
   const ctx = { waitUntil() {} };
   const robots = await worker.fetch(
