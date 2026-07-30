@@ -1,18 +1,25 @@
-const STORAGE_KEY = "game-signal-lab:v1";
+import {
+  ENGINE_VERSION,
+  analyzeEvent,
+  validateEventInput,
+  validateReviewInput,
+} from "./src/signal-engine.js";
+import {
+  AGE_POLICY_VERSION,
+  MAX_BACKUP_BYTES,
+  MAX_CONTACTS,
+  MAX_EVENTS,
+  STATE_VERSION,
+  createDefaultState,
+  inspectStoredState,
+  parseBackup,
+  toPortableState,
+} from "./src/state-schema.js";
+import { PlatformClient, PlatformError } from "./src/platform-client.js";
 
-const defaultState = {
-  version: 1,
-  adultConfirmed: false,
-  profile: {
-    name: "",
-    goal: "",
-    voice: "natural",
-    boundaries: "",
-    anxiety: "",
-  },
-  contacts: [],
-  events: [],
-};
+const STORAGE_KEY = "game-signal-lab:v2";
+const LEGACY_STORAGE_KEYS = ["game-signal-lab:v1"];
+const defaultState = createDefaultState();
 
 const viewTitles = {
   dashboard: "今日概览",
@@ -22,6 +29,7 @@ const viewTitles = {
   profile: "我的表达",
   privacy: "隐私与数据",
   analysis: "信号分析",
+  agent: "关系思考 Agent",
 };
 
 const signalMeta = {
@@ -51,11 +59,25 @@ const signalMeta = {
   },
 };
 
+let startupWarning = "";
+let storageRecovery = null;
 let state = loadState();
 let currentView = "dashboard";
 let currentEventId = null;
 let reviewEventId = null;
+let preferredContactId = null;
 let toastTimer = null;
+const platformClient = new PlatformClient();
+const platform = {
+  available: null,
+  user: null,
+  membership: null,
+  externalAiConsent: null,
+  capabilities: null,
+  agentMessages: [],
+  agentBusy: false,
+  agentController: null,
+};
 
 const appShell = document.querySelector("#app-shell");
 const main = document.querySelector("#main-content");
@@ -65,6 +87,8 @@ const enterApp = document.querySelector("#enter-app");
 const toast = document.querySelector("#toast");
 const sidebar = document.querySelector(".sidebar");
 const mobileMenu = document.querySelector("#mobile-menu");
+const sidebarScrim = document.querySelector("#sidebar-scrim");
+const workspace = document.querySelector(".workspace");
 
 init();
 
@@ -72,17 +96,34 @@ function init() {
   appShell.classList.add("is-ready");
   syncProfileAvatar();
   bindGlobalEvents();
+  setMobileMenu(false);
   renderCurrentView();
+  void refreshPlatformSession();
 
-  if (!state.adultConfirmed) {
-    appShell.setAttribute("aria-hidden", "true");
+  const hasCurrentAdultConsent =
+    state.adultConfirmed && state.agePolicyVersion === AGE_POLICY_VERSION;
+  if (!hasCurrentAdultConsent) {
+    state.adultConfirmed = false;
+    setAppAvailability(false);
     ageGate.showModal();
   } else {
-    appShell.setAttribute("aria-hidden", "false");
+    setAppAvailability(true);
+  }
+
+  if (startupWarning) {
+    requestAnimationFrame(() => showToast(startupWarning, 5200));
   }
 }
 
 function bindGlobalEvents() {
+  ageGate.addEventListener("cancel", (event) => {
+    event.preventDefault();
+  });
+
+  ageGate.addEventListener("close", () => {
+    if (!state.adultConfirmed && !ageGate.open) ageGate.showModal();
+  });
+
   adultCheck.addEventListener("change", () => {
     enterApp.disabled = !adultCheck.checked;
   });
@@ -90,20 +131,28 @@ function bindGlobalEvents() {
   enterApp.addEventListener("click", () => {
     if (!adultCheck.checked) return;
     state.adultConfirmed = true;
-    saveState();
+    state.adultConfirmedAt = new Date().toISOString();
+    state.agePolicyVersion = AGE_POLICY_VERSION;
+    persistCurrentState();
     ageGate.close();
-    appShell.setAttribute("aria-hidden", "false");
+    setAppAvailability(true);
     main.focus();
   });
 
   mobileMenu.addEventListener("click", () => {
-    const isOpen = sidebar.classList.toggle("is-open");
-    mobileMenu.setAttribute("aria-expanded", String(isOpen));
+    setMobileMenu(!sidebar.classList.contains("is-open"));
   });
+
+  sidebarScrim.addEventListener("click", () => setMobileMenu(false, true));
+  window.addEventListener("resize", () => setMobileMenu(false));
 
   document.addEventListener("click", async (event) => {
     const viewButton = event.target.closest("[data-view]");
     if (viewButton) {
+      preferredContactId =
+        viewButton.dataset.view === "new-event" && viewButton.dataset.contactId
+          ? viewButton.dataset.contactId
+          : preferredContactId;
       navigate(viewButton.dataset.view);
       return;
     }
@@ -127,35 +176,103 @@ function bindGlobalEvents() {
       currentView = "review";
       renderCurrentView();
       requestAnimationFrame(() => {
-        document.querySelector("#review-form")?.scrollIntoView({ behavior: "smooth", block: "center" });
+        const title = document.querySelector("#review-form-title");
+        title?.scrollIntoView({ behavior: "smooth", block: "center" });
+        title?.focus({ preventScroll: true });
       });
     }
 
     if (actionName === "cancel-review") {
+      const eventId = reviewEventId;
       reviewEventId = null;
       renderCurrentView();
+      requestAnimationFrame(() => {
+        document
+          .querySelector(`[data-action="open-review"][data-event-id="${cssEscape(eventId)}"]`)
+          ?.focus();
+      });
     }
 
     if (actionName === "copy-response") {
       const text = action.dataset.text || "";
-      try {
-        await navigator.clipboard.writeText(text);
-        showToast("回应选项已复制");
-      } catch {
-        showToast("浏览器未允许自动复制，请手动选择文字");
-      }
+      await copyText(text);
     }
 
     if (actionName === "export-data") {
       exportData();
     }
 
+    if (actionName === "export-recovery-data") {
+      exportRecoveryData();
+    }
+
     if (actionName === "clear-data") {
       clearData();
     }
+
+    if (actionName === "delete-event") {
+      deleteEvent(action.dataset.eventId);
+    }
+
+    if (actionName === "delete-contact") {
+      deleteContact(action.dataset.contactId);
+    }
+
+    if (actionName === "import-data") {
+      document.querySelector("#data-import")?.click();
+    }
+
+    if (actionName === "platform-logout") {
+      await logoutPlatform();
+    }
+
+    if (actionName === "clear-agent-chat") {
+      platform.agentMessages = [];
+      renderCurrentView();
+      requestAnimationFrame(() => document.querySelector("#agent-prompt")?.focus());
+    }
+
+    if (actionName === "cancel-agent") {
+      platform.agentController?.abort();
+    }
+
+    if (actionName === "refresh-platform") {
+      await refreshPlatformSession();
+      showToast("账户与 Agent 授权状态已刷新");
+    }
+
+    if (actionName === "revoke-ai-consent") {
+      const confirmed = window.confirm(
+        "撤回后，新的 Agent 请求会被服务端拒绝；本地关系记录不会被删除。是否继续？"
+      );
+      if (confirmed) await updateExternalAiConsent(false);
+    }
+
+    if (actionName === "agent-starter") {
+      const prompt = document.querySelector("#agent-prompt");
+      if (prompt) {
+        prompt.value = action.dataset.prompt || "";
+        prompt.focus();
+      }
+    }
   });
 
-  document.addEventListener("submit", (event) => {
+  document.addEventListener("change", async (event) => {
+    if (event.target.matches("#data-import")) {
+      const [file] = event.target.files || [];
+      if (file) await importData(file);
+      event.target.value = "";
+      return;
+    }
+
+    if (event.target.matches("#event-contact")) {
+      const contact = getContact(event.target.value);
+      const stage = document.querySelector("#event-stage");
+      if (contact && stage) stage.value = contact.stage;
+    }
+  });
+
+  document.addEventListener("submit", async (event) => {
     if (event.target.matches("#profile-form")) {
       event.preventDefault();
       saveProfile(new FormData(event.target));
@@ -163,7 +280,7 @@ function bindGlobalEvents() {
 
     if (event.target.matches("#contact-form")) {
       event.preventDefault();
-      createContact(new FormData(event.target));
+      createContact(event.target, new FormData(event.target));
     }
 
     if (event.target.matches("#event-form")) {
@@ -173,15 +290,38 @@ function bindGlobalEvents() {
 
     if (event.target.matches("#review-form")) {
       event.preventDefault();
-      saveReview(new FormData(event.target));
+      saveReview(event.target, new FormData(event.target));
+    }
+
+    if (event.target.matches("#platform-login-form")) {
+      event.preventDefault();
+      await authenticatePlatform(event.target, "login");
+    }
+
+    if (event.target.matches("#platform-register-form")) {
+      event.preventDefault();
+      await authenticatePlatform(event.target, "register");
+    }
+
+    if (event.target.matches("#agent-form")) {
+      event.preventDefault();
+      await submitAgentPrompt(event.target, new FormData(event.target));
+    }
+
+    if (event.target.matches("#external-ai-consent-form")) {
+      event.preventDefault();
+      const formData = new FormData(event.target);
+      await updateExternalAiConsent(
+        formData.get("accepted") === "on",
+        String(formData.get("policyVersion") || ""),
+        event.target
+      );
     }
   });
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && sidebar.classList.contains("is-open")) {
-      sidebar.classList.remove("is-open");
-      mobileMenu.setAttribute("aria-expanded", "false");
-      mobileMenu.focus();
+      setMobileMenu(false, true);
     }
   });
 }
@@ -191,11 +331,45 @@ function navigate(view) {
   currentView = view;
   if (view !== "analysis") currentEventId = null;
   if (view !== "review") reviewEventId = null;
-  sidebar.classList.remove("is-open");
-  mobileMenu.setAttribute("aria-expanded", "false");
+  setMobileMenu(false);
   renderCurrentView();
   window.scrollTo({ top: 0, behavior: "smooth" });
   requestAnimationFrame(() => main.focus({ preventScroll: true }));
+}
+
+function setAppAvailability(available) {
+  appShell.setAttribute("aria-hidden", String(!available));
+  if (available) appShell.removeAttribute("inert");
+  else appShell.setAttribute("inert", "");
+}
+
+function setMobileMenu(open, restoreFocus = false) {
+  const isMobile = window.matchMedia("(max-width: 980px)").matches;
+  if (!isMobile) open = false;
+  sidebar.classList.toggle("is-open", open);
+  sidebarScrim.hidden = !open;
+  mobileMenu.setAttribute("aria-expanded", String(open));
+  mobileMenu.setAttribute("aria-label", open ? "关闭导航" : "打开导航");
+  document.body.classList.toggle("menu-open", open);
+
+  if (isMobile && !open) {
+    sidebar.setAttribute("aria-hidden", "true");
+    sidebar.setAttribute("inert", "");
+  } else {
+    sidebar.removeAttribute("aria-hidden");
+    sidebar.removeAttribute("inert");
+  }
+
+  if (isMobile && open) {
+    workspace.setAttribute("aria-hidden", "true");
+    workspace.setAttribute("inert", "");
+    requestAnimationFrame(() => sidebar.querySelector("button")?.focus());
+  } else {
+    workspace.removeAttribute("aria-hidden");
+    workspace.removeAttribute("inert");
+  }
+
+  if (!open && restoreFocus) mobileMenu.focus();
 }
 
 function renderCurrentView() {
@@ -220,6 +394,9 @@ function renderCurrentView() {
     case "analysis":
       main.innerHTML = renderAnalysis(currentEventId);
       break;
+    case "agent":
+      main.innerHTML = renderAgent();
+      break;
     default:
       main.innerHTML = renderDashboard();
   }
@@ -227,25 +404,482 @@ function renderCurrentView() {
 
 function updateNavigation() {
   document.querySelector("#topbar-title").textContent = viewTitles[currentView] || "Signal Lab";
+  document.title = `${viewTitles[currentView] || "Signal Lab"} · GAME`;
   document.querySelectorAll(".nav-item[data-view]").forEach((item) => {
-    item.classList.toggle("is-active", item.dataset.view === currentView);
+    const isCurrent = item.dataset.view === currentView;
+    item.classList.toggle("is-active", isCurrent);
+    if (isCurrent) item.setAttribute("aria-current", "page");
+    else item.removeAttribute("aria-current");
   });
+}
+
+async function refreshPlatformSession() {
+  if (window.__GAME_RUNTIME__?.apiEnabled !== true) {
+    platform.available = false;
+    platform.user = null;
+    platform.membership = null;
+    platform.externalAiConsent = null;
+    platform.capabilities = null;
+    syncPlatformStatus();
+    if (currentView === "agent") renderCurrentView();
+    return;
+  }
+  try {
+    const payload = await platformClient.me();
+    platform.available = true;
+    platform.user = payload.user || null;
+    platform.membership = payload.membership || null;
+    platform.externalAiConsent = payload.externalAiConsent || null;
+    platform.capabilities = payload.capabilities || null;
+  } catch (error) {
+    if (error instanceof PlatformError && error.status === 401) {
+      platform.available = true;
+      platform.user = null;
+      platform.membership = null;
+      platform.externalAiConsent = null;
+      platform.capabilities = null;
+    } else {
+      platform.available = false;
+      platform.user = null;
+      platform.membership = null;
+      platform.externalAiConsent = null;
+      platform.capabilities = null;
+    }
+  }
+  syncPlatformStatus();
+  if (currentView === "agent") renderCurrentView();
+}
+
+function syncPlatformStatus() {
+  const status = document.querySelector("#platform-status");
+  if (!status) return;
+  if (platform.user) {
+    status.textContent = `${platform.user.username} · ${
+      platform.membership?.plan === "member" ? "会员" : "账户"
+    }`;
+    status.classList.add("is-online");
+  } else if (platform.available === false) {
+    status.textContent = "本地模式";
+    status.classList.remove("is-online");
+  } else {
+    status.textContent = "登录 Agent";
+    status.classList.remove("is-online");
+  }
+}
+
+function renderAgent() {
+  if (platform.available === null) {
+    return `
+      <div class="page">
+        ${pageHeading("关系思考 Agent", "正在确认服务状态。", "你的本地关系记录不会在后台自动上传。")}
+        <section class="panel agent-loading" aria-live="polite">正在连接同源服务…</section>
+      </div>
+    `;
+  }
+
+  if (!platform.user) return renderAgentAuth();
+
+  if (!platform.externalAiConsent?.current) return renderExternalAiConsent();
+
+  if (!platform.capabilities?.agent) return renderAgentAccessPending();
+
+  const messages = platform.agentMessages.length
+    ? platform.agentMessages.map(renderAgentMessage).join("")
+    : `
+      <div class="agent-empty">
+        <p class="eyebrow">Editorial prompt desk</p>
+        <h2>先把问题写清楚，<br />再寻找行动。</h2>
+        <p>Agent 适合帮你区分事实、解释与边界。它不会读取本地事件，也不会替你判断另一个人的内心。</p>
+        <div class="agent-starters">
+          <button type="button" data-action="agent-starter" data-prompt="帮我把一段关系困惑拆成：事实、我的解释、还缺什么信息。">拆分事实与解释</button>
+          <button type="button" data-action="agent-starter" data-prompt="请帮我写一个低压力、允许对方自由拒绝的邀约。">准备低压力表达</button>
+          <button type="button" data-action="agent-starter" data-prompt="我收到一个边界信号，请帮我判断现在应当停止、降级还是直接沟通确认。">检查边界信号</button>
+        </div>
+      </div>
+    `;
+
+  return `
+    <div class="page agent-page">
+      <header class="agent-masthead">
+        <div>
+          <p class="eyebrow">GAME · FIELD NOTES / AI</p>
+          <h1>关系思考<br /><em>Agent</em></h1>
+        </div>
+        <div class="agent-account">
+          <span>已登录</span>
+          <strong>${escapeHTML(platform.user.username)}</strong>
+          <small>${escapeHTML(membershipLabel(platform.membership))}</small>
+          <button class="text-button" type="button" data-action="revoke-ai-consent">撤回 AI 同意</button>
+          <button class="text-button" type="button" data-action="platform-logout">退出账户</button>
+        </div>
+      </header>
+
+      <div class="agent-layout">
+        <section class="agent-thread" aria-label="Agent 对话">
+          <div class="agent-thread-head">
+            <span>VOL. 01 · 当前会话</span>
+            <button class="text-button" type="button" data-action="clear-agent-chat" ${
+              platform.agentBusy ? "disabled" : ""
+            }>清空临时会话</button>
+          </div>
+          <div class="agent-messages" id="agent-messages" aria-live="polite">
+            ${messages}
+          </div>
+        </section>
+
+        <aside class="agent-compose">
+          <p class="eyebrow">给 Agent 的编辑笺</p>
+          <h2>写下你真正想弄清楚的事。</h2>
+          <form id="agent-form">
+            <label class="visually-hidden" for="agent-prompt">发送给关系思考 Agent 的内容</label>
+            <textarea
+              id="agent-prompt"
+              name="prompt"
+              maxlength="4000"
+              placeholder="只写必要信息；请用代号，不要粘贴姓名、地址、账号或完整聊天记录。"
+              required
+              ${platform.agentBusy ? "disabled" : ""}
+            ></textarea>
+            <p class="form-error" id="agent-error" role="alert" aria-live="assertive"></p>
+            <div class="button-row">
+              <button class="button button--primary" type="submit" ${platform.agentBusy ? "disabled" : ""}>
+                开始流式思考
+              </button>
+              ${
+                platform.agentBusy
+                  ? '<button class="button button--quiet" type="button" data-action="cancel-agent">停止生成</button>'
+                  : ""
+              }
+            </div>
+          </form>
+          <p class="agent-privacy-note">
+            明示发送的内容会由服务器转交 DeepSeek；服务端不保存提示词或回复正文。账号、授权和调用结果元数据会进入安全审计。
+          </p>
+        </aside>
+      </div>
+    </div>
+  `;
+}
+
+function renderExternalAiConsent() {
+  const policyVersion =
+    platform.externalAiConsent?.policyVersion || "current";
+  return `
+    <div class="page">
+      <header class="auth-masthead">
+        <p class="eyebrow">EXTERNAL AI · CONSENT NOTE</p>
+        <h1>发送之前，<br /><em>先把数据去向说清楚。</em></h1>
+        <p>本地日记不会自动上传。只有你在 Agent 输入框中明确发送的文字会由 GAME 服务端转交 DeepSeek 生成回应。</p>
+      </header>
+      <div class="consent-layout">
+        <section>
+          <p class="eyebrow">处理说明 · ${escapeHTML(policyVersion)}</p>
+          <h2>这项同意与会员资格分开。</h2>
+          <ul>
+            <li>请只使用代号和最少必要上下文，不发送姓名、账号、地址、定位或完整聊天记录。</li>
+            <li>GAME 服务端不保存提示词和模型回复正文；会保留调用结果等最小安全审计元数据。</li>
+            <li>DeepSeek 作为外部模型提供方会接收你明确发送的文字；其处理受相应服务政策约束。</li>
+            <li>你可以随时撤回。撤回后新的 Agent 请求会被服务端拒绝，本地日记不受影响。</li>
+          </ul>
+        </section>
+        <form id="external-ai-consent-form">
+          <input type="hidden" name="policyVersion" value="${escapeAttribute(policyVersion)}" />
+          <label class="check-row consent-check">
+            <input type="checkbox" name="accepted" required />
+            <span>我已阅读并同意将我主动发送的 Agent 文字交给 DeepSeek 处理。</span>
+          </label>
+          <p class="form-error" data-consent-error role="alert" aria-live="assertive"></p>
+          <button class="button button--primary" type="submit">同意并继续</button>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function renderAgentAccessPending() {
+  return `
+    <div class="page">
+      <header class="auth-masthead">
+        <p class="eyebrow">MEMBERSHIP · ACCESS</p>
+        <h1>账户已准备，<br /><em>Agent 尚未开放。</em></h1>
+        <p>管理员需要同时启用全局 Agent 服务、有效会员资格与此账户的单独授权。当前状态不会影响本地关系记录。</p>
+      </header>
+      <section class="privacy-spread">
+        <p class="eyebrow">ACCOUNT NOTE</p>
+        <h2>${escapeHTML(platform.user.username)}</h2>
+        <div>
+          <p><strong>会员状态</strong> — ${escapeHTML(membershipLabel(platform.membership))}</p>
+          <p><strong>外部 AI 同意</strong> — 已确认，可随时撤回。</p>
+          <div class="button-row">
+            <button class="button button--quiet" type="button" data-action="refresh-platform">刷新授权</button>
+            <button class="text-button" type="button" data-action="revoke-ai-consent">撤回外部 AI 同意</button>
+            <button class="text-button" type="button" data-action="platform-logout">退出账户</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderAgentAuth() {
+  const serviceNote =
+    platform.available === false
+      ? "当前以纯静态方式打开，账号服务不可用；本地记录功能仍可正常使用。请通过 Node 服务启动后再登录。"
+      : "登录后才会向后台发送账号操作。你的本地档案、事件与复盘不会自动同步。";
+  return `
+    <div class="page">
+      <header class="auth-masthead">
+        <p class="eyebrow">GAME · MEMBERS' EDITION</p>
+        <h1>把不确定写成<br /><em>可以讨论的问题。</em></h1>
+        <p>${serviceNote}</p>
+      </header>
+
+      <div class="auth-grid">
+        <form class="auth-panel" id="platform-login-form">
+          <span class="editorial-number">01</span>
+          <p class="eyebrow">已有账户</p>
+          <h2>登录 Agent</h2>
+          ${authFields("login")}
+          <p class="form-error" data-auth-error role="alert" aria-live="assertive"></p>
+          <button class="button button--primary" type="submit" ${
+            platform.available === false ? "disabled" : ""
+          }>登录</button>
+        </form>
+
+        <form class="auth-panel auth-panel--ink" id="platform-register-form">
+          <span class="editorial-number">02</span>
+          <p class="eyebrow">创建账户</p>
+          <h2>从一页空白开始</h2>
+          ${authFields("register")}
+          <p class="form-error" data-auth-error role="alert" aria-live="assertive"></p>
+          <button class="button button--light" type="submit" ${
+            platform.available === false ? "disabled" : ""
+          }>注册并登录</button>
+        </form>
+      </div>
+
+      <section class="privacy-spread">
+        <p class="eyebrow">DATA NOTE</p>
+        <h2>两个空间，清楚分开。</h2>
+        <div>
+          <p><strong>本地日记</strong> — 匿名档案、事件、分析和复盘保留在浏览器里。</p>
+          <p><strong>显式 Agent 对话</strong> — 只有你按下发送的内容才进入模型请求，且服务端不保存正文。</p>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function authFields(prefix) {
+  return `
+    <div class="field">
+      <label for="${prefix}-username">用户名</label>
+      <input
+        id="${prefix}-username"
+        name="username"
+        minlength="3"
+        maxlength="40"
+        autocomplete="username"
+        autocapitalize="none"
+        spellcheck="false"
+        required
+      />
+    </div>
+    <div class="field">
+      <label for="${prefix}-password">密码</label>
+      <input
+        id="${prefix}-password"
+        name="password"
+        type="password"
+        minlength="12"
+        maxlength="128"
+        autocomplete="${prefix === "register" ? "new-password" : "current-password"}"
+        required
+      />
+      <small>至少 12 个字符；密码只提交给同源服务。</small>
+    </div>
+  `;
+}
+
+function renderAgentMessage(message, index) {
+  const assistant = message.role === "assistant";
+  return `
+    <article class="agent-message agent-message--${assistant ? "assistant" : "user"}">
+      <header>
+        <span>${assistant ? "GAME / AGENT" : "YOU / NOTE"}</span>
+        <small>${String(index + 1).padStart(2, "0")}</small>
+      </header>
+      <p ${assistant && index === platform.agentMessages.length - 1 ? 'id="agent-response-last"' : ""}>${
+        message.content ? escapeHTML(message.content) : "正在组织回应…"
+      }</p>
+    </article>
+  `;
+}
+
+function membershipLabel(membership) {
+  if (!membership) return "未读取会员状态";
+  const plan = membership.plan === "member" ? "会员" : "普通账户";
+  const status = membership.status === "active" ? "有效" : membership.status || "未知";
+  return `${plan} · ${status}`;
+}
+
+async function authenticatePlatform(form, mode) {
+  const errorNode = form.querySelector("[data-auth-error]");
+  const submit = form.querySelector('button[type="submit"]');
+  errorNode.textContent = "";
+  submit.disabled = true;
+  const formData = new FormData(form);
+  const username = clean(formData.get("username"));
+  const password = String(formData.get("password") || "");
+
+  try {
+    const payload =
+      mode === "register"
+        ? await platformClient.register(username, password)
+        : await platformClient.login(username, password);
+    platform.available = true;
+    platform.user = payload.user;
+    platform.membership = payload.membership;
+    await refreshPlatformSession();
+    syncPlatformStatus();
+    showToast(mode === "register" ? "账户已创建并安全登录" : "已登录关系思考 Agent");
+    requestAnimationFrame(() => document.querySelector("#agent-prompt")?.focus());
+  } catch (error) {
+    errorNode.textContent =
+      error instanceof PlatformError ? error.message : "登录请求未完成，请稍后重试。";
+    submit.disabled = false;
+  }
+}
+
+async function logoutPlatform() {
+  try {
+    await platformClient.logout();
+  } catch (error) {
+    if (!(error instanceof PlatformError && error.status === 401)) {
+      showToast(error instanceof Error ? error.message : "退出未完成", 4200);
+      return;
+    }
+  }
+  platform.user = null;
+  platform.membership = null;
+  platform.externalAiConsent = null;
+  platform.capabilities = null;
+  platform.agentMessages = [];
+  platform.agentController?.abort();
+  platform.agentBusy = false;
+  syncPlatformStatus();
+  renderCurrentView();
+  showToast("已退出账户；本地关系记录未受影响");
+}
+
+async function updateExternalAiConsent(accepted, policyVersion = "", form = null) {
+  const errorNode = form?.querySelector("[data-consent-error]");
+  const submit = form?.querySelector('button[type="submit"]');
+  if (errorNode) errorNode.textContent = "";
+  if (submit) submit.disabled = true;
+  try {
+    await platformClient.setExternalAiConsent(accepted, policyVersion);
+    await refreshPlatformSession();
+    showToast(accepted ? "外部 AI 处理同意已记录" : "外部 AI 处理同意已撤回");
+  } catch (error) {
+    const message =
+      error instanceof PlatformError ? error.message : "同意状态未能更新，请稍后重试。";
+    if (errorNode) {
+      errorNode.textContent = message;
+      submit.disabled = false;
+    } else {
+      showToast(message, 4600);
+    }
+  }
+}
+
+async function submitAgentPrompt(form, formData) {
+  if (!platform.user || platform.agentBusy) return;
+  const prompt = clean(formData.get("prompt"));
+  const errorNode = form.querySelector("#agent-error");
+  if (!prompt) {
+    errorNode.textContent = "请先写下一个想讨论的问题。";
+    return;
+  }
+
+  const conversation = [
+    ...platform.agentMessages,
+    { role: "user", content: prompt },
+  ]
+    .filter((message) => message.content)
+    .slice(-12)
+    .map(({ role, content }) => ({ role, content: content.slice(0, 12000) }));
+
+  platform.agentMessages.push({ role: "user", content: prompt });
+  platform.agentMessages.push({ role: "assistant", content: "" });
+  platform.agentMessages = platform.agentMessages.slice(-14);
+  platform.agentBusy = true;
+  platform.agentController = new AbortController();
+  renderCurrentView();
+  requestAnimationFrame(() => {
+    document.querySelector("#agent-response-last")?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  });
+
+  try {
+    const complete = await platformClient.streamAgent(conversation, {
+      signal: platform.agentController.signal,
+      onText(_chunk, fullText) {
+        const target = platform.agentMessages.at(-1);
+        if (target?.role === "assistant") target.content = fullText.slice(0, 20000);
+        const node = document.querySelector("#agent-response-last");
+        if (node) node.textContent = target?.content || "";
+      },
+    });
+    const target = platform.agentMessages.at(-1);
+    if (target?.role === "assistant" && !target.content) {
+      target.content = complete || "这次没有收到可显示的文本，请稍后再试。";
+    }
+  } catch (error) {
+    const target = platform.agentMessages.at(-1);
+    if (target?.role === "assistant") {
+      target.content =
+        error?.name === "AbortError"
+          ? "生成已由你停止。"
+          : error instanceof PlatformError
+            ? error.message
+            : "这次回应没有完成，请稍后重试。";
+    }
+  } finally {
+    platform.agentBusy = false;
+    platform.agentController = null;
+    renderCurrentView();
+    requestAnimationFrame(() => {
+      document.querySelector("#agent-response-last")?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+      document.querySelector("#agent-prompt")?.focus({ preventScroll: true });
+    });
+  }
 }
 
 function renderDashboard() {
   const completedReviews = state.events.filter((item) => item.review?.result).length;
-  const strongSignals = state.events.filter((item) => item.analysis.strength === "strong").length;
+  const boundaryFirstEvents = state.events.filter((item) =>
+    ["deescalate", "stop"].includes(item.analysis.actionPolicy)
+  ).length;
   const latestEvents = [...state.events]
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .slice(0, 4);
-  const greeting = state.profile.name ? `${escapeHTML(state.profile.name)}，` : "";
+  const heroTitle = state.profile.name
+    ? `${escapeHTML(state.profile.name)}，<br />先写下发生了什么。`
+    : "先写下<br />发生了什么。";
 
   return `
     <div class="page">
+      ${renderStorageRecoveryNotice()}
       <section class="hero-grid">
         <article class="hero-card">
           <p class="eyebrow">从混乱走向清晰</p>
-          <h2>${greeting}先写下发生了什么。</h2>
+          <h1>${heroTitle}</h1>
           <p>把事实与猜测分开，再决定要不要行动。明确表达和真实反馈，始终比任何信号推断更可靠。</p>
           <button class="button" data-view="new-event">
             记录一件互动
@@ -272,9 +906,9 @@ function renderDashboard() {
           <small>真实反馈会修正原来的判断</small>
         </article>
         <article class="metric-card">
-          <span>强信号记录</span>
-          <strong>${strongSignals.toString().padStart(2, "0")}</strong>
-          <small>仍需以对方明确表达为准</small>
+          <span>边界优先提醒</span>
+          <strong>${boundaryFirstEvents.toString().padStart(2, "0")}</strong>
+          <small>回避、拒绝和不舒服不会被积极信号覆盖</small>
         </article>
       </section>
 
@@ -313,7 +947,7 @@ function renderEventCard(item) {
   const contact = getContact(item.contactId);
   const signal = signalMeta[item.analysis.strength] || signalMeta.weak;
   return `
-    <button class="event-card" data-action="open-analysis" data-event-id="${item.id}">
+    <button class="event-card" data-action="open-analysis" data-event-id="${escapeAttribute(item.id)}">
       <span class="signal-pill signal-pill--${signal.className}">${signal.short}</span>
       <span class="event-copy">
         <strong>${escapeHTML(contact?.alias || "已删除档案")} · ${escapeHTML(item.scene || item.stage)}</strong>
@@ -344,12 +978,20 @@ function renderNewEvent() {
     `;
   }
 
+  const selectedContact =
+    state.contacts.find((item) => item.id === preferredContactId) || state.contacts[0];
+  preferredContactId = selectedContact.id;
   const contactOptions = state.contacts
-    .map((item) => `<option value="${item.id}">${escapeHTML(item.alias)} · ${escapeHTML(item.stage)}</option>`)
+    .map(
+      (item) =>
+        `<option value="${escapeAttribute(item.id)}" ${item.id === selectedContact.id ? "selected" : ""}>${escapeHTML(item.alias)} · ${escapeHTML(item.stage)}</option>`
+    )
     .join("");
+  const stages = ["刚认识", "持续了解", "第一次见面", "约会中", "稳定交往", "关系降温", "关系结束"];
 
   return `
     <div class="page">
+      ${renderStorageRecoveryNotice()}
       ${pageHeading(
         "记录事件",
         "把观察与解释分开。",
@@ -373,18 +1015,23 @@ function renderNewEvent() {
               <div class="field">
                 <label for="event-stage">互动阶段</label>
                 <select id="event-stage" name="stage" required>
-                  <option>刚认识</option>
-                  <option>持续了解</option>
-                  <option>第一次见面</option>
-                  <option>约会中</option>
-                  <option>稳定交往</option>
-                  <option>关系降温</option>
-                  <option>关系结束</option>
+                  ${stages
+                    .map(
+                      (stage) =>
+                        `<option ${stage === selectedContact.stage ? "selected" : ""}>${stage}</option>`
+                    )
+                    .join("")}
                 </select>
               </div>
               <div class="field">
                 <label for="event-scene">场景</label>
-                <input id="event-scene" name="scene" placeholder="例如：咖啡店见面后 / 微信聊天" required />
+                <input
+                  id="event-scene"
+                  name="scene"
+                  placeholder="例如：咖啡店见面后 / 微信聊天"
+                  maxlength="200"
+                  required
+                />
               </div>
             </div>
           </div>
@@ -395,25 +1042,47 @@ function renderNewEvent() {
             <div class="form-grid">
               <div class="field field--full">
                 <label for="event-fact">观察到的事实</label>
-                <textarea id="event-fact" name="fact" placeholder="尽量记录原话、行为、时间与上下文，不写结论。" required></textarea>
+                <textarea
+                  id="event-fact"
+                  name="fact"
+                  placeholder="尽量记录原话、行为、时间与上下文，不写结论。"
+                  maxlength="2000"
+                  required
+                ></textarea>
               </div>
               <div class="field field--full">
                 <label for="event-interpretation">你当时的解释</label>
-                <textarea id="event-interpretation" name="interpretation" placeholder="你认为这件事可能意味着什么？" required></textarea>
+                <textarea
+                  id="event-interpretation"
+                  name="interpretation"
+                  placeholder="你认为这件事可能意味着什么？"
+                  maxlength="1000"
+                  required
+                ></textarea>
               </div>
               <div class="field">
                 <label for="event-feeling">当时的感受</label>
-                <input id="event-feeling" name="feeling" placeholder="例如：期待、紧张、失落" />
+                <input id="event-feeling" name="feeling" placeholder="例如：期待、紧张、失落" maxlength="200" />
               </div>
               <div class="field">
                 <label for="event-reply">你如何回应</label>
-                <input id="event-reply" name="reply" placeholder="尚未回应也可以写“还没有”" />
+                <input id="event-reply" name="reply" placeholder="尚未回应也可以写“还没有”" maxlength="400" />
               </div>
             </div>
           </div>
 
-          <div class="form-section">
-            <h3>证据线索</h3>
+          <div class="form-section" role="group" aria-labelledby="evidence-heading">
+            <h3 id="evidence-heading">边界确认与证据线索</h3>
+            <p>先确认边界，再看积极信号。拒绝、不舒服或持续回避不会被其他信号抵消。</p>
+            <div class="field field--full boundary-field">
+              <label for="event-boundary-status">当前是否存在明确拒绝、不舒服或要求停止？</label>
+              <select id="event-boundary-status" name="boundaryStatus" required>
+                <option value="">请选择最符合事实的一项</option>
+                <option value="clear">没有看到明确拒绝或不舒服</option>
+                <option value="uncertain">我不确定，需要先降低强度或澄清</option>
+                <option value="stop">有明确拒绝、不舒服或要求停止</option>
+              </select>
+            </div>
             <p>只勾选你能从实际互动中确认的项目。单次行为通常不足以下结论。</p>
             <div class="choice-grid">
               ${signalCheckbox("directInterest", "对方明确表达兴趣", "清楚说出想继续了解、喜欢或期待见面")}
@@ -425,6 +1094,7 @@ function renderNewEvent() {
               ${signalCheckbox("explicitDecline", "已明确拒绝", "对方清楚表示不愿意继续或不感兴趣", true)}
               ${signalCheckbox("discomfort", "出现不舒服或边界提醒", "对方表现紧张、抗拒，或要求停止", true)}
             </div>
+            <p class="form-error" id="event-signal-error" role="alert" aria-live="polite"></p>
           </div>
 
           <div class="form-section">
@@ -497,15 +1167,20 @@ function renderPeople() {
             </div>
             <div class="field field--full">
               <label for="contact-context">认识背景</label>
-              <textarea id="contact-context" name="context" placeholder="例如：读书会认识，目前见过两次。"></textarea>
+              <textarea
+                id="contact-context"
+                name="context"
+                placeholder="例如：读书会认识，目前见过两次。"
+                maxlength="1000"
+              ></textarea>
             </div>
             <div class="field">
               <label for="contact-goal">已公开表达的关系目标</label>
-              <input id="contact-goal" name="goal" placeholder="未知也可以直接写未知" />
+              <input id="contact-goal" name="goal" placeholder="未知也可以直接写未知" maxlength="500" />
             </div>
             <div class="field">
               <label for="contact-boundary">已明确的边界</label>
-              <input id="contact-boundary" name="boundary" placeholder="例如：不喜欢临时见面" />
+              <input id="contact-boundary" name="boundary" placeholder="例如：不喜欢临时见面" maxlength="500" />
             </div>
           </div>
           <div class="button-row" style="margin-top:20px">
@@ -557,7 +1232,19 @@ function renderPersonCard(item) {
       <p>${escapeHTML(item.context || "尚未添加认识背景。")}</p>
       <div class="person-footer">
         <span>${count} 条事件</span>
-        <button class="text-button" data-view="new-event">记录互动 →</button>
+        <span class="inline-actions">
+          <button
+            class="text-button"
+            data-view="new-event"
+            data-contact-id="${escapeAttribute(item.id)}"
+          >记录互动 →</button>
+          <button
+            class="text-button text-button--danger"
+            data-action="delete-contact"
+            data-contact-id="${escapeAttribute(item.id)}"
+            aria-label="删除 ${escapeAttribute(item.alias)} 及其相关事件"
+          >删除</button>
+        </span>
       </div>
     </article>
   `;
@@ -592,15 +1279,15 @@ function renderProfile() {
             </div>
             <div class="field field--full">
               <label for="profile-goal">当前关系目标</label>
-              <textarea id="profile-goal" name="goal" placeholder="例如：希望在不过度控制结果的前提下，更自然地认识合适的人。">${escapeHTML(profile.goal)}</textarea>
+              <textarea id="profile-goal" name="goal" maxlength="800" placeholder="例如：希望在不过度控制结果的前提下，更自然地认识合适的人。">${escapeHTML(profile.goal)}</textarea>
             </div>
             <div class="field">
               <label for="profile-anxiety">常见焦虑触发点</label>
-              <textarea id="profile-anxiety" name="anxiety" placeholder="例如：对方回复慢时容易反复猜测。">${escapeHTML(profile.anxiety)}</textarea>
+              <textarea id="profile-anxiety" name="anxiety" maxlength="800" placeholder="例如：对方回复慢时容易反复猜测。">${escapeHTML(profile.anxiety)}</textarea>
             </div>
             <div class="field">
               <label for="profile-boundaries">希望坚持的边界</label>
-              <textarea id="profile-boundaries" name="boundaries" placeholder="例如：不连续追问；不在情绪很强时发送长消息。">${escapeHTML(profile.boundaries)}</textarea>
+              <textarea id="profile-boundaries" name="boundaries" maxlength="800" placeholder="例如：不连续追问；不在情绪很强时发送长消息。">${escapeHTML(profile.boundaries)}</textarea>
             </div>
           </div>
           <div class="button-row" style="margin-top:22px">
@@ -638,7 +1325,7 @@ function renderAnalysis(eventId) {
 
   const contact = getContact(item.contactId);
   const analysis = item.analysis;
-  const signal = signalMeta[analysis.strength];
+  const signal = signalMeta[analysis.strength] || signalMeta.weak;
 
   return `
     <div class="page">
@@ -651,24 +1338,35 @@ function renderAnalysis(eventId) {
           <h1>${signal.label}</h1>
           <p>${escapeHTML(analysis.summary)}</p>
           <div class="confidence-row">
-            <span>证据分 ${analysis.score}</span>
-            <span>参考置信度 ${analysis.confidence}%</span>
+            <span>证据分 ${escapeHTML(analysis.score)}</span>
+            <span>信息完整度 ${escapeHTML(analysis.informationQuality)}</span>
+            <span>规则 v${escapeHTML(analysis.engineVersion || ENGINE_VERSION)}</span>
             <span>${formatDate(item.date)}</span>
           </div>
         </div>
       </section>
 
       ${
-        analysis.strength === "stop"
+        analysis.actionPolicy === "stop"
           ? `
             <div class="boundary-banner">
               <span aria-hidden="true">!</span>
               <div>
                 <strong>边界优先</strong>
-                <p>记录中包含明确拒绝、不舒服或持续回避信号。不要继续测试、说服或寻找“其实对方愿意”的证据。</p>
+                <p>记录中包含明确拒绝、不舒服或停止要求。不要继续测试、说服或寻找“其实对方愿意”的证据。</p>
               </div>
             </div>
           `
+          : analysis.actionPolicy === "deescalate"
+            ? `
+              <div class="boundary-banner boundary-banner--caution">
+                <span aria-hidden="true">↓</span>
+                <div>
+                  <strong>降低互动强度</strong>
+                  <p>持续回避、边界不确定或冲突信息出现时，不重复邀请、不追问；等待对方清楚、主动的反馈。</p>
+                </div>
+              </div>
+            `
           : ""
       }
 
@@ -684,25 +1382,46 @@ function renderAnalysis(eventId) {
         </article>
 
         <article class="analysis-panel">
-          <h2><span>03</span>其他可能解释</h2>
+          <h2><span>03</span>证据等级依据</h2>
+          <ul>${analysis.evidenceReasons.map((text) => `<li>${escapeHTML(text)}</li>`).join("")}</ul>
+        </article>
+
+        <article class="analysis-panel">
+          <h2><span>04</span>其他可能解释</h2>
           <ul>${analysis.alternatives.map((text) => `<li>${escapeHTML(text)}</li>`).join("")}</ul>
         </article>
 
         <article class="analysis-panel">
-          <h2><span>04</span>当前不确定性</h2>
+          <h2><span>05</span>当前不确定性</h2>
           <ul>${analysis.uncertainties.map((text) => `<li>${escapeHTML(text)}</li>`).join("")}</ul>
         </article>
 
         <article class="analysis-panel analysis-panel--wide">
-          <h2><span>05</span>${analysis.strength === "stop" ? "尊重边界的回应" : "自然、低压力的回应选项"}</h2>
+          <h2><span>06</span>${analysis.responseMode === "action" ? "尊重停止联系要求" : analysis.actionPolicy === "stop" ? "尊重边界的回应" : analysis.actionPolicy === "deescalate" ? "降级或暂停的回应选项" : "自然、低压力的回应选项"}</h2>
+          ${
+            analysis.personalNotes?.length
+              ? `<ul class="personal-notes">${analysis.personalNotes
+                  .map((text) => `<li>${escapeHTML(text)}</li>`)
+                  .join("")}</ul>`
+              : ""
+          }
           <div class="response-list">
             ${analysis.responses
               .map(
                 (text, index) => `
-                  <div class="response-option">
+                  <div class="response-option ${analysis.responseMode === "action" ? "response-option--action" : ""}">
                     <span>0${index + 1}</span>
                     <p>${escapeHTML(text)}</p>
-                    <button class="copy-button" data-action="copy-response" data-text="${escapeAttribute(text)}">复制</button>
+                    ${
+                      analysis.responseMode === "action"
+                        ? ""
+                        : `<button
+                            class="copy-button"
+                            data-action="copy-response"
+                            data-text="${escapeAttribute(text)}"
+                            aria-label="复制第 ${index + 1} 条回应"
+                          >复制</button>`
+                    }
                   </div>
                 `
               )
@@ -711,23 +1430,26 @@ function renderAnalysis(eventId) {
         </article>
 
         <article class="analysis-panel">
-          <h2><span>06</span>停止或降级条件</h2>
+          <h2><span>07</span>停止或降级条件</h2>
           <p>${escapeHTML(analysis.stopCondition)}</p>
         </article>
 
         <article class="analysis-panel">
-          <h2><span>07</span>后续复盘点</h2>
+          <h2><span>08</span>后续复盘点</h2>
           <p>记录你选择了什么行动、对方真实回应了什么，以及结果是否支持原来的判断。不要只记录符合期待的部分。</p>
         </article>
       </div>
 
       <div class="button-row" style="margin-top:20px">
-        <button class="button button--primary" data-action="open-review" data-event-id="${item.id}">
+        <button class="button button--primary" data-action="open-review" data-event-id="${escapeAttribute(item.id)}">
           记录后续结果
         </button>
         <button class="button button--quiet" data-view="dashboard">返回概览</button>
+        <button class="button button--danger" data-action="delete-event" data-event-id="${escapeAttribute(item.id)}">
+          删除这条事件
+        </button>
       </div>
-      <p class="microcopy" style="text-align:left">这是透明规则引擎生成的 MVP 分析，不是事实判决，也不具备读心能力。</p>
+      <p class="microcopy" style="text-align:left">这是透明规则引擎生成的 MVP 分析，不是概率、事实判决或读心结果。后续真实反馈会覆盖原来的行动策略。</p>
     </div>
   `;
 }
@@ -767,12 +1489,13 @@ function renderReview() {
 function renderReviewCard(item) {
   const contact = getContact(item.contactId);
   const done = Boolean(item.review?.result);
+  const signal = signalMeta[item.analysis.strength] || signalMeta.weak;
   return `
     <article class="review-card">
       <header>
         <h3>${escapeHTML(contact?.alias || "已删除档案")} · ${escapeHTML(item.scene)}</h3>
-        <span class="signal-pill signal-pill--${signalMeta[item.analysis.strength].className}" style="min-width:38px;height:38px;border-radius:12px">
-          ${signalMeta[item.analysis.strength].short}
+        <span class="signal-pill signal-pill--${signal.className}" style="min-width:38px;height:38px;border-radius:12px">
+          ${signal.short}
         </span>
       </header>
       <p>${escapeHTML(item.fact)}</p>
@@ -780,7 +1503,7 @@ function renderReviewCard(item) {
         <i></i>
         ${done ? `已复盘：${escapeHTML(item.review.result)}` : "等待真实反馈"}
       </div>
-      <button class="button button--small ${done ? "button--quiet" : "button--primary"}" data-action="open-review" data-event-id="${item.id}">
+      <button class="button button--small ${done ? "button--quiet" : "button--primary"}" data-action="open-review" data-event-id="${escapeAttribute(item.id)}">
         ${done ? "更新复盘" : "补充结果"}
       </button>
     </article>
@@ -789,24 +1512,43 @@ function renderReviewCard(item) {
 
 function renderReviewForm(item) {
   const review = item.review || {};
+  const defaultNextStep =
+    item.analysis.actionPolicy === "stop"
+      ? "尊重边界并停止"
+      : item.analysis.actionPolicy === "deescalate"
+        ? "降低互动强度"
+        : "继续自然了解";
+  const selectedNextStep = review.nextStep || defaultNextStep;
   return `
     <section class="section panel">
       <p class="eyebrow">结果反馈</p>
-      <h2 class="panel-title" style="margin-top:9px">复盘：${escapeHTML(getContact(item.contactId)?.alias || "匿名档案")} · ${escapeHTML(item.scene)}</h2>
+      <h2 class="panel-title" id="review-form-title" tabindex="-1" style="margin-top:9px">复盘：${escapeHTML(getContact(item.contactId)?.alias || "匿名档案")} · ${escapeHTML(item.scene)}</h2>
       <form id="review-form" class="review-form">
-        <input type="hidden" name="eventId" value="${item.id}" />
+        <input type="hidden" name="eventId" value="${escapeAttribute(item.id)}" />
         <div class="form-grid">
           <div class="field field--full">
             <label for="review-action">你最终选择了什么行动？</label>
-            <textarea id="review-action" name="actionTaken" placeholder="例如：我选择了一个低压力邀请，并明确说不方便也没关系。">${escapeHTML(review.actionTaken || "")}</textarea>
+            <textarea id="review-action" name="actionTaken" maxlength="1000" placeholder="例如：我选择了一个低压力邀请，并明确说不方便也没关系。">${escapeHTML(review.actionTaken || "")}</textarea>
           </div>
           <div class="field">
             <label for="review-result">对方的真实回应</label>
-            <textarea id="review-result" name="result" placeholder="尽量记录原话或可观察行为。" required>${escapeHTML(review.result || "")}</textarea>
+            <textarea id="review-result" name="result" maxlength="1600" placeholder="尽量记录原话或可观察行为。" required>${escapeHTML(review.result || "")}</textarea>
           </div>
           <div class="field">
             <label for="review-learning">这次判断需要如何调整？</label>
-            <textarea id="review-learning" name="learning" placeholder="哪些判断得到支持？哪些只是期待？">${escapeHTML(review.learning || "")}</textarea>
+            <textarea id="review-learning" name="learning" maxlength="1000" placeholder="哪些判断得到支持？哪些只是期待？">${escapeHTML(review.learning || "")}</textarea>
+          </div>
+          <div class="field">
+            <label for="review-outcome">真实结果中的边界信号</label>
+            <select id="review-outcome" name="outcome" required>
+              <option value="">请选择真实反馈</option>
+              ${outcomeOption("unknown", "仍不确定，信息不足", review.outcome)}
+              ${outcomeOption("continued", "双方愿意继续互动", review.outcome)}
+              ${outcomeOption("avoidance", "持续无回应、回避或无替代安排", review.outcome)}
+              ${outcomeOption("declined", "明确拒绝或要求停止", review.outcome)}
+              ${outcomeOption("discomfort", "表达不舒服或边界被触碰", review.outcome)}
+            </select>
+            <p class="form-error" id="review-outcome-error" role="alert" aria-live="polite"></p>
           </div>
           <div class="field">
             <label for="review-naturalness">行动是否符合你自己？</label>
@@ -820,11 +1562,11 @@ function renderReviewForm(item) {
           <div class="field">
             <label for="review-next">下一步</label>
             <select id="review-next" name="nextStep">
-              ${reviewOption("继续自然了解", review.nextStep)}
-              ${reviewOption("直接沟通确认", review.nextStep)}
-              ${reviewOption("降低互动强度", review.nextStep)}
-              ${reviewOption("尊重边界并停止", review.nextStep)}
-              ${reviewOption("不需要下一步", review.nextStep)}
+              ${reviewOption("继续自然了解", selectedNextStep)}
+              ${reviewOption("直接沟通确认", selectedNextStep)}
+              ${reviewOption("降低互动强度", selectedNextStep)}
+              ${reviewOption("尊重边界并停止", selectedNextStep)}
+              ${reviewOption("不需要下一步", selectedNextStep)}
             </select>
           </div>
         </div>
@@ -841,22 +1583,31 @@ function reviewOption(value, selected) {
   return `<option ${value === selected ? "selected" : ""}>${value}</option>`;
 }
 
+function outcomeOption(value, label, selected) {
+  return `<option value="${value}" ${value === selected ? "selected" : ""}>${label}</option>`;
+}
+
 function renderPrivacy() {
-  const serializedSize = new Blob([JSON.stringify(state)]).size;
+  const serializedSize = new Blob([JSON.stringify(toPortableState(state))]).size;
   return `
     <div class="page">
+      ${renderStorageRecoveryNotice()}
       ${pageHeading(
         "隐私与数据",
-        "你的关系记录，默认只属于你。",
-        "当前版本不包含账号、统计追踪或云端同步。所有数据都保存在这个浏览器的本地存储中。"
+        "关系记录留在本地，Agent 只接收你明确发送的内容。",
+        "匿名档案、事件、规则分析与复盘保存在当前浏览器；可选账号只用于会员授权和 Agent，不会自动同步本地日记。"
       )}
 
       <div class="data-grid">
         <article class="data-card">
           <p class="eyebrow">本地数据</p>
-          <h2>导出一份可迁移备份</h2>
-          <p>导出包含个人设置、匿名档案、事件与复盘的 JSON 文件。请把它存放在安全位置。</p>
-          <button class="button button--dark" data-action="export-data">导出 JSON</button>
+          <h2>导出或恢复本地备份</h2>
+          <p>JSON 包含个人设置、匿名档案、事件与复盘，且是明文文件。请只存放在你控制的安全位置。</p>
+          <div class="button-row">
+            <button class="button button--dark" data-action="export-data">导出 JSON</button>
+            <button class="button button--quiet" data-action="import-data">导入 JSON</button>
+          </div>
+          <input class="visually-hidden" id="data-import" type="file" accept="application/json,.json" />
         </article>
 
         <article class="data-card">
@@ -884,11 +1635,28 @@ function renderPrivacy() {
             <small>包含事实、解释与分析</small>
           </article>
           <article class="metric-card">
-            <span>外部请求</span>
-            <strong>0</strong>
-            <small>当前版本不会把记录发送到服务器</small>
+            <span>本地关系记录自动上传</span>
+            <strong>关闭</strong>
+            <small>只有你在 Agent 页明确发送的文字会进入模型请求</small>
           </article>
         </div>
+      </section>
+
+      <section class="section panel panel--flat">
+        <h2 class="panel-title">本地存储风险</h2>
+        <p class="data-warning">
+          数据以明文保存在当前浏览器。共享设备、同一浏览器账户、浏览器清理、无痕模式和导出的 JSON
+          都可能造成丢失或泄露；请不要保存真实姓名、地址、定位、身份证明或不必要的完整聊天记录。
+        </p>
+      </section>
+
+      <section class="section panel panel--flat">
+        <h2 class="panel-title">账号、Agent 与最小审计</h2>
+        <p class="data-warning">
+          登录、会员授权、Agent 调用结果和管理操作会以最少必要元数据记录在服务端，用于安全、权限和故障排查；
+          不记录本地事件正文、Agent 提示词、模型回复、IP 地址或浏览器标识。你显式发送给 Agent 的文字会转交
+          DeepSeek 生成实时回应，但本服务不保存这段正文。请仍使用代号并避免发送可识别信息。
+        </p>
       </section>
 
       <section class="section panel panel--flat">
@@ -916,10 +1684,53 @@ function pageHeading(eyebrow, title, description) {
   `;
 }
 
-function createContact(formData) {
+function renderStorageRecoveryNotice() {
+  if (!storageRecovery) return "";
+  const reason = {
+    future: "这份本地数据来自更新版本，当前应用不会将它降级或覆盖。",
+    capacity: "旧版本地数据超过当前自动迁移容量，当前应用不会截断或覆盖它。",
+    lossy: "自动迁移可能丢弃部分既有记录，当前应用已停止迁移且不会覆盖它。",
+    unreadable: "浏览器中的既有数据无法安全读取，当前应用不会用空白数据覆盖它。",
+  }[storageRecovery.reason] || "浏览器中的既有数据无法安全迁移，当前应用不会覆盖它。";
+  return `
+    <section class="boundary-banner storage-recovery" role="alert">
+      <span aria-hidden="true">!</span>
+      <div>
+        <strong>本地数据处于恢复保护状态</strong>
+        <p>${reason}请先导出原始副本，再到“隐私与数据”导入已知可用备份，或明确清空损坏数据。</p>
+        <div class="button-row">
+          ${
+            storageRecovery.raw
+              ? '<button class="button button--quiet" data-action="export-recovery-data">导出未读取的原始数据</button>'
+              : ""
+          }
+          <button class="button button--quiet" data-view="privacy">前往隐私与数据</button>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function createContact(form, formData) {
+  if (state.contacts.length >= MAX_CONTACTS) {
+    showToast(`最多保存 ${MAX_CONTACTS} 个匿名档案；请先导出并整理现有数据`, 4600);
+    return;
+  }
+  const alias = clean(formData.get("alias"));
+  const isDuplicate = state.contacts.some(
+    (contact) => contact.alias.localeCompare(alias, "zh-CN", { sensitivity: "accent" }) === 0
+  );
+  if (isDuplicate) {
+    const field = form.querySelector("#contact-alias");
+    field.setCustomValidity("匿名代号已存在，请使用一个可区分的新代号。");
+    field.reportValidity();
+    field.addEventListener("input", () => field.setCustomValidity(""), { once: true });
+    return;
+  }
+
   const contact = {
     id: uid(),
-    alias: clean(formData.get("alias")),
+    alias,
     stage: clean(formData.get("stage")),
     context: clean(formData.get("context")),
     goal: clean(formData.get("goal")),
@@ -927,13 +1738,17 @@ function createContact(formData) {
     createdAt: new Date().toISOString(),
   };
 
-  state.contacts.push(contact);
-  saveState();
+  if (!commitState((next) => next.contacts.push(contact))) return;
+  preferredContactId = contact.id;
   showToast(`已保存匿名档案：${contact.alias}`);
-  renderCurrentView();
+  navigate("people");
 }
 
 function createEvent(form, formData) {
+  if (state.events.length >= MAX_EVENTS) {
+    showToast(`最多保存 ${MAX_EVENTS} 条事件；请先导出并整理现有数据`, 4600);
+    return;
+  }
   const signalNames = [
     "directInterest",
     "futurePlan",
@@ -957,200 +1772,101 @@ function createEvent(form, formData) {
     feeling: clean(formData.get("feeling")),
     reply: clean(formData.get("reply")),
     signals,
+    boundaryStatus: clean(formData.get("boundaryStatus")),
     createdAt: new Date().toISOString(),
   };
 
-  item.analysis = analyzeEvent(item);
-  state.events.push(item);
-  saveState();
+  const validation = validateEventInput(item);
+  const error = form.querySelector("#event-signal-error");
+  if (!validation.valid) {
+    error.textContent = validation.issues.join(" ");
+    form.querySelector("#event-boundary-status")?.focus();
+    return;
+  }
+  error.textContent = "";
+
+  if (!commitState((next) => next.events.push(item))) return;
   currentEventId = item.id;
-  currentView = "analysis";
+  preferredContactId = null;
   showToast("事件已保存，结构化分析已生成");
-  renderCurrentView();
-  window.scrollTo({ top: 0, behavior: "smooth" });
-}
-
-function analyzeEvent(item) {
-  const weights = {
-    directInterest: 5,
-    futurePlan: 3,
-    repeatedInitiative: 2,
-    detailedFollowup: 1,
-    politeOnly: -1,
-    delayAvoidance: -3,
-    explicitDecline: -8,
-    discomfort: -8,
-  };
-  const score = item.signals.reduce((total, signal) => total + (weights[signal] || 0), 0);
-  const hasBoundaryRisk = item.signals.some((signal) => ["explicitDecline", "discomfort"].includes(signal));
-  const hasPersistentAvoidance = item.signals.includes("delayAvoidance");
-
-  let strength = "weak";
-  if (hasBoundaryRisk) {
-    strength = "stop";
-  } else if (score >= 6) {
-    strength = "strong";
-  } else if (score >= 3) {
-    strength = "medium";
-  }
-
-  const summaries = {
-    weak:
-      "目前证据更接近普通礼貌、单次行为或信息不足。不要把希望或担忧当成结论；更适合继续观察，或在合适时直接、低压力地确认。",
-    medium:
-      "记录中出现了持续投入、主动联系或未来安排等证据，但仍不能替代明确表达。可以选择自然回应，并给对方充分的选择空间。",
-    strong:
-      "记录中出现了明确兴趣或多个一致、持续的投入信号。即便如此，关系意愿仍应通过双方清楚沟通确认。",
-    stop:
-      "记录包含明确拒绝或不舒服信号。此时不应继续推进、说服或测试边界；最安全的行动是尊重表达并停止。",
-  };
-
-  const alternatives = buildAlternatives(item.signals, strength);
-  const uncertainties = buildUncertainties(item.signals, strength);
-  const confidence = Math.min(
-    92,
-    Math.round(38 + Math.abs(score) * 5 + item.signals.length * 4 + (hasBoundaryRisk ? 16 : 0))
-  );
-
-  return {
-    score,
-    strength,
-    confidence,
-    summary: summaries[strength],
-    alternatives,
-    uncertainties,
-    responses: buildResponses(strength, state.profile.voice),
-    stopCondition:
-      strength === "stop"
-        ? "对方已经明确拒绝或表达不舒服时，不需要再等待更多证据。停止推进，避免继续联系、试探或借他人施压。"
-        : hasPersistentAvoidance
-          ? "如果持续回避、重复失约且没有替代安排，或对方表达不舒服，应降低互动强度或停止推进。"
-          : "一旦对方明确拒绝、持续回避、表现不舒服或要求停止，应立即降低互动强度或停止推进。",
-  };
-}
-
-function buildAlternatives(signals, strength) {
-  if (strength === "stop") {
-    return [
-      "对方的表达本身已经足够，不需要寻找隐藏的相反含义。",
-      "拒绝可能来自匹配度、时机、精力或个人选择；不等同于对你整体价值的评价。",
-      "继续说服并不会让信号更清楚，只会增加对方压力。",
-    ];
-  }
-
-  const options = [];
-  if (signals.includes("futurePlan")) {
-    options.push("主动安排未来互动可能代表兴趣，也可能是友好、合作或群体活动中的自然安排。");
-  }
-  if (signals.includes("repeatedInitiative")) {
-    options.push("持续主动是值得观察的模式，但仍需结合内容、场景以及对方平时对其他人的方式。");
-  }
-  if (signals.includes("detailedFollowup")) {
-    options.push("记得细节可能说明关注，也可能来自对方本身细心或善于社交。");
-  }
-  if (signals.includes("politeOnly") || !signals.length) {
-    options.push("当前行为可能只是普通礼貌，暂时没有足够证据区分友好与特别兴趣。");
-  }
-  if (signals.includes("delayAvoidance")) {
-    options.push("推迟可能与忙碌或现实安排有关；如果多次发生且没有替代安排，也可能表示投入意愿有限。");
-  }
-
-  const defaults = [
-    "单次互动容易受到当天状态、场景和沟通习惯影响。",
-    "你的期待或焦虑可能会放大某些细节，同时忽略其他证据。",
-    "最准确的信息通常来自对方后续持续行为与明确表达。",
-  ];
-
-  return [...options, ...defaults].slice(0, 3);
-}
-
-function buildUncertainties(signals, strength) {
-  const items = [];
-  if (signals.length < 2) items.push("目前证据点较少，无法判断是否形成持续模式。");
-  if (!signals.includes("directInterest") && strength !== "stop") {
-    items.push("对方尚未明确表达关系兴趣，现阶段仍是推断。");
-  }
-  if (!signals.includes("futurePlan") && strength !== "stop") {
-    items.push("尚未看到具体的下一次互动安排或现实投入。");
-  }
-  if (signals.includes("delayAvoidance")) {
-    items.push("需要区分一次客观冲突与持续回避；是否提供替代安排很重要。");
-  }
-  if (strength === "stop") {
-    items.push("对方的边界不需要通过更多分析才能生效。");
-  }
-  items.push("你记录的是自己的视角，无法覆盖对方未表达的想法和处境。");
-  return items.slice(0, 3);
-}
-
-function buildResponses(strength, voice) {
-  if (strength === "stop") {
-    return [
-      "收到，谢谢你直接告诉我。我会尊重你的决定，之后不再推进。",
-      "我明白了，也谢谢你说清楚。祝你之后一切顺利。",
-      "了解，我会尊重这个边界。保重。",
-    ];
-  }
-
-  const sets = {
-    natural: [
-      "刚才和你聊天挺舒服的。如果你也愿意，我们下周可以再找个时间喝杯咖啡；不方便也没关系。",
-      "我想继续了解你。你有兴趣的话，我们可以挑个轻松的活动再见一次。",
-      "我不太想靠猜，所以直接问一下：你愿意继续认识看看吗？任何答案都可以。",
-    ],
-    gentle: [
-      "谢谢你今天愿意分享这些，我觉得相处很舒服。如果你也愿意，我们可以慢慢继续了解。",
-      "我有一点想再见你的期待，不过你按自己的节奏来就好；愿意的话，我们再约一个轻松的时间。",
-      "我不确定自己有没有理解对，所以想轻轻确认一下：你会愿意继续认识看看吗？",
-    ],
-    direct: [
-      "我对你有兴趣，想继续了解。你愿意的话，我们约下周再见；如果不想也可以直接告诉我。",
-      "我想邀请你周末喝咖啡。你愿意就一起，不方便或没兴趣也没关系。",
-      "我不想继续猜：你有继续了解的意愿吗？我会尊重你的答案。",
-    ],
-    humor: [
-      "这次聊天我给了高分，但不打算替你评分。你愿意的话，我们下周再喝杯咖啡？",
-      "我想申请一次续集：找个轻松的地方再见面。你没空或不想都可以直接说。",
-      "我的读心术显然没上线，所以直接问：你愿意继续认识看看吗？",
-    ],
-  };
-
-  return sets[voice] || sets.natural;
+  navigate("analysis");
 }
 
 function saveProfile(formData) {
-  state.profile = {
+  const profile = {
     name: clean(formData.get("name")),
     goal: clean(formData.get("goal")),
     voice: clean(formData.get("voice")) || "natural",
     boundaries: clean(formData.get("boundaries")),
     anxiety: clean(formData.get("anxiety")),
   };
-  saveState();
+  if (!commitState((next) => {
+    next.profile = profile;
+  })) return;
   syncProfileAvatar();
-  showToast("个人表达偏好已保存");
+  showToast("个人表达偏好已保存，历史回应已按当前规则刷新");
   navigate("dashboard");
 }
 
-function saveReview(formData) {
-  const item = state.events.find((event) => event.id === formData.get("eventId"));
-  if (!item) return;
+function saveReview(form, formData) {
+  const eventId = clean(formData.get("eventId"));
+  const outcome = clean(formData.get("outcome"));
+  let nextStep = clean(formData.get("nextStep"));
+  if (outcome === "declined" || outcome === "discomfort") nextStep = "尊重边界并停止";
+  if (outcome === "avoidance") nextStep = "降低互动强度";
 
-  item.review = {
+  const review = {
     actionTaken: clean(formData.get("actionTaken")),
     result: clean(formData.get("result")),
     learning: clean(formData.get("learning")),
     naturalness: clean(formData.get("naturalness")),
-    nextStep: clean(formData.get("nextStep")),
+    nextStep,
+    outcome,
     updatedAt: new Date().toISOString(),
   };
-  saveState();
+
+  const validation = validateReviewInput(review);
+  const error = form.querySelector("#review-outcome-error");
+  if (!validation.valid) {
+    error.textContent = validation.issues.join(" ");
+    form.querySelector("#review-outcome")?.focus();
+    return;
+  }
+  error.textContent = "";
+
+  if (!commitState((next) => {
+    const item = next.events.find((event) => event.id === eventId);
+    if (item) item.review = review;
+  })) return;
+
   reviewEventId = null;
-  showToast("复盘已保存，真实结果已加入记录");
+  const corrected = outcome === "declined" || outcome === "discomfort" || outcome === "avoidance";
+  showToast(corrected ? "复盘已保存，真实结果已修正当前行动策略" : "复盘已保存，真实结果已加入记录");
   renderCurrentView();
+  requestAnimationFrame(() => {
+    document
+      .querySelector(`[data-action="open-review"][data-event-id="${cssEscape(eventId)}"]`)
+      ?.focus();
+  });
 }
 
 function loadSampleData() {
+  const existing = state.contacts.find((contact) => contact.alias === "A-17");
+  if (existing) {
+    const event = state.events.find((item) => item.contactId === existing.id);
+    if (event) {
+      currentEventId = event.id;
+      showToast("匿名示例已经存在");
+      navigate("analysis");
+      return;
+    }
+  }
+
+  if (state.contacts.length >= MAX_CONTACTS || state.events.length >= MAX_EVENTS) {
+    showToast("当前数据已达到容量上限，无法载入匿名示例", 4200);
+    return;
+  }
+
   const contactId = uid();
   const eventId = uid();
   const sampleContact = {
@@ -1173,21 +1889,23 @@ function loadSampleData() {
     feeling: "期待，也有一点不确定",
     reply: "还没有回复",
     signals: ["repeatedInitiative", "futurePlan"],
+    boundaryStatus: "clear",
     createdAt: new Date().toISOString(),
   };
-  sampleEvent.analysis = analyzeEvent(sampleEvent);
-  state.contacts.push(sampleContact);
-  state.events.push(sampleEvent);
-  saveState();
+  if (!commitState((next) => {
+    next.contacts.push(sampleContact);
+    next.events.push(sampleEvent);
+  })) return;
   showToast("匿名示例已载入");
   renderCurrentView();
+  requestAnimationFrame(() => main.focus({ preventScroll: true }));
 }
 
 function exportData() {
   const payload = {
     exportedAt: new Date().toISOString(),
     application: "GAME Signal Lab",
-    data: state,
+    data: toPortableState(state),
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -1201,41 +1919,229 @@ function exportData() {
   showToast("本地数据已导出");
 }
 
+function exportRecoveryData() {
+  if (!storageRecovery?.raw) {
+    showToast("没有可导出的原始数据");
+    return;
+  }
+  const blob = new Blob([storageRecovery.raw], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `game-signal-lab-unreadable-${todayISO()}.json`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  showToast("未读取的原始数据已导出；请保留副本后再清理");
+}
+
+async function importData(file) {
+  if (file.size > MAX_BACKUP_BYTES) {
+    showToast("备份文件超过 20 MB，已取消导入", 4200);
+    return;
+  }
+
+  try {
+    const imported = reanalyzeState(parseBackup(await file.text()));
+    const confirmed = window.confirm(
+      `导入将替换当前浏览器中的 ${state.contacts.length} 个档案和 ${state.events.length} 条事件。是否继续？`
+    );
+    if (!confirmed) return;
+
+    imported.adultConfirmed = state.adultConfirmed;
+    imported.adultConfirmedAt = state.adultConfirmedAt;
+    imported.agePolicyVersion = state.agePolicyVersion;
+    if (!writeState(imported, { replaceRecovery: true })) return;
+    state = imported;
+    currentView = "dashboard";
+    currentEventId = null;
+    reviewEventId = null;
+    preferredContactId = null;
+    syncProfileAvatar();
+    renderCurrentView();
+    showToast("备份已导入并按当前规则重新分析");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "无法读取这个备份文件", 4600);
+  }
+}
+
 function clearData() {
-  const confirmed = window.confirm("确定清空所有匿名档案、事件和复盘吗？此操作无法撤销。");
+  const confirmed = window.confirm(
+    "确定清空所有本地数据吗？这会删除年龄确认、个人设置、匿名档案、事件和复盘，且无法恢复。"
+  );
   if (!confirmed) return;
 
-  const adultConfirmed = state.adultConfirmed;
-  state = structuredClone(defaultState);
-  state.adultConfirmed = adultConfirmed;
-  saveState();
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+    LEGACY_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+    storageRecovery = null;
+  } catch {
+    showToast("浏览器阻止了本地数据清理，请在站点设置中手动删除", 4800);
+    return;
+  }
+
+  state = createDefaultState();
   syncProfileAvatar();
   currentView = "dashboard";
   currentEventId = null;
   reviewEventId = null;
-  showToast("本地数据已全部清空");
+  preferredContactId = null;
   renderCurrentView();
+  adultCheck.checked = false;
+  enterApp.disabled = true;
+  setAppAvailability(false);
+  if (!ageGate.open) ageGate.showModal();
+  showToast("本地数据已全部清空");
+}
+
+function deleteEvent(eventId) {
+  const item = state.events.find((event) => event.id === eventId);
+  if (!item) return;
+  if (!window.confirm("确定删除这条事件及其复盘吗？此操作无法撤销。")) return;
+  if (!commitState((next) => {
+    next.events = next.events.filter((event) => event.id !== eventId);
+  })) return;
+  currentEventId = null;
+  reviewEventId = null;
+  showToast("事件及其复盘已删除");
+  navigate("dashboard");
+}
+
+function deleteContact(contactId) {
+  const contact = state.contacts.find((item) => item.id === contactId);
+  if (!contact) return;
+  const eventCount = state.events.filter((event) => event.contactId === contactId).length;
+  const confirmed = window.confirm(
+    eventCount
+      ? `确定删除匿名档案“${contact.alias}”及其 ${eventCount} 条事件和复盘吗？此操作无法撤销。`
+      : `确定删除匿名档案“${contact.alias}”吗？此操作无法撤销。`
+  );
+  if (!confirmed) return;
+  if (!commitState((next) => {
+    next.contacts = next.contacts.filter((item) => item.id !== contactId);
+    next.events = next.events.filter((event) => event.contactId !== contactId);
+  })) return;
+  showToast("匿名档案及其关联数据已删除");
+  navigate("people");
 }
 
 function loadState() {
+  let saved = null;
+  let sourceKey = STORAGE_KEY;
   try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (!saved) return structuredClone(defaultState);
+    saved = localStorage.getItem(STORAGE_KEY);
+    let migratedLegacy = false;
+    if (!saved) {
+      for (const key of LEGACY_STORAGE_KEYS) {
+        saved = localStorage.getItem(key);
+        if (saved) {
+          migratedLegacy = true;
+          sourceKey = key;
+          break;
+        }
+      }
+    }
+    if (!saved) return reanalyzeState(cloneValue(defaultState));
+
     const parsed = JSON.parse(saved);
-    return {
-      ...structuredClone(defaultState),
-      ...parsed,
-      profile: { ...defaultState.profile, ...(parsed.profile || {}) },
-      contacts: Array.isArray(parsed.contacts) ? parsed.contacts : [],
-      events: Array.isArray(parsed.events) ? parsed.events : [],
+    const assessment = inspectStoredState(parsed);
+    if (!assessment.safe) {
+      const error = new Error(assessment.message);
+      error.code = assessment.reason.toUpperCase();
+      throw error;
+    }
+    const normalized = reanalyzeState(assessment.state);
+    if (migratedLegacy) startupWarning = "已安全迁移旧版本地数据；下次保存将使用 v2 结构";
+    return normalized;
+  } catch (error) {
+    const reason = String(error?.code || "").toLowerCase();
+    storageRecovery = {
+      sourceKey,
+      raw: typeof saved === "string" ? saved : "",
+      reason: ["future", "capacity", "lossy"].includes(reason) ? reason : "unreadable",
     };
-  } catch {
-    return structuredClone(defaultState);
+    startupWarning =
+      {
+        future: "本地数据来自更新版本，已进入恢复保护状态且不会覆盖原始数据",
+        capacity: "旧版本地数据超过自动迁移容量，已进入恢复保护状态且不会被截断",
+        lossy: "自动迁移可能丢失部分记录，已进入恢复保护状态且不会覆盖原始数据",
+        unreadable: "本地数据无法读取，已进入恢复保护状态且不会覆盖原始数据",
+      }[storageRecovery.reason];
+    return reanalyzeState(cloneValue(defaultState));
   }
 }
 
-function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+function commitState(mutator) {
+  const next = cloneValue(state);
+  mutator(next);
+  const portable = toPortableState(next);
+  if (!writeState(portable)) return false;
+  state = reanalyzeState(portable);
+  return true;
+}
+
+function persistCurrentState() {
+  reanalyzeState(state);
+  return writeState(state);
+}
+
+function writeState(nextState, { replaceRecovery = false } = {}) {
+  if (storageRecovery && !replaceRecovery) {
+    showToast("现有本地数据正受恢复保护；请先导出原始副本，再导入备份或明确清空", 5600);
+    return false;
+  }
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(toPortableState(nextState)));
+    LEGACY_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+    storageRecovery = null;
+    return true;
+  } catch {
+    showToast("保存失败：浏览器存储不可用或空间不足。本次修改未写入本地。", 5200);
+    return false;
+  }
+}
+
+function reanalyzeState(targetState) {
+  const contacts = new Map(targetState.contacts.map((contact) => [contact.id, contact]));
+  targetState.events = targetState.events.map((item) => {
+    const contact = contacts.get(item.contactId);
+    return {
+      ...item,
+      analysis: analyzeEvent(item, {
+        voice: targetState.profile.voice,
+        goal: targetState.profile.goal,
+        anxiety: targetState.profile.anxiety,
+        boundaries: targetState.profile.boundaries,
+        contactBoundary: contact?.boundary || "",
+      }),
+    };
+  });
+  return targetState;
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast("回应选项已复制");
+    return;
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    textarea.remove();
+    showToast(copied ? "回应选项已复制" : "浏览器未允许复制，请手动选择文字");
+  }
+}
+
+function cloneValue(value) {
+  if (globalThis.structuredClone) return globalThis.structuredClone(value);
+  return JSON.parse(JSON.stringify(value));
 }
 
 function getContact(id) {
@@ -1247,11 +2153,11 @@ function syncProfileAvatar() {
   document.querySelector("#avatar-initial").textContent = initial;
 }
 
-function showToast(message) {
+function showToast(message, duration = 2300) {
   toast.textContent = message;
   toast.classList.add("is-visible");
   window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => toast.classList.remove("is-visible"), 2300);
+  toastTimer = window.setTimeout(() => toast.classList.remove("is-visible"), duration);
 }
 
 function todayISO() {
@@ -1292,4 +2198,9 @@ function escapeHTML(value) {
 
 function escapeAttribute(value) {
   return escapeHTML(value).replaceAll("\n", "&#10;");
+}
+
+function cssEscape(value) {
+  if (globalThis.CSS?.escape) return globalThis.CSS.escape(String(value));
+  return String(value).replace(/[^A-Za-z0-9_-]/g, "\\$&");
 }

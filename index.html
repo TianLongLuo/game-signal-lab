@@ -5,18 +5,61 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="GAME Signal Lab：帮助成年人记录关系事件、区分事实与猜测、理解互动信号并完成复盘。"
+      content="GAME Signal Lab 帮助成年人记录关系事件、区分事实与猜测，并形成尊重边界、可以复盘的下一步沟通。"
     />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <link rel="canonical" href="/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:site_name" content="GAME Signal Lab" />
+    <meta
+      property="og:title"
+      content="GAME Signal Lab｜把关系信号整理成可复盘的观察"
+    />
+    <meta
+      property="og:description"
+      content="记录关系事件、区分事实与猜测，形成尊重边界的下一步沟通。"
+    />
+    <meta name="twitter:card" content="summary" />
+    <meta
+      name="twitter:title"
+      content="GAME Signal Lab｜把关系信号整理成可复盘的观察"
+    />
+    <meta
+      name="twitter:description"
+      content="记录关系事件、区分事实与猜测，形成尊重边界的下一步沟通。"
+    />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'"
+    />
+    <meta name="referrer" content="no-referrer" />
     <meta name="theme-color" content="#182036" />
-    <title>GAME · Signal Lab</title>
+    <title>GAME Signal Lab｜把关系信号整理成可复盘的观察</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='28' fill='%23182036'/%3E%3Ccircle cx='32' cy='32' r='14' fill='%23aee8d0'/%3E%3Ccircle cx='32' cy='32' r='5' fill='%23566ff2'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="./styles.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "GAME Signal Lab",
+        "url": "/",
+        "description": "帮助成年人记录关系事件、区分事实与猜测，并形成尊重边界、可以复盘的下一步沟通。",
+        "applicationCategory": "LifestyleApplication",
+        "operatingSystem": "Any",
+        "inLanguage": "zh-CN",
+        "audience": {
+          "@type": "Audience",
+          "suggestedMinAge": 18
+        }
+      }
+    </script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">跳到主要内容</a>
 
     <div class="app-shell" id="app-shell" aria-hidden="true">
-      <aside class="sidebar" aria-label="主导航">
+      <aside class="sidebar" id="primary-sidebar" aria-label="主导航">
         <button class="brand" data-view="dashboard" aria-label="返回首页">
           <span class="brand-mark" aria-hidden="true">
             <span></span><span></span><span></span>
@@ -48,13 +91,17 @@
             <span class="nav-icon" aria-hidden="true">◇</span>
             <span>我的表达</span>
           </button>
+          <button class="nav-item" data-view="agent">
+            <span class="nav-icon" aria-hidden="true">AI</span>
+            <span>关系思考 Agent</span>
+          </button>
         </nav>
 
         <div class="sidebar-note">
           <span class="privacy-dot" aria-hidden="true"></span>
           <div>
-            <strong>仅保存在本机</strong>
-            <p>数据默认不上传、不追踪。</p>
+            <strong>关系记录仅在本机</strong>
+            <p>只有显式 Agent 消息会发送。</p>
           </div>
         </div>
 
@@ -63,10 +110,17 @@
           <span>隐私与数据</span>
         </button>
       </aside>
+      <button class="sidebar-scrim" id="sidebar-scrim" aria-label="关闭导航" hidden></button>
 
       <div class="workspace">
         <header class="topbar">
-          <button class="mobile-menu" id="mobile-menu" aria-label="打开导航" aria-expanded="false">
+          <button
+            class="mobile-menu"
+            id="mobile-menu"
+            aria-label="打开导航"
+            aria-controls="primary-sidebar"
+            aria-expanded="false"
+          >
             <span></span><span></span>
           </button>
           <div class="topbar-copy">
@@ -74,7 +128,10 @@
             <strong id="topbar-title">今日概览</strong>
           </div>
           <div class="topbar-actions">
-            <span class="local-badge"><i></i> 本地模式</span>
+            <button class="local-badge" id="platform-status" data-view="agent">
+              <i aria-hidden="true"></i>
+              本地模式
+            </button>
             <button class="avatar-button" data-view="profile" aria-label="打开个人表达设置">
               <span id="avatar-initial">我</span>
             </button>
@@ -112,12 +169,21 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+    <noscript>
+      <main>
+        <h1>GAME Signal Lab</h1>
+        <p>记录关系事件，区分事实与猜测，形成尊重边界、可以复盘的下一步沟通。</p>
+        <p>本应用需要 JavaScript 才能在浏览器本地完成记录和分析。</p>
+      </main>
+    </noscript>
+
     <template id="icon-template">
       <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </template>
 
-    <script src="./app.js"></script>
+    <script src="./runtime-config.js"></script>
+    <script type="module" src="./app.js"></script>
   </body>
 </html>
