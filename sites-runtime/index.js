@@ -30,6 +30,7 @@ const ENTITLEMENT_REASON_CODES = new Set([
   "account_request",
 ]);
 const ADMIN_USERNAME_DEFAULT = "Drac";
+const EMBEDDED_STATIC_ASSETS = null;
 const SAFETY_SYSTEM_PROMPT = [
   "你是 GAME 的成年人关系反思助手，只帮助用户区分可观察事实、个人解释与不确定性。",
   "任何明确拒绝、不舒服、停止联系或撤回同意都高于积极信号；必须建议停止推进并尊重边界。",
@@ -1926,13 +1927,27 @@ function fromBase64Url(value) {
 }
 
 async function serveStatic(request, env, path) {
-  if (!env.ASSETS?.fetch) {
-    return withSecurity(new Response("Not found", { status: 404 }));
-  }
   const target = new URL(request.url);
   if (path === "/admin") target.pathname = "/admin/index.html";
   if (path === "/") target.pathname = "/index.html";
-  const response = await env.ASSETS.fetch(new Request(target, request));
+  let response;
+  if (env.ASSETS?.fetch) {
+    response = await env.ASSETS.fetch(new Request(target, request));
+  } else {
+    const asset = EMBEDDED_STATIC_ASSETS?.[target.pathname];
+    if (!asset) {
+      response = new Response("Not found", { status: 404 });
+    } else {
+      response = new Response(request.method === "HEAD" ? null : asset.body, {
+        status: 200,
+        headers: {
+          "Content-Type": asset.contentType,
+          "Cache-Control": asset.cacheControl,
+          "Content-Length": String(new TextEncoder().encode(asset.body).byteLength),
+        },
+      });
+    }
+  }
   return withSecurity(response, { admin: path === "/admin" || path.startsWith("/admin/") });
 }
 

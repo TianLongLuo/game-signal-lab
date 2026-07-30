@@ -16,8 +16,8 @@ node build-sites/build-sites.mjs
 The build emits the Sites contract without changing the existing local Node
 runtime:
 
-- `dist/server/index.js`: Cloudflare Worker-compatible ESM entry point.
-- `dist/static/**`: the existing public application and admin console.
+- `dist/server/index.js`: Cloudflare Worker-compatible ESM entry point，并内嵌一份经过构建校验的静态资源回退，避免托管环境未注入 `ASSETS` binding 时首页返回 404。
+- `dist/static/**`: 同一份主站与管理员控制台资源，保留给支持静态资源 binding 的托管路径。
 - `dist/.openai/hosting.json`: logical D1 binding declaration.
 - `dist/.openai/drizzle/**`: D1 migration bundle.
 

@@ -1,5 +1,5 @@
-import { access, cp, mkdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { access, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -12,7 +12,9 @@ const staticEntries = [
   ["app.js", "app.js"],
   ["styles.css", "styles.css"],
   ["src", "src"],
-  ["admin", "admin"],
+  ["admin/index.html", "admin/index.html"],
+  ["admin/app.js", "admin/app.js"],
+  ["admin/styles.css", "admin/styles.css"],
 ];
 
 await rm(dist, { recursive: true, force: true });
@@ -20,10 +22,6 @@ await mkdir(join(dist, "server"), { recursive: true });
 await mkdir(staticRoot, { recursive: true });
 await mkdir(join(dist, ".openai"), { recursive: true });
 
-await cp(
-  join(root, "sites-runtime", "index.js"),
-  join(dist, "server", "index.js")
-);
 await cp(
   join(root, ".openai", "hosting.json"),
   join(dist, ".openai", "hosting.json")
@@ -43,6 +41,31 @@ for (const [source, destination] of staticEntries) {
 await writeFile(
   join(staticRoot, "runtime-config.js"),
   "window.__GAME_RUNTIME__ = Object.freeze({ apiEnabled: true, deployment: \"sites\" });\n",
+  "utf8"
+);
+
+const runtimeSource = await readFile(join(root, "sites-runtime", "index.js"), "utf8");
+const embeddedAssets = {};
+for (const file of await listFiles(staticRoot)) {
+  const publicPath = `/${relative(staticRoot, file).split(sep).join("/")}`;
+  embeddedAssets[publicPath] = {
+    body: await readFile(file, "utf8"),
+    contentType: contentTypeFor(file),
+    cacheControl: publicPath.endsWith(".html")
+      ? "no-cache"
+      : "public, max-age=300, must-revalidate",
+  };
+}
+const assetMarker = "const EMBEDDED_STATIC_ASSETS = null;";
+if (!runtimeSource.includes(assetMarker)) {
+  throw new Error("Sites runtime is missing the embedded-static-assets marker");
+}
+await writeFile(
+  join(dist, "server", "index.js"),
+  runtimeSource.replace(
+    assetMarker,
+    `const EMBEDDED_STATIC_ASSETS = Object.freeze(${JSON.stringify(embeddedAssets)});`
+  ),
   "utf8"
 );
 
@@ -72,3 +95,24 @@ process.stdout.write(
     "",
   ].join("\n")
 );
+
+async function listFiles(directory) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...(await listFiles(path)));
+    if (entry.isFile()) files.push(path);
+  }
+  return files.sort();
+}
+
+function contentTypeFor(path) {
+  return (
+    {
+      ".css": "text/css; charset=utf-8",
+      ".html": "text/html; charset=utf-8",
+      ".js": "text/javascript; charset=utf-8",
+    }[extname(path)] ?? "application/octet-stream"
+  );
+}
