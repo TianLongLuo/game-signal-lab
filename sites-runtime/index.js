@@ -1,6 +1,9 @@
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const PREAUTH_CSRF_TTL_MS = 10 * 60 * 1000;
-const PASSWORD_ITERATIONS = 160_000;
+// The deployed Sites Web Crypto runtime rejects PBKDF2 counts above 100,000.
+const PASSWORD_ITERATIONS = 100_000;
+// Bump only to invalidate counters accumulated by a production auth incident.
+const AUTH_RATE_LIMIT_NAMESPACE = "v2";
 const EXTERNAL_AI_POLICY_VERSION = "2026-07-30-v1";
 const MAX_JSON_BYTES = 128 * 1024;
 const MAX_AGENT_BYTES = 80 * 1024;
@@ -55,6 +58,16 @@ export default {
       const pathname = new URL(request.url).pathname;
       const status = error instanceof HttpError ? error.status : 500;
       const code = error instanceof HttpError ? error.code : "internal_error";
+      if (!(error instanceof HttpError) || status >= 500) {
+        console.error("game_request_failed", {
+          method: request.method,
+          pathname,
+          status,
+          errorName: safeDiagnostic(error?.name),
+          errorMessage: safeDiagnostic(error?.message),
+          causeMessage: safeDiagnostic(error?.cause?.message),
+        });
+      }
       const message =
         error instanceof HttpError
           ? error.message
@@ -73,6 +86,11 @@ export default {
     }
   },
 };
+
+function safeDiagnostic(value) {
+  if (typeof value !== "string" || !value) return null;
+  return value.replace(/[\r\n\t]+/g, " ").slice(0, 500);
+}
 
 async function route(request, env, ctx) {
   const url = new URL(request.url);
@@ -1403,7 +1421,10 @@ async function consumeAuthRateLimit(
     accountKey === null
       ? `ip:${request.headers.get("cf-connecting-ip") || "unknown"}`
       : `account:${accountKey}`;
-  const keyHash = await hmac(key, `auth-rate:${scope}:${material}`);
+  const keyHash = await hmac(
+    key,
+    `auth-rate:${AUTH_RATE_LIMIT_NAMESPACE}:${scope}:${material}`
+  );
   const now = new Date();
   const nowIso = now.toISOString();
   const expiresAt = new Date(now.getTime() + windowMs).toISOString();
