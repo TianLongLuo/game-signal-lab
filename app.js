@@ -671,6 +671,7 @@ function renderAgentAuth() {
 }
 
 function authFields(prefix) {
+  const isRegister = prefix === "register";
   return `
     <div class="field">
       <label for="${prefix}-username">用户名</label>
@@ -691,12 +692,12 @@ function authFields(prefix) {
         id="${prefix}-password"
         name="password"
         type="password"
-        minlength="12"
+        ${isRegister ? 'minlength="12"' : ""}
         maxlength="128"
-        autocomplete="${prefix === "register" ? "new-password" : "current-password"}"
+        autocomplete="${isRegister ? "new-password" : "current-password"}"
         required
       />
-      <small>至少 12 个字符；密码只提交给同源服务。</small>
+      <small>${isRegister ? "至少 12 个字符；密码只提交给同源服务。" : "密码只提交给同源服务。"}</small>
     </div>
   `;
 }
