@@ -355,11 +355,11 @@
               <form class="panel stack-form" id="mimo-form" method="post" action="/api/admin/v1/integrations/mimo-tts">
                 <div class="config-status-row">
                   <div>
-                    <h2>MiMo V2.5 TTS</h2>
+                    <h2>MiMo V2.5 TTS + ASR</h2>
                     <p id="mimo-updated">尚未加载配置</p>
                   </div>
                   <label class="toggle-field" for="mimo-enabled">
-                    <span>启用语音回应</span>
+                    <span>启用语音输入与回应</span>
                     <input id="mimo-enabled" name="enabled" type="checkbox" />
                   </label>
                 </div>
@@ -369,7 +369,7 @@
                     <option value="mimo-v2.5-tts">mimo-v2.5-tts</option>
                     <option value="mimo-v2-tts">mimo-v2-tts（兼容模型）</option>
                   </select>
-                  <small>服务地址固定为 Xiaomi MiMo 官方 HTTPS 接口。</small>
+                  <small>TTS 负责朗读；ASR（mimo-v2.5-asr）负责更准确的语音转文字，共用此处的 MiMo Key。</small>
                 </div>
                 <div class="field">
                   <label for="mimo-api-key">MiMo API Key</label>
