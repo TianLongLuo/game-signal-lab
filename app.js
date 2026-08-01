@@ -1444,7 +1444,7 @@ async function toggleStoryVoice() {
     return;
   }
   if (storyIntake.recording) {
-    stopStoryVoice();
+    stopStoryVoice({ autoSubmit: true });
     return;
   }
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
