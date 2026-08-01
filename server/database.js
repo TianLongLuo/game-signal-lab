@@ -83,6 +83,10 @@ const MIGRATIONS = [
     version: 2,
     apply: migrateToVersion2,
   },
+  {
+    version: 3,
+    apply: migrateToVersion3,
+  },
 ];
 
 export function openDatabase(path) {
@@ -240,6 +244,38 @@ function migrateToVersion2(db) {
       revoked_at TEXT,
       updated_at TEXT NOT NULL
     ) STRICT;
+  `);
+}
+
+function migrateToVersion3(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS user_rag_documents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      external_id TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('profile', 'contact', 'event')),
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (user_id, external_id)
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS user_rag_documents_user_idx
+      ON user_rag_documents(user_id, updated_at DESC);
+    CREATE VIRTUAL TABLE IF NOT EXISTS user_rag_documents_fts USING fts5(
+      user_id UNINDEXED,
+      document_id UNINDEXED,
+      kind UNINDEXED,
+      title,
+      content,
+      tokenize = 'unicode61'
+    );
+    CREATE TRIGGER IF NOT EXISTS user_rag_documents_after_delete
+      AFTER DELETE ON user_rag_documents
+      BEGIN
+        DELETE FROM user_rag_documents_fts WHERE rowid = old.id;
+      END;
   `);
 }
 
