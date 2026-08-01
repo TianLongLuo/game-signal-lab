@@ -90,6 +90,7 @@ npm start       # Node / SQLite 模式；需要安全运行时环境
 - 平台表不得在账号、会员或审计实体上混入 profile、Contact、Event、Review 或 Analysis 字段；如用户明确同步个人资料，必须使用独立的 `user_rag_documents` 表，并在每行强制保存当前 `user_id` owner。
 - Agent 请求不得自动读取本地 state、localStorage、导出文件、剪贴板或第三方聊天。
 - 只有用户在当前外部 AI 同意下明确点击同步的最少必要 profile/contact/event 文档，才可以进入自己的个人 RAG；其他本地内容不得进入请求。
+- Linux/Node 生产个人 RAG 必须使用 Qdrant 向量库；每次 upsert/search/delete 都要绑定当前会话 `user_id` payload filter，并二次校验返回 owner。未配置向量库的关键词回退只允许测试。
 - Agent prompt/reply、系统提示、provider 原始响应与 reasoning 不得持久化；个人 RAG 文档可由用户清空，撤回外部 AI 同意时必须清空。
 - 审计只保存 actor、action、resource、result、固定 reason code、request ID 和时间。
 - 审计不得保存正文、自由文本理由、密码、API Key、IP 或 User-Agent。
