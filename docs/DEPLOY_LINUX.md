@@ -131,6 +131,12 @@ server {
 两种 Key 都只在服务端使用 AES-256-GCM 加密保存；接口只返回是否已配置，
 管理员页面不会显示 Key 尾号。若要轮换 Key，直接在后台重新保存，不要改代码。
 
+若后台登录页提示“后台运行时尚未完成配置”，优先检查 `DATABASE_PATH`、
+`CONFIG_MASTER_KEY` 和同源 `/api/auth/csrf` 是否可访问；若提示“还没有管理员账号”，
+说明这是空数据库，需临时配置 `ADMIN_BOOTSTRAP_PASSWORD` 后首次登录。已有数据库时，
+引导密码不会重置现有 `Drac` 密码。登录页会把 401、CSRF、限流和服务端 5xx 分开提示，
+便于定位问题；不要把密码或 Key 粘贴到 GitHub、日志或前端配置。
+
 ## 6. Qdrant 向量库与个人 RAG
 
 Linux/Node 生产路径使用 Qdrant，不把个人文档的向量塞进 SQLite。下面是一个
