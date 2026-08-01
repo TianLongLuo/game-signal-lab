@@ -552,7 +552,7 @@ function buildDemoOverview() {
         level: demoState.deepseek.globalEnabled ? "good" : "warn",
       },
       {
-        label: "MiMo V2.5 TTS",
+        label: "MiMo V2.5 TTS + ASR",
         status: demoState.mimo.enabled ? "已启用" : "待配置",
         level: demoState.mimo.enabled ? "good" : "warn",
       },
