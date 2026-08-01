@@ -2333,7 +2333,7 @@ function secureHeaders(initial = undefined) {
   headers.set("X-Frame-Options", "DENY");
   headers.set(
     "Permissions-Policy",
-    "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+    "camera=(), microphone=(self), geolocation=(), payment=(), usb=()"
   );
   headers.set(
     "Content-Security-Policy",
