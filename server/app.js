@@ -2770,7 +2770,12 @@ function enforceRequestOrigin(request, publicOrigin) {
   if (!publicOrigin) return;
   const origin = String(request.headers.origin ?? "");
   const fetchSite = String(request.headers["sec-fetch-site"] ?? "").toLowerCase();
-  if (origin !== publicOrigin || (fetchSite && fetchSite !== "same-origin")) {
+  const clientProof = String(request.headers["x-game-client"] ?? "") === "same-origin";
+  if (
+    (origin && origin !== publicOrigin) ||
+    (!origin && (!clientProof || (fetchSite && fetchSite !== "same-origin"))) ||
+    (fetchSite && fetchSite !== "same-origin")
+  ) {
     throw new HttpError(403, "origin_rejected", "请求来源不被允许。");
   }
 }
