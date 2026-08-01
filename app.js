@@ -66,6 +66,7 @@ let currentView = "dashboard";
 let currentEventId = null;
 let reviewEventId = null;
 let preferredContactId = null;
+let editingContactId = null;
 let toastTimer = null;
 const platformClient = new PlatformClient();
 const platform = {
@@ -94,6 +95,15 @@ const storyIntake = {
   draft: "",
   draftInput: "",
   audioUrl: "",
+  archiveContactId: "",
+};
+
+const contactEditor = {
+  recording: false,
+  recognition: null,
+  voiceTimeout: null,
+  voiceDraft: "",
+  busy: false,
 };
 
 const appShell = document.querySelector("#app-shell");
@@ -199,6 +209,17 @@ function bindGlobalEvents() {
       });
     }
 
+    if (actionName === "open-contact-editor") {
+      if (event.target.closest("details")) return;
+      openContactEditor(action.dataset.contactId);
+      return;
+    }
+
+    if (actionName === "close-contact-editor") {
+      closeContactEditor();
+      return;
+    }
+
     if (actionName === "cancel-review") {
       const eventId = reviewEventId;
       reviewEventId = null;
@@ -286,7 +307,7 @@ function bindGlobalEvents() {
     }
 
     if (actionName === "story-end") {
-      endStoryIntake();
+      await endStoryIntake();
     }
 
     if (actionName === "story-skip") {
@@ -297,20 +318,14 @@ function bindGlobalEvents() {
       toggleStoryVoice();
     }
 
-    if (actionName === "story-use-draft") {
-      storyIntake.draft = storyIntake.messages
-        .filter((message) => message.role === "user")
-        .map((message) => message.content)
-        .join("\n");
-      renderCurrentView();
-      requestAnimationFrame(() => {
-        const field = document.querySelector("#event-fact");
-        if (field) {
-          field.value = storyIntake.draft;
-          field.focus();
-        }
-      });
+    if (actionName === "contact-voice") {
+      toggleContactVoice();
     }
+
+    if (actionName === "contact-ai-organize") {
+      await organizeContactDraft();
+    }
+
   });
 
   document.addEventListener("change", async (event) => {
@@ -326,6 +341,10 @@ function bindGlobalEvents() {
       const stage = document.querySelector("#event-stage");
       if (contact && stage) stage.value = contact.stage;
     }
+
+    if (event.target.matches("#story-archive-contact")) {
+      storyIntake.archiveContactId = clean(event.target.value);
+    }
   });
 
   document.addEventListener("submit", async (event) => {
@@ -334,9 +353,9 @@ function bindGlobalEvents() {
       saveProfile(new FormData(event.target));
     }
 
-    if (event.target.matches("#contact-form")) {
+    if (event.target.matches("#contact-editor-form")) {
       event.preventDefault();
-      createContact(event.target, new FormData(event.target));
+      saveContactEditor(event.target, new FormData(event.target));
     }
 
     if (event.target.matches("#event-form")) {
@@ -393,6 +412,16 @@ function bindGlobalEvents() {
       event.preventDefault();
       toggleStoryVoice();
     }
+
+    const card = event.target.closest('[data-action="open-contact-editor"]');
+    if (card && (event.key === "Enter" || event.key === " ")) {
+      event.preventDefault();
+      openContactEditor(card.dataset.contactId);
+    }
+  });
+
+  document.addEventListener("cancel", (event) => {
+    if (event.target?.matches?.("#contact-editor-dialog")) closeContactEditor();
   });
 }
 
@@ -1136,16 +1165,23 @@ function renderDashboardEmpty() {
 }
 
 function renderStoryIntake() {
-  const assistantMessages = storyIntake.messages.filter((message) => message.role === "assistant");
   const userMessages = storyIntake.messages.filter((message) => message.role === "user");
   const hasStory = storyIntake.messages.length > 0;
   const isFirstIntroduction = userMessages.length === 0;
   const canUseAgent = Boolean(platform.user && platform.externalAiConsent?.current && platform.capabilities?.agent);
   const speechSupported = Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+  const archiveTarget = storyIntake.archiveContactId || preferredContactId || "";
   return `
     <section class="story-intake panel panel--dark ${storyIntake.active ? "is-active" : ""}" aria-labelledby="story-intake-title">
       <div class="story-intake-topline">
         <p class="eyebrow">STORY INTAKE · ${storyIntake.active ? "LIVE" : "01"}</p>
+        <div class="story-target-control">
+          <label for="story-archive-contact">归档对象</label>
+          <select id="story-archive-contact" name="archiveContactId">
+            <option value="" ${archiveTarget ? "" : "selected"}>结束后新建匿名对象</option>
+            ${state.contacts.map((contact) => `<option value="${escapeAttribute(contact.id)}" ${contact.id === archiveTarget ? "selected" : ""}>${escapeHTML(contact.alias)}</option>`).join("")}
+          </select>
+        </div>
         ${storyIntake.active && storyIntake.remaining !== null ? `<span class="story-timer" aria-live="polite">首次介绍 ${storyIntake.remaining}s</span>` : ""}
       </div>
       <div class="story-intake-copy">
@@ -1176,13 +1212,15 @@ function renderStoryIntake() {
             <span class="story-shortcut">${isFirstIntroduction ? "首次介绍最多 60 秒" : "补充时点一下，10 秒后自动停"} · 电脑端按 R</span>
             <button class="button button--light button--small" type="submit" ${storyIntake.busy ? "disabled" : ""}>继续说</button>
             <button class="text-button text-button--light" type="button" data-action="story-skip" ${storyIntake.busy ? "disabled" : ""}>先跳过</button>
-            <button class="text-button text-button--light" type="button" data-action="story-end">先停在这里</button>
+            <button class="text-button text-button--light" type="button" data-action="story-end">归档并结束</button>
           </div>
         </form>
       ` : `
         <div class="story-actions">
           <button class="button button--light" type="button" data-action="story-start">${hasStory ? "继续说" : "告诉我你的故事"} <span aria-hidden="true">→</span></button>
-          ${hasStory ? '<button class="text-button text-button--light" type="button" data-action="story-use-draft">带入事件记录表</button>' : ""}
+          <button class="story-voice-button" type="button" data-action="story-voice" aria-label="${speechSupported ? "用语音开始记录" : "当前浏览器不支持语音输入"}" ${speechSupported ? "" : "disabled"}>
+            <span aria-hidden="true">◉</span>${speechSupported ? "语音输入" : "浏览器不支持语音"}
+          </button>
           ${!canUseAgent ? '<small class="story-access-note">需要登录并同意外部 AI 处理说明后开始。</small>' : ""}
         </div>
       `}
@@ -1191,7 +1229,7 @@ function renderStoryIntake() {
   `;
 }
 
-function startStoryIntake() {
+function startStoryIntake({ beginVoice = false } = {}) {
   if (!platform.user) {
     showToast("请先在 Agent 页面登录，再开始故事记录", 3600);
     navigate("agent");
@@ -1220,7 +1258,10 @@ function startStoryIntake() {
   }
   startStoryTimer();
   renderCurrentView();
-  requestAnimationFrame(() => document.querySelector("#story-answer")?.focus());
+  requestAnimationFrame(() => {
+    if (beginVoice) toggleStoryVoice();
+    else document.querySelector("#story-answer")?.focus();
+  });
 }
 
 function startStoryTimer() {
@@ -1237,10 +1278,15 @@ function startStoryTimer() {
   }, 500);
 }
 
-function endStoryIntake() {
+async function endStoryIntake() {
   window.clearInterval(storyIntake.timer);
   stopStoryVoice();
   storyIntake.controller?.abort();
+  const storyText = storyIntake.messages
+    .filter((message) => message.role === "user")
+    .map((message) => message.content)
+    .join("\n")
+    .trim();
   storyIntake.active = false;
   storyIntake.busy = false;
   storyIntake.draft = storyIntake.messages
@@ -1248,8 +1294,88 @@ function endStoryIntake() {
     .map((message) => message.content)
     .join("\n");
   storyIntake.draftInput = "";
+  if (!storyText) {
+    renderCurrentView();
+    showToast("记录已结束；还没有可归档的故事");
+    return;
+  }
+  const archived = await archiveStoryAsContact(storyText);
   renderCurrentView();
-  showToast(storyIntake.draft ? "故事已留在当前浏览器，可以继续整理" : "记录已结束");
+  if (archived) {
+    showToast("故事已整理并归档到对象档案");
+    navigate("people");
+  } else {
+    showToast("故事已留在当前浏览器，可以继续整理");
+  }
+}
+
+async function archiveStoryAsContact(storyText) {
+  if (state.contacts.length >= MAX_CONTACTS && !getContact(storyIntake.archiveContactId || preferredContactId)) {
+    showToast(`最多保存 ${MAX_CONTACTS} 个匿名档案；请先整理现有档案`, 4600);
+    return false;
+  }
+  const targetId = storyIntake.archiveContactId || preferredContactId || "";
+  const target = getContact(targetId);
+  const summary = await summarizeStoryForArchive(storyText);
+  const block = `故事记录（${todayISO()}）\n${summary.slice(0, 850)}\n\n原始片段\n${storyText.slice(0, 280)}`;
+  let archivedId = target?.id || "";
+  if (!commitState((next) => {
+    if (target) {
+      const contact = next.contacts.find((item) => item.id === target.id);
+      if (contact) contact.context = `${contact.context ? `${contact.context}\n\n` : ""}${block}`.slice(-1200);
+      return;
+    }
+    archivedId = uid();
+    next.contacts.push({
+      id: archivedId,
+      alias: nextArchiveAlias(next.contacts),
+      stage: "刚认识",
+      context: block.slice(0, 1200),
+      goal: "",
+      boundary: "",
+      createdAt: new Date().toISOString(),
+    });
+  })) return false;
+  preferredContactId = archivedId || target.id;
+  storyIntake.archiveContactId = preferredContactId;
+  return true;
+}
+
+function nextArchiveAlias(contacts) {
+  const used = new Set(contacts.map((contact) => contact.alias.toLocaleLowerCase("zh-CN")));
+  const base = `对象-${todayISO().replaceAll("-", "")}`;
+  let alias = base;
+  let index = 2;
+  while (used.has(alias.toLocaleLowerCase("zh-CN"))) {
+    alias = `${base}-${index}`;
+    index += 1;
+  }
+  return alias.slice(0, 40);
+}
+
+async function summarizeStoryForArchive(storyText) {
+  const fallback = storyIntake.messages
+    .filter((message) => message.role === "assistant" && message.content)
+    .at(-1)?.content || storyText;
+  const canUseAgent = Boolean(platform.user && platform.externalAiConsent?.current && platform.capabilities?.agent);
+  if (!canUseAgent) return fallback;
+  try {
+    showToast("正在整理故事并归档…", 2200);
+    const transcript = storyIntake.messages
+      .slice(-12)
+      .map((message) => `${message.role === "user" ? "用户" : "回应"}：${message.content}`)
+      .join("\n")
+      .slice(-10000);
+    const complete = await platformClient.streamAgent([
+      {
+        role: "user",
+        content: `请把下面这段匿名关系故事整理成对象档案摘要。只根据原文，不推断对方的想法；用三段短句输出：认识背景、已表达目标或需求、已经出现的边界或待确认点。如果信息缺失就写“未提及”。不要使用 JSON、不要给建议。\n\n${transcript}`,
+      },
+    ]);
+    return clean(complete || fallback).slice(0, 1050) || fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 async function submitStoryAnswer(answer) {
@@ -1308,6 +1434,10 @@ async function submitStoryAnswer(answer) {
 }
 
 function toggleStoryVoice() {
+  if (!storyIntake.active) {
+    startStoryIntake({ beginVoice: true });
+    return;
+  }
   if (storyIntake.recording) {
     stopStoryVoice();
     return;
@@ -1400,171 +1530,15 @@ function renderEventCard(item) {
 }
 
 function renderNewEvent() {
-  const storyPanel = renderStoryIntake();
-  if (!state.contacts.length) {
-    return `
-      <div class="page">
-        ${pageHeading("记录事件", "先建立一个匿名关系档案", "只用代号记录必要信息，避免保存真实姓名或可识别的隐私。")}
-        ${storyPanel}
-        <div class="empty-state">
-          <div>
-            <div class="empty-symbol" aria-hidden="true">◎</div>
-            <h3>还没有关系档案</h3>
-            <p>建立匿名代号后，就可以把互动事件放回具体关系和阶段中分析。</p>
-            <button class="button button--primary" data-view="people">新建关系档案</button>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  const selectedContact =
-    state.contacts.find((item) => item.id === preferredContactId) || state.contacts[0];
-  preferredContactId = selectedContact.id;
-  const contactOptions = state.contacts
-    .map(
-      (item) =>
-        `<option value="${escapeAttribute(item.id)}" ${item.id === selectedContact.id ? "selected" : ""}>${escapeHTML(item.alias)} · ${escapeHTML(item.stage)}</option>`
-    )
-    .join("");
-  const stages = ["刚认识", "持续了解", "第一次见面", "约会中", "稳定交往", "关系降温", "关系结束"];
-
   return `
     <div class="page">
       ${renderStorageRecoveryNotice()}
       ${pageHeading(
-        "记录事件",
-        "先把故事说出来。",
-        "可以从一个片段开始，也可以先听我问几个温和的问题。你随时可以跳过或结束。"
+        "开始记录",
+        "只保留一个聊天框。",
+        "把故事说出来，文字或语音都可以。结束后，AI 会把摘要归档到对象档案。"
       )}
-
-      ${storyPanel}
-
-      <div class="form-layout">
-        <form class="panel" id="event-form">
-          <div class="form-section">
-            <h3>事件背景</h3>
-            <p>选择关系档案，并说明这次互动发生在什么阶段与场景。</p>
-            <div class="form-grid">
-              <div class="field">
-                <label for="event-contact">关系代号</label>
-                <select id="event-contact" name="contactId" required>${contactOptions}</select>
-              </div>
-              <div class="field">
-                <label for="event-date">发生日期</label>
-                <input id="event-date" name="date" type="date" value="${todayISO()}" required />
-              </div>
-              <div class="field">
-                <label for="event-stage">互动阶段</label>
-                <select id="event-stage" name="stage" required>
-                  ${stages
-                    .map(
-                      (stage) =>
-                        `<option ${stage === selectedContact.stage ? "selected" : ""}>${stage}</option>`
-                    )
-                    .join("")}
-                </select>
-              </div>
-              <div class="field">
-                <label for="event-scene">场景</label>
-                <input
-                  id="event-scene"
-                  name="scene"
-                  placeholder="例如：咖啡店见面后 / 微信聊天"
-                  maxlength="200"
-                  required
-                />
-              </div>
-            </div>
-          </div>
-
-          <div class="form-section">
-            <h3>事实与解释</h3>
-            <p>“对方说今天很忙”是事实；“对方不想见我”是解释。</p>
-            <div class="form-grid">
-              <div class="field field--full">
-                <label for="event-fact">观察到的事实</label>
-                <textarea
-                  id="event-fact"
-                  name="fact"
-                  placeholder="尽量记录原话、行为、时间与上下文，不写结论。"
-                  maxlength="2000"
-                  required
-                ></textarea>
-              </div>
-              <div class="field field--full">
-                <label for="event-interpretation">你当时的解释</label>
-                <textarea
-                  id="event-interpretation"
-                  name="interpretation"
-                  placeholder="你认为这件事可能意味着什么？"
-                  maxlength="1000"
-                  required
-                ></textarea>
-              </div>
-              <div class="field">
-                <label for="event-feeling">当时的感受</label>
-                <input id="event-feeling" name="feeling" placeholder="例如：期待、紧张、失落" maxlength="200" />
-              </div>
-              <div class="field">
-                <label for="event-reply">你如何回应</label>
-                <input id="event-reply" name="reply" placeholder="尚未回应也可以写“还没有”" maxlength="400" />
-              </div>
-            </div>
-          </div>
-
-          <div class="form-section" role="group" aria-labelledby="evidence-heading">
-            <h3 id="evidence-heading">边界确认与证据线索</h3>
-            <p>先确认边界，再看积极信号。拒绝、不舒服或持续回避不会被其他信号抵消。</p>
-            <div class="field field--full boundary-field">
-              <label for="event-boundary-status">当前是否存在明确拒绝、不舒服或要求停止？</label>
-              <select id="event-boundary-status" name="boundaryStatus" required>
-                <option value="">请选择最符合事实的一项</option>
-                <option value="clear">没有看到明确拒绝或不舒服</option>
-                <option value="uncertain">我不确定，需要先降低强度或澄清</option>
-                <option value="stop">有明确拒绝、不舒服或要求停止</option>
-              </select>
-            </div>
-            <p>只勾选你能从实际互动中确认的项目。单次行为通常不足以下结论。</p>
-            <div class="choice-grid">
-              ${signalCheckbox("directInterest", "对方明确表达兴趣", "清楚说出想继续了解、喜欢或期待见面")}
-              ${signalCheckbox("futurePlan", "主动安排下一次互动", "提出具体时间、地点或共同计划")}
-              ${signalCheckbox("repeatedInitiative", "多次主动联系或投入", "不是单次礼貌，而是持续出现的模式")}
-              ${signalCheckbox("detailedFollowup", "记得细节并继续追问", "对你的生活和表达有持续关注")}
-              ${signalCheckbox("politeOnly", "目前只有普通礼貌", "没有超出常规社交的投入或明确表达")}
-              ${signalCheckbox("delayAvoidance", "持续回避或多次失约", "长期模糊、推迟，且没有替代安排", true)}
-              ${signalCheckbox("explicitDecline", "已明确拒绝", "对方清楚表示不愿意继续或不感兴趣", true)}
-              ${signalCheckbox("discomfort", "出现不舒服或边界提醒", "对方表现紧张、抗拒，或要求停止", true)}
-            </div>
-            <p class="form-error" id="event-signal-error" role="alert" aria-live="polite"></p>
-          </div>
-
-          <div class="form-section">
-            <label class="check-row">
-              <input type="checkbox" name="consent" required />
-              <span>我确认只记录合法、必要的信息；如涉及第三方原话或聊天内容，我有权保存和处理这些内容。</span>
-            </label>
-            <div class="button-row" style="margin-top:20px">
-              <button class="button button--primary" type="submit">生成结构化分析 →</button>
-              <button class="button button--quiet" type="button" data-view="dashboard">暂不记录</button>
-            </div>
-          </div>
-        </form>
-
-        <aside class="panel panel--dark helper-card">
-          <div>
-            <p class="eyebrow" style="color:rgba(255,255,255,.5)">记录提示</p>
-            <h3>像摄像机一样写事实</h3>
-          </div>
-          <ol>
-            <li>写能被录音或录像看到的内容。</li>
-            <li>把“我觉得”放进解释，而不是事实。</li>
-            <li>记录频率和变化，不放大一次行为。</li>
-            <li>如果对方已经拒绝，停止寻找反向证据。</li>
-          </ol>
-          <p class="helper-quote">“对方看了三次手机”是事实；“对方觉得我无聊”仍然只是一个可能解释。</p>
-        </aside>
-      </div>
+      ${renderStoryIntake()}
     </div>
   `;
 }
@@ -1611,60 +1585,11 @@ function renderPeople() {
         </div>
       </section>
 
-      <div class="form-layout">
-        <form class="panel" id="contact-form">
-          <p class="eyebrow">可选的手动补充</p>
-          <h2 class="panel-title">想自己补一笔，也可以。</h2>
-          <div class="form-grid">
-            <div class="field">
-              <label for="contact-alias">匿名代号</label>
-              <input id="contact-alias" name="alias" placeholder="例如：A-17 / 山茶" maxlength="20" required />
-              <small>请不要使用真实姓名、手机号或账号。</small>
-            </div>
-            <div class="field">
-              <label for="contact-stage">当前阶段</label>
-              <select id="contact-stage" name="stage" required>
-                <option>刚认识</option>
-                <option>持续了解</option>
-                <option>约会中</option>
-                <option>稳定交往</option>
-                <option>关系降温</option>
-                <option>关系结束</option>
-              </select>
-            </div>
-            <div class="field field--full">
-              <label for="contact-context">认识背景</label>
-              <textarea
-                id="contact-context"
-                name="context"
-                placeholder="例如：读书会认识，目前见过两次。"
-                maxlength="1000"
-              ></textarea>
-            </div>
-            <div class="field">
-              <label for="contact-goal">已公开表达的关系目标</label>
-              <input id="contact-goal" name="goal" placeholder="未知也可以直接写未知" maxlength="500" />
-            </div>
-            <div class="field">
-              <label for="contact-boundary">已明确的边界</label>
-              <input id="contact-boundary" name="boundary" placeholder="例如：不喜欢临时见面" maxlength="500" />
-            </div>
-          </div>
-          <div class="button-row" style="margin-top:20px">
-            <button class="button button--primary" type="submit">保存匿名档案</button>
-          </div>
-        </form>
-
-        <aside class="panel panel--flat">
-          <p class="eyebrow">隐私最小化</p>
-          <h2 class="panel-title" style="margin-top:10px">少记一点，更安全。</h2>
-          <ul class="principle-list">
-            <li><span>01</span><div>使用代号，避免保存可识别信息。</div></li>
-            <li><span>02</span><div>只记录对理解事件有必要的内容。</div></li>
-            <li><span>03</span><div>对方要求停止或删除时，尊重其边界。</div></li>
-          </ul>
-        </aside>
-      </div>
+      <section class="archive-guidance panel" aria-label="档案编辑说明">
+        <p class="eyebrow">档案会从对话里长出来</p>
+        <h2 class="panel-title">点击对象卡片，编辑、语音补充，或让 AI 帮你整理。</h2>
+        <p>开始记录里的故事结束后会自动归档到这里。你可以随时打开卡片二级窗口修正代号、阶段、背景、目标和边界。</p>
+      </section>
 
       <section class="section">
         <div class="section-title">
@@ -1679,12 +1604,13 @@ function renderPeople() {
                 <div>
                   <div class="empty-symbol" aria-hidden="true">◎</div>
                   <h3>还没有档案</h3>
-                  <p>完成上方表单后，匿名档案会显示在这里。</p>
+                  <p>在“开始记录”里结束一段故事，AI 会自动建立匿名档案。</p>
                 </div>
               </div>
             `
         }
       </section>
+      ${renderContactEditor()}
     </div>
   `;
 }
@@ -1699,7 +1625,14 @@ function renderPersonCard(item) {
     ? signalMeta[latest.analysis?.strength] || signalMeta.weak
     : signalMeta.weak;
   return `
-    <article class="person-card" data-contact-id="${escapeAttribute(item.id)}">
+    <article
+      class="person-card"
+      data-action="open-contact-editor"
+      data-contact-id="${escapeAttribute(item.id)}"
+      role="button"
+      tabindex="0"
+      aria-label="编辑对象档案：${escapeAttribute(item.alias)}"
+    >
       <header class="person-card-head">
         <div class="person-avatar">${escapeHTML(item.alias.slice(0, 2).toUpperCase())}</div>
         <div>
@@ -1760,9 +1693,9 @@ function renderPersonCard(item) {
         <span class="inline-actions">
           <button
             class="text-button"
-            data-view="new-event"
+            data-action="open-contact-editor"
             data-contact-id="${escapeAttribute(item.id)}"
-          >记录互动 →</button>
+          >编辑档案 →</button>
           <button
             class="text-button text-button--danger"
             data-action="delete-contact"
@@ -1773,6 +1706,260 @@ function renderPersonCard(item) {
       </div>
     </article>
   `;
+}
+
+function renderContactEditor() {
+  const contact = getContact(editingContactId);
+  if (!contact) return "";
+  const speechSupported = Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+  return `
+    <dialog class="contact-editor-dialog" id="contact-editor-dialog" aria-labelledby="contact-editor-title">
+      <form class="contact-editor" id="contact-editor-form">
+        <header class="contact-editor-head">
+          <div>
+            <p class="eyebrow">OBJECT PROFILE · EDIT</p>
+            <h2 id="contact-editor-title">编辑 ${escapeHTML(contact.alias)}</h2>
+          </div>
+          <button class="text-button" type="button" data-action="close-contact-editor" aria-label="关闭对象档案编辑">关闭</button>
+        </header>
+        <div class="contact-editor-grid">
+          <div class="field">
+            <label for="editor-contact-alias">匿名代号</label>
+            <input id="editor-contact-alias" name="alias" value="${escapeAttribute(contact.alias)}" maxlength="40" required />
+          </div>
+          <div class="field">
+            <label for="editor-contact-stage">当前阶段</label>
+            <select id="editor-contact-stage" name="stage">
+              ${["刚认识", "持续了解", "第一次见面", "约会中", "稳定交往", "关系降温", "关系结束"].map((stage) => `<option ${stage === contact.stage ? "selected" : ""}>${stage}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field field--full">
+            <label for="editor-contact-context">认识背景</label>
+            <textarea id="editor-contact-context" name="context" maxlength="1200">${escapeHTML(contact.context)}</textarea>
+          </div>
+          <div class="field">
+            <label for="editor-contact-goal">已表达目标</label>
+            <textarea id="editor-contact-goal" name="goal" maxlength="600">${escapeHTML(contact.goal)}</textarea>
+          </div>
+          <div class="field">
+            <label for="editor-contact-boundary">已知边界</label>
+            <textarea id="editor-contact-boundary" name="boundary" maxlength="600">${escapeHTML(contact.boundary)}</textarea>
+          </div>
+        </div>
+        <section class="contact-editor-voice" aria-labelledby="contact-voice-title">
+          <div>
+            <p class="eyebrow" id="contact-voice-title">VOICE NOTE · OPTIONAL</p>
+            <p>说出想补充的内容，先留在草稿里；点击 AI 整理后再写入上面的档案字段。</p>
+          </div>
+          <textarea id="contact-voice-input" name="voiceDraft" maxlength="2400" placeholder="例如：她最近主动提到下周的展览，但说临时安排不太方便。">${escapeHTML(contactEditor.voiceDraft)}</textarea>
+          <div class="contact-editor-actions">
+            <button class="story-voice-button" id="contact-voice-button" type="button" data-action="contact-voice" ${speechSupported ? "" : "disabled"}>
+              <span aria-hidden="true">${contactEditor.recording ? "■" : "◉"}</span>${contactEditor.recording ? "正在听…" : speechSupported ? "语音输入" : "浏览器不支持语音"}
+            </button>
+            <button class="button button--quiet" type="button" data-action="contact-ai-organize" ${speechSupported || contactEditor.voiceDraft ? "" : ""}>AI 整理补充</button>
+            <button class="button button--primary" type="submit">保存档案</button>
+          </div>
+          <p class="contact-editor-status" id="contact-editor-status" role="status" aria-live="polite"></p>
+        </section>
+      </form>
+    </dialog>
+  `;
+}
+
+function openContactEditor(contactId) {
+  if (!getContact(contactId)) return;
+  stopContactVoice();
+  editingContactId = contactId;
+  contactEditor.voiceDraft = "";
+  contactEditor.busy = false;
+  contactEditor.organized = false;
+  renderCurrentView();
+  requestAnimationFrame(() => {
+    const dialog = document.querySelector("#contact-editor-dialog");
+    if (dialog && !dialog.open) dialog.showModal();
+    dialog?.querySelector("#editor-contact-alias")?.focus({ preventScroll: true });
+  });
+}
+
+function closeContactEditor() {
+  stopContactVoice();
+  const dialog = document.querySelector("#contact-editor-dialog");
+  if (dialog?.open) dialog.close();
+  editingContactId = null;
+  contactEditor.voiceDraft = "";
+  contactEditor.busy = false;
+  contactEditor.organized = false;
+  if (currentView === "people") renderCurrentView();
+}
+
+function toggleContactVoice() {
+  if (contactEditor.recording) {
+    stopContactVoice();
+    return;
+  }
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const input = document.querySelector("#contact-voice-input");
+  if (!Recognition || !input) {
+    showToast("当前浏览器不支持语音识别，请改用文字输入", 3600);
+    return;
+  }
+  const recognition = new Recognition();
+  recognition.lang = "zh-CN";
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  let finalText = input.value || "";
+  recognition.onresult = (event) => {
+    let interim = "";
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const piece = event.results[index][0]?.transcript || "";
+      if (event.results[index].isFinal) finalText += piece;
+      else interim += piece;
+    }
+    contactEditor.voiceDraft = `${finalText}${interim}`.trim().slice(0, 2400);
+    input.value = contactEditor.voiceDraft;
+  };
+  recognition.onend = () => {
+    contactEditor.recording = false;
+    contactEditor.recognition = null;
+    window.clearTimeout(contactEditor.voiceTimeout);
+    updateContactVoiceButton();
+  };
+  recognition.onerror = () => {
+    contactEditor.recording = false;
+    contactEditor.recognition = null;
+    window.clearTimeout(contactEditor.voiceTimeout);
+    updateContactVoiceButton();
+    showToast("语音输入没有完成，请检查麦克风权限或改用文字", 3600);
+  };
+  contactEditor.recording = true;
+  contactEditor.recognition = recognition;
+  contactEditor.voiceTimeout = window.setTimeout(() => stopContactVoice(), 10_000);
+  updateContactVoiceButton();
+  requestAnimationFrame(() => {
+    try { recognition.start(); } catch { stopContactVoice(); }
+  });
+}
+
+function stopContactVoice() {
+  window.clearTimeout(contactEditor.voiceTimeout);
+  try { contactEditor.recognition?.stop(); } catch { /* already stopped */ }
+  contactEditor.recording = false;
+  contactEditor.recognition = null;
+  updateContactVoiceButton();
+}
+
+function updateContactVoiceButton() {
+  const button = document.querySelector("#contact-voice-button");
+  if (!button) return;
+  button.classList.toggle("is-recording", contactEditor.recording);
+  button.innerHTML = `<span aria-hidden="true">${contactEditor.recording ? "■" : "◉"}</span>${contactEditor.recording ? "正在听…" : "语音输入"}`;
+}
+
+async function organizeContactDraft() {
+  const input = document.querySelector("#contact-voice-input");
+  const status = document.querySelector("#contact-editor-status");
+  const draft = clean(input?.value).slice(0, 2400);
+  if (!draft) {
+    showToast("先输入或说一段想补充的内容", 2800);
+    input?.focus();
+    return;
+  }
+  contactEditor.voiceDraft = draft;
+  const canUseAgent = Boolean(platform.user && platform.externalAiConsent?.current && platform.capabilities?.agent);
+  if (!canUseAgent) {
+    const context = document.querySelector("#editor-contact-context");
+    if (context) context.value = `${context.value ? `${context.value}\n\n` : ""}${draft}`.slice(-1200);
+    contactEditor.organized = true;
+    if (status) status.textContent = "当前未连接 Agent，已把语音草稿放入认识背景。";
+    return;
+  }
+  contactEditor.busy = true;
+  setContactEditorBusy(true);
+  if (status) status.textContent = "正在用 Agent 整理这段补充…";
+  try {
+    const complete = await platformClient.streamAgent([
+      {
+        role: "user",
+        content: `请把下面这段匿名关系档案补充整理为 JSON，只允许包含 context、goal、boundary 三个字符串字段；不确定的信息写“未提及”，不要推断对方想法，不要输出 markdown。\n\n${draft}`,
+      },
+    ]);
+    const parsed = parseContactDraft(complete);
+    if (parsed) {
+      const context = document.querySelector("#editor-contact-context");
+      const goal = document.querySelector("#editor-contact-goal");
+      const boundary = document.querySelector("#editor-contact-boundary");
+      if (parsed.context) context.value = parsed.context;
+      if (parsed.goal) goal.value = parsed.goal;
+      if (parsed.boundary) boundary.value = parsed.boundary;
+      contactEditor.organized = true;
+      if (status) status.textContent = "已整理到档案字段，确认无误后保存。";
+    } else {
+      const context = document.querySelector("#editor-contact-context");
+      if (context) context.value = `${context.value ? `${context.value}\n\n` : ""}${clean(complete || draft)}`.slice(-1200);
+      if (status) status.textContent = "模型返回了普通文本，已放入认识背景，请检查后保存。";
+    }
+  } catch (error) {
+    if (status) status.textContent = error instanceof PlatformError ? error.message : "AI 整理未完成，草稿仍保留在输入框。";
+  } finally {
+    contactEditor.busy = false;
+    setContactEditorBusy(false);
+  }
+}
+
+function parseContactDraft(text) {
+  const match = String(text || "").match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    const parsed = JSON.parse(match[0]);
+    if (!parsed || typeof parsed !== "object") return null;
+    return {
+      context: clean(parsed.context).slice(0, 1200),
+      goal: clean(parsed.goal).slice(0, 600),
+      boundary: clean(parsed.boundary).slice(0, 600),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function setContactEditorBusy(busy) {
+  document.querySelectorAll("#contact-editor-form input, #contact-editor-form textarea, #contact-editor-form select, #contact-editor-form button").forEach((node) => {
+    if (node.matches('[data-action="close-contact-editor"]')) return;
+    node.disabled = busy;
+  });
+}
+
+function saveContactEditor(form, formData) {
+  const contact = getContact(editingContactId);
+  if (!contact || contactEditor.busy) return;
+  const alias = clean(formData.get("alias")).slice(0, 40);
+  const duplicate = state.contacts.some((item) => item.id !== contact.id && item.alias.toLocaleLowerCase("zh-CN") === alias.toLocaleLowerCase("zh-CN"));
+  if (!alias) {
+    form.querySelector("#editor-contact-alias")?.focus();
+    showToast("请先填写匿名代号", 2800);
+    return;
+  }
+  if (duplicate) {
+    showToast("匿名代号已存在，请换一个可区分的代号", 3200);
+    form.querySelector("#editor-contact-alias")?.focus();
+    return;
+  }
+  const voiceDraft = clean(formData.get("voiceDraft")).slice(0, 2400);
+  const context = clean(formData.get("context"));
+  if (!commitState((next) => {
+    const target = next.contacts.find((item) => item.id === contact.id);
+    if (!target) return;
+    target.alias = alias;
+    target.stage = clean(formData.get("stage"));
+    target.context = (!contactEditor.organized && voiceDraft
+      ? `${context ? `${context}\n\n` : ""}语音补充\n${voiceDraft}`
+      : context).slice(-1200);
+    target.goal = clean(formData.get("goal")).slice(0, 600);
+    target.boundary = clean(formData.get("boundary")).slice(0, 600);
+  })) return;
+  preferredContactId = contact.id;
+  closeContactEditor();
+  showToast(`对象档案已更新：${alias}`);
 }
 
 function contactInsights(events) {
