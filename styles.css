@@ -1224,6 +1224,102 @@ main {
   color: var(--ink-500) !important;
 }
 
+.person-history {
+  position: relative;
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.person-history summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0 10px;
+  color: var(--ink-800);
+  cursor: pointer;
+  font-size: 11px;
+  list-style: none;
+}
+
+.person-history summary::-webkit-details-marker {
+  display: none;
+}
+
+.person-history summary::after {
+  content: "⌄";
+  color: var(--ink-500);
+  font-size: 15px;
+  transition: transform 160ms ease;
+}
+
+.person-history:not([open]) summary::after {
+  transform: rotate(-90deg);
+}
+
+.person-history summary span {
+  margin-left: auto;
+  margin-right: 7px;
+  color: var(--ink-500);
+  font-family: var(--font-data);
+  font-size: 10px;
+}
+
+.person-history-list {
+  display: grid;
+  gap: 11px;
+  padding-bottom: 4px;
+}
+
+.person-history-list article {
+  padding: 11px 12px;
+  border-left: 1px solid var(--line-strong);
+  background: rgba(241, 240, 235, .72);
+}
+
+.person-history-list header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 7px;
+}
+
+.person-history-list header strong {
+  overflow: hidden;
+  color: var(--ink-900);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.person-history-list time,
+.person-history-list small {
+  flex: 0 0 auto;
+  color: var(--ink-500);
+  font-family: var(--font-data);
+  font-size: 9px;
+}
+
+.person-history-list p {
+  display: block;
+  min-height: 0;
+  margin: 5px 0 0;
+  color: var(--ink-700);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.person-history-list p b {
+  margin-right: 5px;
+  color: var(--ink-500);
+  font-size: 9px;
+  font-weight: 500;
+}
+
+.person-history-list small {
+  display: block;
+  margin-top: 7px;
+}
+
 .story-intake {
   position: relative;
   margin: 0 0 24px;
