@@ -78,6 +78,21 @@ Accepted model values are exactly:
 Legacy `deepseek-chat` and `deepseek-reasoner` values return `400
 INVALID_MODEL`.
 
+## MiMo V2.5 TTS configuration and proxy
+
+Administrator configuration is available at
+`/api/admin/v1/integrations/mimo-tts`. The upstream base URL is fixed to
+`https://api.xiaomimimo.com/v1/`; accepted models are `mimo-v2.5-tts` and the
+legacy-compatible `mimo-v2-tts`. The GET response only exposes
+`apiKeyConfigured`, never a key or masked suffix. Keys are encrypted with the
+same AES-256-GCM service-side configuration used for DeepSeek.
+
+`POST /api/voice/tts` accepts a short `{ "text": string, "voice"?: string }`
+payload. It requires the same authentication, Agent entitlement and current
+external-AI consent as the text Agent. The Worker calls MiMo server-side and
+returns only audio bytes; prompts, audio payloads and provider response bodies
+are not persisted or written to audit logs.
+
 ## Entitlement mutation
 
 `PATCH /api/admin/v1/users/{userId}/entitlements` changes exactly one
