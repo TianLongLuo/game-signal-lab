@@ -1223,6 +1223,7 @@ async function request(path, options = {}) {
   const method = options.method || "GET";
   const headers = {
     Accept: "application/json",
+    "X-Game-Client": "same-origin",
   };
   if (options.body !== undefined) {
     headers["Content-Type"] = "application/json";
@@ -1278,7 +1279,7 @@ async function prepareAuthCsrf() {
   const response = await fetch("/api/auth/csrf", {
     credentials: "same-origin",
     cache: "no-store",
-    headers: { Accept: "application/json" },
+    headers: { Accept: "application/json", "X-Game-Client": "same-origin" },
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok || typeof payload?.csrfToken !== "string") {
