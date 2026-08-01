@@ -1282,9 +1282,14 @@ function startStoryTimer() {
 
 async function endStoryIntake() {
   window.clearInterval(storyIntake.timer);
+  const pendingInput = clean(storyIntake.draftInput).slice(0, 2400);
   stopStoryVoice();
   storyIntake.voiceAutoSubmit = false;
   storyIntake.controller?.abort();
+  if (pendingInput) {
+    storyIntake.messages.push({ role: "user", content: pendingInput });
+  }
+  storyIntake.draftInput = "";
   const storyText = storyIntake.messages
     .filter((message) => message.role === "user")
     .map((message) => message.content)
@@ -1320,12 +1325,22 @@ async function archiveStoryAsContact(storyText) {
   const targetId = storyIntake.archiveContactId || preferredContactId || "";
   const target = getContact(targetId);
   const summary = await summarizeStoryForArchive(storyText);
-  const block = `故事记录（${todayISO()}）\n${summary.slice(0, 850)}\n\n原始片段\n${storyText.slice(0, 280)}`;
+  const block = [
+    `故事记录（${todayISO()}）`,
+    `认识背景：${summary.context || "未提及"}`,
+    `已表达目标或需求：${summary.goal || "未提及"}`,
+    `边界或待确认点：${summary.boundary || "未提及"}`,
+    `\n原始片段\n${storyText.slice(0, 280)}`,
+  ].join("\n").slice(0, 1200);
   let archivedId = target?.id || "";
   if (!commitState((next) => {
     if (target) {
       const contact = next.contacts.find((item) => item.id === target.id);
-      if (contact) contact.context = `${contact.context ? `${contact.context}\n\n` : ""}${block}`.slice(-1200);
+      if (contact) {
+        contact.context = `${contact.context ? `${contact.context}\n\n` : ""}${block}`.slice(-1200);
+        if (summary.goal && summary.goal !== "未提及") contact.goal = summary.goal.slice(0, 600);
+        if (summary.boundary && summary.boundary !== "未提及") contact.boundary = summary.boundary.slice(0, 600);
+      }
       return;
     }
     archivedId = uid();
@@ -1333,9 +1348,9 @@ async function archiveStoryAsContact(storyText) {
       id: archivedId,
       alias: nextArchiveAlias(next.contacts),
       stage: "刚认识",
-      context: block.slice(0, 1200),
-      goal: "",
-      boundary: "",
+      context: block,
+      goal: summary.goal || "",
+      boundary: summary.boundary || "",
       createdAt: new Date().toISOString(),
     });
   })) return false;
@@ -1360,8 +1375,9 @@ async function summarizeStoryForArchive(storyText) {
   const fallback = storyIntake.messages
     .filter((message) => message.role === "assistant" && message.content)
     .at(-1)?.content || storyText;
+  const fallbackSummary = { context: fallback, goal: "", boundary: "" };
   const canUseAgent = Boolean(platform.user && platform.externalAiConsent?.current && platform.capabilities?.agent);
-  if (!canUseAgent) return fallback;
+  if (!canUseAgent) return fallbackSummary;
   try {
     showToast("正在整理故事并归档…", 2200);
     const transcript = storyIntake.messages
@@ -1372,12 +1388,12 @@ async function summarizeStoryForArchive(storyText) {
     const complete = await platformClient.streamAgent([
       {
         role: "user",
-        content: `请把下面这段匿名关系故事整理成对象档案摘要。只根据原文，不推断对方的想法；用三段短句输出：认识背景、已表达目标或需求、已经出现的边界或待确认点。如果信息缺失就写“未提及”。不要使用 JSON、不要给建议。\n\n${transcript}`,
+        content: `请把下面这段匿名关系故事整理成对象档案字段。只根据原文，不推断对方的想法，也不要给建议。只输出 JSON，不要 Markdown：{"context":"认识背景和可观察事实","goal":"已表达目标或需求；没有就写未提及","boundary":"明确边界、拒绝或待确认点；没有就写未提及"}。\n\n${transcript}`,
       },
     ]);
-    return clean(complete || fallback).slice(0, 1050) || fallback;
+    return parseContactDraft(complete) || { context: clean(complete || fallback).slice(0, 1050) || fallback, goal: "", boundary: "" };
   } catch {
-    return fallback;
+    return fallbackSummary;
   }
 }
 
