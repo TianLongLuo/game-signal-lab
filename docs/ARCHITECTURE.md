@@ -34,6 +34,7 @@ flowchart LR
     Access["会员 / grant / consent"]
     Audit["最小审计"]
     Provider["加密 provider 配置"]
+    RAG["user_id 隔离的个人 RAG"]
     Stream["SSE 清洗代理"]
   end
 
@@ -51,6 +52,7 @@ flowchart LR
   API --> Access
   API --> Audit
   API --> Provider
+  API --> RAG
   API --> Stream
   Stream -->|"固定端点 / HTTPS"| DeepSeek["DeepSeek V4"]
 
@@ -155,16 +157,29 @@ AND external AI consent is current
 
 provider 开关与全局授权总闸是两个独立控制。全局关闭时管理员也不能绕过；会员/grant 也不能代替外部 AI 明示同意。
 
-### 4.3 Agent 请求
+### 4.3 个人知识库与 Agent 请求
+
+默认登录、打开 Agent 或浏览本地档案都不会上传关系内容。用户在对象档案
+页明确点击同步后，客户端只发送经过 allowlist 的 profile/contact/event
+最少必要字段。服务端把文档写入 `user_rag_documents`，每一行都包含不可
+省略的 owner `user_id`；Node 建立 FTS5 辅助索引，Sites 使用 D1 owner
+过滤的有界关键词检索。
+
+Agent 调用前先按当前会话 `user_id` 检索，不能使用客户端提供的用户 ID、
+档案 ID 或 system 消息。检索结果只在本次 DeepSeek 请求内作为私有上下文，
+不写入 prompt/reply 审计。用户撤回外部 AI 同意或清空知识库时，服务端
+删除该用户的服务器档案；管理员不能读取正文或检索结果。
+
+### 4.4 Agent 请求
 
 1. 用户在 Agent 视图明确提交最少必要文本。
-2. 客户端只提交受限的 `user` / `assistant` 消息；本地 profile、contacts、events、reviews 不参与组装。
-3. 服务端拒绝客户端 `system` 消息并注入固定安全提示词。
+2. 客户端只提交受限的 `user` / `assistant` 消息；未明确同步的本地 profile、contacts、events、reviews 不参与组装。
+3. 服务端以会话 `user_id` 检索已同步的个人 RAG 文档，再拒绝客户端 `system` 消息并注入固定安全提示词。
 4. 服务端解密 API Key，调用固定 `https://api.deepseek.com/chat/completions`。
 5. 模型只允许 `deepseek-v4-flash` 或 `deepseek-v4-pro`。
 6. 上游 SSE 在服务端逐帧解析，只重新发出允许的 assistant content/role、已知结束原因和 `[DONE]`。
 7. 超时、取消、畸形帧、超大帧、输出超限或缺少 `[DONE]` 时关闭失败。
-8. 服务端只写调用成功/失败等审计元数据，不写 prompt/reply、系统提示或上游原始响应。
+8. 服务端只写调用成功/失败等审计元数据，不写 prompt/reply、系统提示、检索正文或上游原始响应。
 
 ### 4.4 管理与审计
 
