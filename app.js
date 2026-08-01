@@ -22,14 +22,14 @@ const LEGACY_STORAGE_KEYS = ["game-signal-lab:v1"];
 const defaultState = createDefaultState();
 
 const viewTitles = {
-  dashboard: "今日概览",
+  dashboard: "我的空间",
   "new-event": "开始记录",
   people: "对象档案",
   review: "行动复盘",
   profile: "我的表达",
   privacy: "隐私与数据",
   analysis: "信号分析",
-  agent: "关系思考 Agent",
+  agent: "一起想想",
 };
 
 const signalMeta = {
@@ -74,6 +74,8 @@ const platform = {
   membership: null,
   externalAiConsent: null,
   capabilities: null,
+  knowledge: null,
+  knowledgeBusy: false,
   agentMessages: [],
   agentBusy: false,
   agentController: null,
@@ -261,6 +263,14 @@ function bindGlobalEvents() {
         "撤回后，新的 Agent 请求会被服务端拒绝；本地关系记录不会被删除。是否继续？"
       );
       if (confirmed) await updateExternalAiConsent(false);
+    }
+
+    if (actionName === "sync-knowledge") {
+      await syncPersonalKnowledge();
+    }
+
+    if (actionName === "clear-knowledge") {
+      await clearPersonalKnowledge();
     }
 
     if (actionName === "agent-starter") {
@@ -480,6 +490,7 @@ async function refreshPlatformSession() {
     platform.membership = null;
     platform.externalAiConsent = null;
     platform.capabilities = null;
+    platform.knowledge = null;
     syncPlatformStatus();
     if (currentView === "agent") renderCurrentView();
     return;
@@ -491,6 +502,11 @@ async function refreshPlatformSession() {
     platform.membership = payload.membership || null;
     platform.externalAiConsent = payload.externalAiConsent || null;
     platform.capabilities = payload.capabilities || null;
+    try {
+      platform.knowledge = (await platformClient.knowledgeStatus()).knowledge || null;
+    } catch {
+      platform.knowledge = null;
+    }
   } catch (error) {
     if (error instanceof PlatformError && error.status === 401) {
       platform.available = true;
@@ -498,12 +514,14 @@ async function refreshPlatformSession() {
       platform.membership = null;
       platform.externalAiConsent = null;
       platform.capabilities = null;
+      platform.knowledge = null;
     } else {
       platform.available = false;
       platform.user = null;
       platform.membership = null;
       platform.externalAiConsent = null;
       platform.capabilities = null;
+      platform.knowledge = null;
     }
   }
   syncPlatformStatus();
@@ -531,7 +549,7 @@ function renderAgent() {
   if (platform.available === null) {
     return `
       <div class="page">
-        ${pageHeading("关系思考 Agent", "正在确认服务状态。", "你的本地关系记录不会在后台自动上传。")}
+        ${pageHeading("一起想想", "我先确认一下房间是否准备好。", "你的本地关系记录不会在后台自动上传。")}
         <section class="panel agent-loading" aria-live="polite">正在连接同源服务…</section>
       </div>
     `;
@@ -549,11 +567,11 @@ function renderAgent() {
       <div class="agent-empty">
         <p class="eyebrow">A QUIET PLACE TO THINK</p>
         <h2>先坐下来，<br />听听自己真正担心什么。</h2>
-        <p>你可以把一段关系里的困惑交给我一起理一理。我会陪你区分发生过的事、你的感受，以及还需要确认的部分。</p>
+        <p>把一段关系里的困惑交给我一起理一理吧。我会陪你看看发生过什么、你感受到了什么，以及还有哪些地方值得直接问一问。</p>
         <div class="agent-starters">
-          <button type="button" data-action="agent-starter" data-prompt="帮我把一段关系困惑拆成：事实、我的解释、还缺什么信息。">拆分事实与解释</button>
-          <button type="button" data-action="agent-starter" data-prompt="请帮我写一个低压力、允许对方自由拒绝的邀约。">准备低压力表达</button>
-          <button type="button" data-action="agent-starter" data-prompt="我收到一个边界信号，请帮我判断现在应当停止、降级还是直接沟通确认。">检查边界信号</button>
+          <button type="button" data-action="agent-starter" data-prompt="我有点分不清发生过的事和自己的猜测，可以陪我一起理一理吗？">我有点分不清了</button>
+          <button type="button" data-action="agent-starter" data-prompt="我想自然地表达想见面，也想让对方很容易拒绝，能帮我写得像我一点吗？">帮我说得自然一点</button>
+          <button type="button" data-action="agent-starter" data-prompt="我好像感受到对方的不舒服了。现在应该先停下来、留一点空间，还是直接确认？">我想先确认边界</button>
         </div>
       </div>
     `;
@@ -569,6 +587,7 @@ function renderAgent() {
           <span>已登录</span>
           <strong>${escapeHTML(platform.user.username)}</strong>
           <small>${escapeHTML(membershipLabel(platform.membership))}</small>
+          <small>${platform.knowledge?.documentCount ? `个人档案 ${platform.knowledge.documentCount} 条` : "尚未同步个人档案"}</small>
           <button class="text-button" type="button" data-action="revoke-ai-consent">撤回 AI 同意</button>
           <button class="text-button" type="button" data-action="platform-logout">退出账户</button>
         </div>
@@ -588,7 +607,7 @@ function renderAgent() {
         </section>
 
         <aside class="agent-compose">
-          <p class="eyebrow">给 Agent 的编辑笺</p>
+          <p class="eyebrow">给未来的自己留一句话</p>
           <h2>写下此刻最想弄清楚的事。</h2>
           <form id="agent-form">
             <label class="visually-hidden" for="agent-prompt">发送给关系思考 Agent 的内容</label>
@@ -603,7 +622,7 @@ function renderAgent() {
             <p class="form-error" id="agent-error" role="alert" aria-live="assertive"></p>
             <div class="button-row">
               <button class="button button--primary" type="submit" ${platform.agentBusy ? "disabled" : ""}>
-                开始流式思考
+                陪我理一理
               </button>
               ${
                 platform.agentBusy
@@ -613,7 +632,7 @@ function renderAgent() {
             </div>
           </form>
           <p class="agent-privacy-note">
-            明示发送的内容会由服务器转交 DeepSeek；服务端不保存提示词或回复正文。账号、授权和调用结果元数据会进入安全审计。
+            明示发送的内容会由服务器转交 DeepSeek；只有你主动同步的个人档案会被当前账号检索。服务端不保存提示词或回复正文，管理员也看不到档案正文。
           </p>
         </aside>
       </div>
@@ -629,7 +648,7 @@ function renderExternalAiConsent() {
       <header class="auth-masthead">
         <p class="eyebrow">EXTERNAL AI · CONSENT NOTE</p>
         <h1>发送之前，<br /><em>先把数据去向说清楚。</em></h1>
-        <p>本地日记不会自动上传。只有你在 Agent 输入框中明确发送的文字会由 GAME 服务端转交 DeepSeek 生成回应。</p>
+        <p>本地日记不会自动上传。你可以只发送当前文字，也可以之后在“对象档案”页明确同步自己的匿名资料，让 Agent 只在你的个人空间里检索。</p>
       </header>
       <div class="consent-layout">
         <section>
@@ -637,16 +656,16 @@ function renderExternalAiConsent() {
           <h2>这项同意与会员资格分开。</h2>
           <ul>
             <li>请只使用代号和最少必要上下文，不发送姓名、账号、地址、定位或完整聊天记录。</li>
-            <li>GAME 服务端不保存提示词和模型回复正文；会保留调用结果等最小安全审计元数据。</li>
+            <li>GAME 服务端不保存提示词和模型回复正文；个人档案只有在你明确同步后才进入自己的隔离知识库。</li>
             <li>DeepSeek 作为外部模型提供方会接收你明确发送的文字；其处理受相应服务政策约束。</li>
-            <li>你可以随时撤回。撤回后新的 Agent 请求会被服务端拒绝，本地日记不受影响。</li>
+            <li>你可以随时撤回。撤回后新的 Agent 请求会被服务端拒绝，并清空服务器个人知识库；本地日记不受影响。</li>
           </ul>
         </section>
         <form id="external-ai-consent-form">
           <input type="hidden" name="policyVersion" value="${escapeAttribute(policyVersion)}" />
           <label class="check-row consent-check">
             <input type="checkbox" name="accepted" required />
-            <span>我已阅读并同意将我主动发送的 Agent 文字交给 DeepSeek 处理。</span>
+            <span>我已阅读并同意将我主动发送的文字，以及我之后明确同步的个人档案片段，交给 DeepSeek 处理。</span>
           </label>
           <p class="form-error" data-consent-error role="alert" aria-live="assertive"></p>
           <button class="button button--primary" type="submit">同意并继续</button>
@@ -824,6 +843,7 @@ async function logoutPlatform() {
   platform.membership = null;
   platform.externalAiConsent = null;
   platform.capabilities = null;
+  platform.knowledge = null;
   platform.agentMessages = [];
   platform.agentController?.abort();
   platform.agentBusy = false;
@@ -851,6 +871,118 @@ async function updateExternalAiConsent(accepted, policyVersion = "", form = null
       showToast(message, 4600);
     }
   }
+}
+
+async function syncPersonalKnowledge() {
+  if (!platform.user) {
+    showToast("请先登录，再同步你的个人档案", 3600);
+    navigate("agent");
+    return;
+  }
+  if (!platform.externalAiConsent?.current) {
+    showToast("同步前需要先确认外部 AI 数据处理说明", 3600);
+    navigate("agent");
+    return;
+  }
+  if (platform.knowledgeBusy) return;
+  platform.knowledgeBusy = true;
+  renderCurrentView();
+  try {
+    const payload = await platformClient.syncKnowledge(buildKnowledgeDocuments());
+    platform.knowledge = payload.knowledge || null;
+    showToast(
+      `已把 ${payload.knowledge?.documentCount ?? 0} 条档案同步到你的个人知识库`
+    );
+  } catch (error) {
+    showToast(
+      error instanceof PlatformError ? error.message : "个人档案同步未完成，请稍后重试。",
+      4600
+    );
+  } finally {
+    platform.knowledgeBusy = false;
+    renderCurrentView();
+  }
+}
+
+async function clearPersonalKnowledge() {
+  if (!platform.user || platform.knowledgeBusy) return;
+  const confirmed = window.confirm(
+    "这会删除服务器上的个人知识库，不会删除本机关系记录。是否继续？"
+  );
+  if (!confirmed) return;
+  platform.knowledgeBusy = true;
+  renderCurrentView();
+  try {
+    const payload = await platformClient.clearKnowledge();
+    platform.knowledge = payload.knowledge || null;
+    showToast("服务器个人知识库已清空");
+  } catch (error) {
+    showToast(
+      error instanceof PlatformError ? error.message : "清空未完成，请稍后重试。",
+      4600
+    );
+  } finally {
+    platform.knowledgeBusy = false;
+    renderCurrentView();
+  }
+}
+
+function buildKnowledgeDocuments() {
+  const documents = [];
+  const profileContent = [
+    state.profile.goal ? `我想要：${state.profile.goal}` : "",
+    state.profile.boundaries ? `我的边界：${state.profile.boundaries}` : "",
+    state.profile.anxiety ? `我容易在这些时候不安：${state.profile.anxiety}` : "",
+    state.profile.voice ? `我更自然的表达方式：${state.profile.voice}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  if (profileContent) {
+    documents.push({
+      externalId: "profile",
+      kind: "profile",
+      title: "我的表达与边界",
+      content: profileContent.slice(0, 6000),
+    });
+  }
+
+  for (const contact of state.contacts) {
+    const content = [
+      `关系代号：${contact.alias}`,
+      `当前阶段：${contact.stage || "未填写"}`,
+      `认识背景：${contact.context || "未填写"}`,
+      `对方已表达的目标：${contact.goal || "未知"}`,
+      `已知边界：${contact.boundary || "未记录"}`,
+    ].join("\n");
+    documents.push({
+      externalId: `contact:${contact.id}`,
+      kind: "contact",
+      title: `${contact.alias} · 对象档案`,
+      content: content.slice(0, 6000),
+    });
+  }
+
+  const contactAliases = new Map(state.contacts.map((contact) => [contact.id, contact.alias]));
+  for (const event of state.events) {
+    const alias = contactAliases.get(event.contactId) || "匿名对象";
+    const content = [
+      `对象：${alias}`,
+      `日期：${event.date || "未填写"}`,
+      `场景：${event.scene || "未填写"}`,
+      `事实：${event.fact || "未填写"}`,
+      `我的解释：${event.interpretation || "未填写"}`,
+      `当时的感受：${event.feeling || "未填写"}`,
+      `我的回应：${event.reply || "未填写"}`,
+      `边界状态：${event.boundaryStatus || "未填写"}`,
+    ].join("\n");
+    documents.push({
+      externalId: `event:${event.id}`,
+      kind: "event",
+      title: `${alias} · ${event.scene || event.date || "一次互动"}`,
+      content: content.slice(0, 6000),
+    });
+  }
+  return documents.slice(0, 500);
 }
 
 async function submitAgentPrompt(form, formData) {
@@ -930,19 +1062,19 @@ function renderDashboard() {
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .slice(0, 4);
   const heroTitle = state.profile.name
-    ? `${escapeHTML(state.profile.name)}，<br />先写下发生了什么。`
-    : "先写下<br />发生了什么。";
+    ? `${escapeHTML(state.profile.name)}，<br />最近心里挂着什么？`
+    : "最近心里<br />挂着什么？";
 
   return `
     <div class="page">
       ${renderStorageRecoveryNotice()}
       <section class="hero-grid">
         <article class="hero-card">
-          <p class="eyebrow">从混乱走向清晰</p>
+          <p class="eyebrow">给自己一点时间</p>
           <h1>${heroTitle}</h1>
-          <p>把事实与猜测分开，再决定要不要行动。明确表达和真实反馈，始终比任何信号推断更可靠。</p>
+          <p>不用急着下结论。把那一刻告诉我，我们一起把发生过的事、你的感受和还没说出口的话理一理。</p>
           <button class="button" data-view="new-event">
-            记录一件互动
+            开始说说
             <span aria-hidden="true">→</span>
           </button>
         </article>
@@ -950,31 +1082,31 @@ function renderDashboard() {
           <div class="signal-lens" aria-label="信号透镜图形">
             <span class="lens-core">WHY?</span>
           </div>
-          <p class="lens-caption">信号不是答案，<br />而是需要放回情境的证据。</p>
+          <p class="lens-caption">有些感觉很真，<br />答案还是要回到对话里。</p>
         </article>
       </section>
 
       <section class="metric-grid" aria-label="使用数据概览">
         <article class="metric-card">
-          <span>已记录事件</span>
+          <span>留下的片段</span>
           <strong>${state.events.length.toString().padStart(2, "0")}</strong>
-          <small>每条记录都可以继续补充结果</small>
+          <small>故事可以慢慢补，不必一次完整</small>
         </article>
         <article class="metric-card">
-          <span>已完成复盘</span>
+          <span>已经想明白</span>
           <strong>${completedReviews.toString().padStart(2, "0")}</strong>
-          <small>真实反馈会修正原来的判断</small>
+          <small>真实发生的事，会帮你调整答案</small>
         </article>
         <article class="metric-card">
-          <span>边界优先提醒</span>
+          <span>需要慢一点</span>
           <strong>${boundaryFirstEvents.toString().padStart(2, "0")}</strong>
-          <small>回避、拒绝和不舒服不会被积极信号覆盖</small>
+          <small>不舒服、拒绝和回避，都值得被认真听见</small>
         </article>
       </section>
 
       <section class="section">
         <div class="section-title">
-          <h2>最近事件</h2>
+          <h2>最近留下的片段</h2>
           ${state.events.length ? '<button class="text-button" data-view="review">查看全部复盘 →</button>' : ""}
         </div>
         ${
@@ -992,11 +1124,11 @@ function renderDashboardEmpty() {
     <div class="empty-state">
       <div>
         <div class="empty-symbol" aria-hidden="true">＋</div>
-        <h3>从一个真实事件开始</h3>
-        <p>如果暂时没有可记录的事件，可以先加载一组匿名示例，看看分析和复盘如何工作。</p>
+        <h3>从一句话开始就好</h3>
+        <p>你不需要先把事情想完整。打开“开始记录”，我会先听你说，再问一个温和的问题。</p>
         <div class="button-row" style="justify-content:center">
-          <button class="button button--primary" data-view="new-event">创建第一条记录</button>
-          <button class="button button--quiet" data-action="load-sample">载入匿名示例</button>
+          <button class="button button--primary" data-view="new-event">开始记录</button>
+          <button class="button button--quiet" data-action="load-sample">看看匿名示例</button>
         </div>
       </div>
     </div>
@@ -1016,8 +1148,8 @@ function renderStoryIntake() {
         ${storyIntake.active ? `<span class="story-timer" aria-live="polite">${storyIntake.remaining}s</span>` : ""}
       </div>
       <div class="story-intake-copy">
-        <h2 id="story-intake-title">把这段关系，慢慢说清楚。</h2>
-        <p>不用一次讲完整。我会先听，再问一个问题；你可以跳过任何一题，也可以随时停下来。</p>
+        <h2 id="story-intake-title">我在听，你慢慢说。</h2>
+        <p>不用准备好答案，也不用从头讲起。我会听着你的线索，一次只问一个最有帮助的问题；不想回答，就跳过去。</p>
       </div>
       ${hasStory ? `
         <div class="story-thread" aria-live="polite">
@@ -1029,26 +1161,26 @@ function renderStoryIntake() {
           `).join("")}
         </div>
       ` : `
-        <div class="story-prompt-note"><span>先从这里开始</span><strong>在哪里认识的？当时发生了什么？</strong></div>
+        <div class="story-prompt-note"><span>你可以从这里开始</span><strong>告诉我你的故事。你们在哪里认识？那天发生了什么？</strong></div>
       `}
       ${storyIntake.active ? `
         <form class="story-answer-form" id="story-answer-form">
           <label class="visually-hidden" for="story-answer">告诉我你的故事</label>
-          <textarea id="story-answer" name="answer" maxlength="2400" placeholder="写下你愿意分享的部分…" ${storyIntake.busy ? "disabled" : ""}>${escapeHTML(storyIntake.draftInput)}</textarea>
+          <textarea id="story-answer" name="answer" maxlength="2400" placeholder="想到哪儿说到哪儿…" ${storyIntake.busy ? "disabled" : ""}>${escapeHTML(storyIntake.draftInput)}</textarea>
           <div class="story-controls">
             <button class="story-voice-button ${storyIntake.recording ? "is-recording" : ""}" type="button" data-action="story-voice" aria-label="${storyIntake.recording ? "停止语音输入" : "开始语音输入"}">
               <span aria-hidden="true">${storyIntake.recording ? "■" : "◉"}</span>
               ${storyIntake.recording ? "正在听…" : speechSupported ? "语音输入" : "浏览器不支持语音"}
             </button>
-            <span class="story-shortcut">点击一次，10 秒后自动结束 · R 键</span>
-            <button class="button button--light button--small" type="submit" ${storyIntake.busy ? "disabled" : ""}>继续</button>
-            <button class="text-button text-button--light" type="button" data-action="story-skip" ${storyIntake.busy ? "disabled" : ""}>跳过</button>
-            <button class="text-button text-button--light" type="button" data-action="story-end">结束记录</button>
+            <span class="story-shortcut">点一下开始，10 秒后自动停 · 电脑端按 R</span>
+            <button class="button button--light button--small" type="submit" ${storyIntake.busy ? "disabled" : ""}>继续说</button>
+            <button class="text-button text-button--light" type="button" data-action="story-skip" ${storyIntake.busy ? "disabled" : ""}>先跳过</button>
+            <button class="text-button text-button--light" type="button" data-action="story-end">先停在这里</button>
           </div>
         </form>
       ` : `
         <div class="story-actions">
-          <button class="button button--light" type="button" data-action="story-start">${hasStory ? "继续这个故事" : "开始记录"} <span aria-hidden="true">→</span></button>
+          <button class="button button--light" type="button" data-action="story-start">${hasStory ? "继续说" : "告诉我你的故事"} <span aria-hidden="true">→</span></button>
           ${hasStory ? '<button class="text-button text-button--light" type="button" data-action="story-use-draft">带入事件记录表</button>' : ""}
           ${!canUseAgent ? '<small class="story-access-note">需要登录并同意外部 AI 处理说明后开始。</small>' : ""}
         </div>
@@ -1081,7 +1213,7 @@ function startStoryIntake() {
   if (!storyIntake.messages.length) {
     storyIntake.messages.push({
       role: "assistant",
-      content: "告诉我你的故事。可以先从你们在哪里认识、当时发生了什么开始。",
+      content: "告诉我你的故事。你可以从你们在哪里认识、那天发生了什么开始，也可以从此刻最让你在意的地方说起。",
     });
     void speakStoryText(storyIntake.messages.at(-1).content);
   }
@@ -1440,13 +1572,38 @@ function renderPeople() {
     <div class="page">
       ${pageHeading(
         "对象档案",
-        "每一个对象，都是一张可以慢慢补全的卡片。",
-        "这里集中查看背景、目标、边界和互动深度。只用代号，不保存身份证、住址、定位等无关隐私。"
+        "把你在意的人，放回一段完整的故事里。",
+        "从“开始记录”说起，档案会在对话里慢慢长出来。这里集中查看背景、目标、边界和互动深度。"
       )}
+
+      <section class="knowledge-sync panel" aria-labelledby="knowledge-sync-title">
+        <div>
+          <p class="eyebrow">只属于你的个人知识库</p>
+          <h2 id="knowledge-sync-title">让 Agent 只记得你愿意保留的部分。</h2>
+          <p>点击同步后，本机的匿名档案和事件会发送到你的账户专属空间。之后 Agent 只会检索你的资料，不会读取其他用户的内容；撤回外部 AI 同意会同时清空服务器知识库。</p>
+        </div>
+        <div class="knowledge-sync-actions">
+          <span class="knowledge-status" aria-live="polite">${
+            platform.knowledge?.documentCount
+              ? `已保存 ${platform.knowledge.documentCount} 条 · ${escapeHTML(formatDate(platform.knowledge.updatedAt?.slice(0, 10)))}`
+              : platform.user
+                ? "尚未同步到服务器"
+                : "登录后可同步"
+          }</span>
+          <div class="button-row">
+            <button class="button button--primary" type="button" data-action="sync-knowledge" ${platform.knowledgeBusy ? "disabled" : ""}>
+              ${platform.knowledgeBusy ? "同步中…" : "同步我的档案"}
+            </button>
+            ${platform.knowledge?.documentCount ? `<button class="button button--quiet" type="button" data-action="clear-knowledge" ${platform.knowledgeBusy ? "disabled" : ""}>清空服务器档案</button>` : ""}
+          </div>
+          <small>同步是一次明确操作，不会因为登录或打开 Agent 自动发生。</small>
+        </div>
+      </section>
 
       <div class="form-layout">
         <form class="panel" id="contact-form">
-          <h2 class="panel-title">新建匿名档案</h2>
+          <p class="eyebrow">可选的手动补充</p>
+          <h2 class="panel-title">想自己补一笔，也可以。</h2>
           <div class="form-grid">
             <div class="field">
               <label for="contact-alias">匿名代号</label>
