@@ -73,6 +73,25 @@ export class PlatformClient {
     });
   }
 
+  async knowledgeStatus() {
+    return requestJSON("/api/me/knowledge");
+  }
+
+  async syncKnowledge(documents) {
+    return requestJSON("/api/me/knowledge", {
+      method: "PUT",
+      headers: this.#writeHeaders(),
+      body: JSON.stringify({ documents }),
+    });
+  }
+
+  async clearKnowledge() {
+    return requestJSON("/api/me/knowledge", {
+      method: "DELETE",
+      headers: this.#writeHeaders(),
+    });
+  }
+
   async streamAgent(messages, { onText, signal } = {}) {
     const normalizedMessages = normalizeAgentMessages(messages);
     const response = await fetch("/api/agent/stream", {
