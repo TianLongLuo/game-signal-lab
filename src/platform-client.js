@@ -201,6 +201,28 @@ export class PlatformClient {
     return response.blob();
   }
 
+  async transcribeVoice(blob, { signal } = {}) {
+    if (!(blob instanceof Blob) || !blob.size) {
+      throw new PlatformError("没有可识别的语音内容。", { code: "audio_empty" });
+    }
+    const audio = await blobToDataUrl(blob);
+    const response = await fetch("/api/voice/asr", {
+      method: "POST",
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: this.#writeHeaders({ Accept: "application/json" }),
+      body: JSON.stringify({ audio }),
+      signal,
+    });
+    if (!response.ok) throw await responseError(response);
+    const payload = await response.json().catch(() => ({}));
+    const text = typeof payload.text === "string" ? payload.text.trim() : "";
+    if (!text) {
+      throw new PlatformError("语音服务没有识别出文字。", { code: "asr_empty" });
+    }
+    return text;
+  }
+
   #writeHeaders(extra = {}) {
     const csrfToken = this.csrfToken;
     return {
@@ -219,6 +241,15 @@ export class PlatformClient {
     }
     return payload.csrfToken;
   }
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new PlatformError("语音文件读取失败。", { code: "audio_read_failed" }));
+    reader.readAsDataURL(blob);
+  });
 }
 
 export function normalizeAgentMessages(messages) {
