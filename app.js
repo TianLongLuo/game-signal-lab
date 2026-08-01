@@ -104,6 +104,7 @@ const contactEditor = {
   recognition: null,
   voiceTimeout: null,
   voiceDraft: "",
+  voiceAutoOrganize: false,
   busy: false,
 };
 
@@ -1282,6 +1283,7 @@ function startStoryTimer() {
 
 async function endStoryIntake() {
   window.clearInterval(storyIntake.timer);
+  storyIntake.active = false;
   const pendingInput = clean(storyIntake.draftInput).slice(0, 2400);
   stopStoryVoice();
   storyIntake.voiceAutoSubmit = false;
@@ -1295,7 +1297,6 @@ async function endStoryIntake() {
     .map((message) => message.content)
     .join("\n")
     .trim();
-  storyIntake.active = false;
   storyIntake.busy = false;
   storyIntake.draft = storyIntake.messages
     .filter((message) => message.role === "user")
@@ -1489,18 +1490,19 @@ async function toggleStoryVoice() {
     if (input) input.value = storyIntake.draftInput;
   };
   recognition.onend = () => {
-    const shouldSubmit = storyIntake.voiceAutoSubmit;
+    const draft = clean(storyIntake.draftInput).slice(0, 2400);
+    const shouldSubmit = storyIntake.active && (storyIntake.voiceAutoSubmit || draft);
     storyIntake.voiceAutoSubmit = false;
     storyIntake.recording = false;
     storyIntake.recognition = null;
     window.clearTimeout(storyIntake.voiceTimeout);
     renderCurrentView();
-    if (shouldSubmit) {
+    if (shouldSubmit && draft) {
       window.setTimeout(() => {
-        const draft = storyIntake.draftInput;
-        if (draft) void submitStoryAnswer(draft);
-        else showToast("没有听到可提交的内容，可以再试一次或改用文字", 3200);
+        void submitCorrectedStoryVoice(draft);
       }, 0);
+    } else if (storyIntake.active && !draft) {
+      showToast("没有听到可提交的内容，可以再试一次或改用文字", 3200);
     }
   };
   recognition.onerror = () => {
@@ -1523,6 +1525,27 @@ async function toggleStoryVoice() {
   });
 }
 
+async function submitCorrectedStoryVoice(draft) {
+  const corrected = await correctSpeechTranscript(draft);
+  await submitStoryAnswer(corrected || draft);
+}
+
+async function correctSpeechTranscript(draft) {
+  const canUseAgent = Boolean(platform.user && platform.externalAiConsent?.current && platform.capabilities?.agent);
+  if (!canUseAgent || !draft) return draft;
+  try {
+    const complete = await platformClient.streamAgent([
+      {
+        role: "user",
+        content: `请只校正下面这段中文语音识别文本中的明显错别字、同音词、断句和标点。保留原意、人物、时间、地点、数量和不确定性，不要补写事实，不要解释，只输出校正后的原文：\n\n${draft}`,
+      },
+    ]);
+    return clean(complete).slice(0, 2400) || draft;
+  } catch {
+    return draft;
+  }
+}
+
 function stopStoryVoice({ autoSubmit = false } = {}) {
   window.clearTimeout(storyIntake.voiceTimeout);
   if (autoSubmit) storyIntake.voiceAutoSubmit = true;
@@ -1530,7 +1553,7 @@ function stopStoryVoice({ autoSubmit = false } = {}) {
   if (autoSubmit && !storyIntake.recognition) {
     const draft = storyIntake.draftInput;
     storyIntake.voiceAutoSubmit = false;
-    if (draft) void submitStoryAnswer(draft);
+    if (draft) void submitCorrectedStoryVoice(draft);
   }
   storyIntake.recording = false;
   storyIntake.recognition = null;
@@ -1845,7 +1868,7 @@ function closeContactEditor() {
 
 async function toggleContactVoice() {
   if (contactEditor.recording) {
-    stopContactVoice();
+    stopContactVoice({ autoOrganize: true });
     return;
   }
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1871,10 +1894,15 @@ async function toggleContactVoice() {
     input.value = contactEditor.voiceDraft;
   };
   recognition.onend = () => {
+    const shouldOrganize = contactEditor.voiceAutoOrganize || Boolean(contactEditor.voiceDraft);
+    contactEditor.voiceAutoOrganize = false;
     contactEditor.recording = false;
     contactEditor.recognition = null;
     window.clearTimeout(contactEditor.voiceTimeout);
     updateContactVoiceButton();
+    if (shouldOrganize && editingContactId && contactEditor.voiceDraft) {
+      window.setTimeout(() => void organizeContactDraft(), 0);
+    }
   };
   recognition.onerror = () => {
     contactEditor.recording = false;
@@ -1885,15 +1913,16 @@ async function toggleContactVoice() {
   };
   contactEditor.recording = true;
   contactEditor.recognition = recognition;
-  contactEditor.voiceTimeout = window.setTimeout(() => stopContactVoice(), 10_000);
+  contactEditor.voiceTimeout = window.setTimeout(() => stopContactVoice({ autoOrganize: true }), 10_000);
   updateContactVoiceButton();
   requestAnimationFrame(() => {
     try { recognition.start(); } catch { stopContactVoice(); }
   });
 }
 
-function stopContactVoice() {
+function stopContactVoice({ autoOrganize = false } = {}) {
   window.clearTimeout(contactEditor.voiceTimeout);
+  if (autoOrganize) contactEditor.voiceAutoOrganize = true;
   try { contactEditor.recognition?.stop(); } catch { /* already stopped */ }
   contactEditor.recording = false;
   contactEditor.recognition = null;
