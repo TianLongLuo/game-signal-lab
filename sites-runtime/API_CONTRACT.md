@@ -111,7 +111,7 @@ Accepted model values are exactly:
 Legacy `deepseek-chat` and `deepseek-reasoner` values return `400
 INVALID_MODEL`.
 
-## MiMo V2.5 TTS configuration and proxy
+## MiMo V2.5 TTS configuration and TTS/ASR proxy
 
 Administrator configuration is available at
 `/api/admin/v1/integrations/mimo-tts`. The upstream base URL is fixed to
@@ -125,6 +125,12 @@ payload. It requires the same authentication, Agent entitlement and current
 external-AI consent as the text Agent. The Worker calls MiMo server-side and
 returns only audio bytes; prompts, audio payloads and provider response bodies
 are not persisted or written to audit logs.
+
+`POST /api/voice/asr` accepts `{ "audio": "data:<audio-mime>;base64,..." }`,
+requires the same authentication, Agent entitlement and current external-AI
+consent, and calls the fixed `mimo-v2.5-asr` model with the official
+`input_audio` message shape. It returns `{ "text": string }`; uploaded audio
+and provider response bodies are not persisted or written to audit logs.
 
 ## Entitlement mutation
 
