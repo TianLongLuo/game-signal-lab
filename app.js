@@ -79,6 +79,21 @@ const platform = {
   agentController: null,
 };
 
+const storyIntake = {
+  active: false,
+  busy: false,
+  messages: [],
+  controller: null,
+  recognition: null,
+  recording: false,
+  startedAt: 0,
+  remaining: 60,
+  timer: null,
+  draft: "",
+  draftInput: "",
+  audioUrl: "",
+};
+
 const appShell = document.querySelector("#app-shell");
 const main = document.querySelector("#main-content");
 const ageGate = document.querySelector("#age-gate");
@@ -255,6 +270,37 @@ function bindGlobalEvents() {
         prompt.focus();
       }
     }
+
+    if (actionName === "story-start") {
+      startStoryIntake();
+    }
+
+    if (actionName === "story-end") {
+      endStoryIntake();
+    }
+
+    if (actionName === "story-skip") {
+      submitStoryAnswer("（跳过这一题）");
+    }
+
+    if (actionName === "story-voice") {
+      toggleStoryVoice();
+    }
+
+    if (actionName === "story-use-draft") {
+      storyIntake.draft = storyIntake.messages
+        .filter((message) => message.role === "user")
+        .map((message) => message.content)
+        .join("\n");
+      renderCurrentView();
+      requestAnimationFrame(() => {
+        const field = document.querySelector("#event-fact");
+        if (field) {
+          field.value = storyIntake.draft;
+          field.focus();
+        }
+      });
+    }
   });
 
   document.addEventListener("change", async (event) => {
@@ -308,6 +354,11 @@ function bindGlobalEvents() {
       await submitAgentPrompt(event.target, new FormData(event.target));
     }
 
+    if (event.target.matches("#story-answer-form")) {
+      event.preventDefault();
+      await submitStoryAnswer(clean(new FormData(event.target).get("answer")));
+    }
+
     if (event.target.matches("#external-ai-consent-form")) {
       event.preventDefault();
       const formData = new FormData(event.target);
@@ -322,6 +373,15 @@ function bindGlobalEvents() {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && sidebar.classList.contains("is-open")) {
       setMobileMenu(false, true);
+    }
+    if (
+      event.key.toLowerCase() === "r" &&
+      currentView === "new-event" &&
+      storyIntake.active &&
+      !isTypingTarget(event.target)
+    ) {
+      event.preventDefault();
+      toggleStoryVoice();
     }
   });
 }
@@ -487,9 +547,9 @@ function renderAgent() {
     ? platform.agentMessages.map(renderAgentMessage).join("")
     : `
       <div class="agent-empty">
-        <p class="eyebrow">Editorial prompt desk</p>
-        <h2>先把问题写清楚，<br />再寻找行动。</h2>
-        <p>Agent 适合帮你区分事实、解释与边界。它不会读取本地事件，也不会替你判断另一个人的内心。</p>
+        <p class="eyebrow">A QUIET PLACE TO THINK</p>
+        <h2>先坐下来，<br />听听自己真正担心什么。</h2>
+        <p>你可以把一段关系里的困惑交给我一起理一理。我会陪你区分发生过的事、你的感受，以及还需要确认的部分。</p>
         <div class="agent-starters">
           <button type="button" data-action="agent-starter" data-prompt="帮我把一段关系困惑拆成：事实、我的解释、还缺什么信息。">拆分事实与解释</button>
           <button type="button" data-action="agent-starter" data-prompt="请帮我写一个低压力、允许对方自由拒绝的邀约。">准备低压力表达</button>
@@ -529,14 +589,14 @@ function renderAgent() {
 
         <aside class="agent-compose">
           <p class="eyebrow">给 Agent 的编辑笺</p>
-          <h2>写下你真正想弄清楚的事。</h2>
+          <h2>写下此刻最想弄清楚的事。</h2>
           <form id="agent-form">
             <label class="visually-hidden" for="agent-prompt">发送给关系思考 Agent 的内容</label>
             <textarea
               id="agent-prompt"
               name="prompt"
               maxlength="4000"
-              placeholder="只写必要信息；请用代号，不要粘贴姓名、地址、账号或完整聊天记录。"
+              placeholder="不用组织得很漂亮。写下必要信息即可，请用代号，不要粘贴姓名、地址、账号或完整聊天记录。"
               required
               ${platform.agentBusy ? "disabled" : ""}
             ></textarea>
@@ -943,6 +1003,241 @@ function renderDashboardEmpty() {
   `;
 }
 
+function renderStoryIntake() {
+  const assistantMessages = storyIntake.messages.filter((message) => message.role === "assistant");
+  const userMessages = storyIntake.messages.filter((message) => message.role === "user");
+  const hasStory = storyIntake.messages.length > 0;
+  const canUseAgent = Boolean(platform.user && platform.externalAiConsent?.current && platform.capabilities?.agent);
+  const speechSupported = Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+  return `
+    <section class="story-intake panel panel--dark ${storyIntake.active ? "is-active" : ""}" aria-labelledby="story-intake-title">
+      <div class="story-intake-topline">
+        <p class="eyebrow">STORY INTAKE · ${storyIntake.active ? "LIVE" : "01"}</p>
+        ${storyIntake.active ? `<span class="story-timer" aria-live="polite">${storyIntake.remaining}s</span>` : ""}
+      </div>
+      <div class="story-intake-copy">
+        <h2 id="story-intake-title">把这段关系，慢慢说清楚。</h2>
+        <p>不用一次讲完整。我会先听，再问一个问题；你可以跳过任何一题，也可以随时停下来。</p>
+      </div>
+      ${hasStory ? `
+        <div class="story-thread" aria-live="polite">
+          ${storyIntake.messages.slice(-8).map((message) => `
+            <div class="story-bubble story-bubble--${message.role}">
+              <span>${message.role === "assistant" ? "我" : "你"}</span>
+              <p>${escapeHTML(message.content)}</p>
+            </div>
+          `).join("")}
+        </div>
+      ` : `
+        <div class="story-prompt-note"><span>先从这里开始</span><strong>在哪里认识的？当时发生了什么？</strong></div>
+      `}
+      ${storyIntake.active ? `
+        <form class="story-answer-form" id="story-answer-form">
+          <label class="visually-hidden" for="story-answer">告诉我你的故事</label>
+          <textarea id="story-answer" name="answer" maxlength="2400" placeholder="写下你愿意分享的部分…" ${storyIntake.busy ? "disabled" : ""}>${escapeHTML(storyIntake.draftInput)}</textarea>
+          <div class="story-controls">
+            <button class="story-voice-button ${storyIntake.recording ? "is-recording" : ""}" type="button" data-action="story-voice" aria-label="${storyIntake.recording ? "停止语音输入" : "开始语音输入"}">
+              <span aria-hidden="true">${storyIntake.recording ? "■" : "◉"}</span>
+              ${storyIntake.recording ? "正在听…" : speechSupported ? "语音输入" : "浏览器不支持语音"}
+            </button>
+            <span class="story-shortcut">点击一次，10 秒后自动结束 · R 键</span>
+            <button class="button button--light button--small" type="submit" ${storyIntake.busy ? "disabled" : ""}>继续</button>
+            <button class="text-button text-button--light" type="button" data-action="story-skip" ${storyIntake.busy ? "disabled" : ""}>跳过</button>
+            <button class="text-button text-button--light" type="button" data-action="story-end">结束记录</button>
+          </div>
+        </form>
+      ` : `
+        <div class="story-actions">
+          <button class="button button--light" type="button" data-action="story-start">${hasStory ? "继续这个故事" : "开始记录"} <span aria-hidden="true">→</span></button>
+          ${hasStory ? '<button class="text-button text-button--light" type="button" data-action="story-use-draft">带入事件记录表</button>' : ""}
+          ${!canUseAgent ? '<small class="story-access-note">需要登录并同意外部 AI 处理说明后开始。</small>' : ""}
+        </div>
+      `}
+      <small class="story-privacy">只发送你主动提交的文字；本地日记不会自动上传。语音输入优先使用浏览器本地识别，录音不会保存。</small>
+    </section>
+  `;
+}
+
+function startStoryIntake() {
+  if (!platform.user) {
+    showToast("请先在 Agent 页面登录，再开始故事记录", 3600);
+    navigate("agent");
+    return;
+  }
+  if (!platform.externalAiConsent?.current) {
+    showToast("开始前需要先确认外部 AI 数据处理说明", 3600);
+    navigate("agent");
+    return;
+  }
+  if (!platform.capabilities?.agent) {
+    showToast("当前账户还没有 Agent 使用权限", 3600);
+    navigate("agent");
+    return;
+  }
+  storyIntake.active = true;
+  storyIntake.remaining = 60;
+  storyIntake.startedAt = Date.now();
+  storyIntake.draftInput = "";
+  if (!storyIntake.messages.length) {
+    storyIntake.messages.push({
+      role: "assistant",
+      content: "告诉我你的故事。可以先从你们在哪里认识、当时发生了什么开始。",
+    });
+    void speakStoryText(storyIntake.messages.at(-1).content);
+  }
+  startStoryTimer();
+  renderCurrentView();
+  requestAnimationFrame(() => document.querySelector("#story-answer")?.focus());
+}
+
+function startStoryTimer() {
+  window.clearInterval(storyIntake.timer);
+  storyIntake.timer = window.setInterval(() => {
+    storyIntake.remaining = Math.max(0, 60 - Math.floor((Date.now() - storyIntake.startedAt) / 1000));
+    const timer = document.querySelector(".story-timer");
+    if (timer) timer.textContent = `${storyIntake.remaining}s`;
+    if (!storyIntake.remaining) {
+      window.clearInterval(storyIntake.timer);
+      if (storyIntake.recording) stopStoryVoice();
+      showToast("这一轮 60 秒到了，你可以继续打字补充或结束记录", 3600);
+    }
+  }, 500);
+}
+
+function endStoryIntake() {
+  window.clearInterval(storyIntake.timer);
+  stopStoryVoice();
+  storyIntake.controller?.abort();
+  storyIntake.active = false;
+  storyIntake.busy = false;
+  storyIntake.draft = storyIntake.messages
+    .filter((message) => message.role === "user")
+    .map((message) => message.content)
+    .join("\n");
+  storyIntake.draftInput = "";
+  renderCurrentView();
+  showToast(storyIntake.draft ? "故事已留在当前浏览器，可以继续整理" : "记录已结束");
+}
+
+async function submitStoryAnswer(answer) {
+  if (!storyIntake.active || storyIntake.busy) return;
+  const normalized = clean(answer).slice(0, 2400);
+  storyIntake.draftInput = "";
+  if (!normalized) {
+    showToast("可以写一句，也可以选择跳过", 2600);
+    return;
+  }
+  storyIntake.messages.push({ role: "user", content: normalized });
+  storyIntake.busy = true;
+  storyIntake.controller = new AbortController();
+  const conversation = storyIntake.messages.slice(-12).map((message, index, list) => {
+    if (message.role === "user" && index === list.length - 1) {
+      return {
+        role: "user",
+        content: `这是故事记录模式中的一次回答：${message.content}\n请保持温和、不要替用户下结论，只追问一个最有帮助的具体问题（最多两句话）；如果已经足够，就先简短总结并邀请用户补充。`,
+      };
+    }
+    return message;
+  });
+  storyIntake.messages.push({ role: "assistant", content: "" });
+  renderCurrentView();
+  try {
+    const complete = await platformClient.streamAgent(conversation, {
+      signal: storyIntake.controller.signal,
+      onText(_chunk, fullText) {
+        const target = storyIntake.messages.at(-1);
+        if (target?.role === "assistant") target.content = fullText.slice(0, 5000);
+        const node = document.querySelector(".story-thread .story-bubble--assistant:last-child p");
+        if (node) node.textContent = target?.content || "";
+      },
+    });
+    const target = storyIntake.messages.at(-1);
+    if (target?.role === "assistant" && !target.content) {
+      target.content = complete || "你还想补充哪一个具体片段？";
+    }
+    if (target?.content) void speakStoryText(target.content);
+  } catch (error) {
+    storyIntake.messages.push({
+      role: "assistant",
+      content: error instanceof PlatformError ? error.message : "这次没有接上回应，你可以继续写下去。",
+    });
+  } finally {
+    storyIntake.busy = false;
+    storyIntake.controller = null;
+    renderCurrentView();
+    requestAnimationFrame(() => document.querySelector("#story-answer")?.focus());
+  }
+}
+
+function toggleStoryVoice() {
+  if (storyIntake.recording) {
+    stopStoryVoice();
+    return;
+  }
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Recognition) {
+    showToast("当前浏览器不支持语音识别，请改用文字输入", 3600);
+    return;
+  }
+  const recognition = new Recognition();
+  recognition.lang = "zh-CN";
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  const startedAt = Date.now();
+  let finalText = storyIntake.draftInput;
+  recognition.onresult = (event) => {
+    let interim = "";
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const piece = event.results[index][0]?.transcript || "";
+      if (event.results[index].isFinal) finalText += piece;
+      else interim += piece;
+    }
+    storyIntake.draftInput = `${finalText}${interim}`.trim().slice(0, 2400);
+    const input = document.querySelector("#story-answer");
+    if (input) input.value = storyIntake.draftInput;
+  };
+  recognition.onend = () => {
+    storyIntake.recording = false;
+    storyIntake.recognition = null;
+    window.clearTimeout(storyIntake.voiceTimeout);
+    renderCurrentView();
+  };
+  recognition.onerror = () => {
+    storyIntake.recording = false;
+    storyIntake.recognition = null;
+    window.clearTimeout(storyIntake.voiceTimeout);
+    renderCurrentView();
+    showToast("语音输入没有完成，请检查麦克风权限或改用文字", 3600);
+  };
+  storyIntake.recording = true;
+  storyIntake.recognition = recognition;
+  storyIntake.voiceTimeout = window.setTimeout(() => stopStoryVoice(), Math.max(1000, 10_000 - (Date.now() - startedAt)));
+  renderCurrentView();
+  requestAnimationFrame(() => {
+    try { recognition.start(); } catch { stopStoryVoice(); }
+  });
+}
+
+function stopStoryVoice() {
+  window.clearTimeout(storyIntake.voiceTimeout);
+  try { storyIntake.recognition?.stop(); } catch { /* already stopped */ }
+  storyIntake.recording = false;
+  storyIntake.recognition = null;
+}
+
+async function speakStoryText(text) {
+  if (!text || !platform.user || !platform.externalAiConsent?.current || !platform.capabilities?.agent) return;
+  try {
+    const blob = await platformClient.synthesizeVoice(text.slice(0, 1200), { voice: "茉莉" });
+    if (storyIntake.audioUrl) URL.revokeObjectURL(storyIntake.audioUrl);
+    storyIntake.audioUrl = URL.createObjectURL(blob);
+    const audio = new Audio(storyIntake.audioUrl);
+    await audio.play().catch(() => {});
+  } catch {
+    // Text remains the primary response when the optional TTS provider is disabled.
+  }
+}
+
 function renderEventCard(item) {
   const contact = getContact(item.contactId);
   const signal = signalMeta[item.analysis.strength] || signalMeta.weak;
@@ -962,10 +1257,12 @@ function renderEventCard(item) {
 }
 
 function renderNewEvent() {
+  const storyPanel = renderStoryIntake();
   if (!state.contacts.length) {
     return `
       <div class="page">
         ${pageHeading("记录事件", "先建立一个匿名关系档案", "只用代号记录必要信息，避免保存真实姓名或可识别的隐私。")}
+        ${storyPanel}
         <div class="empty-state">
           <div>
             <div class="empty-symbol" aria-hidden="true">◎</div>
@@ -994,9 +1291,11 @@ function renderNewEvent() {
       ${renderStorageRecoveryNotice()}
       ${pageHeading(
         "记录事件",
-        "把观察与解释分开。",
-        "分析越依赖具体事实，越不容易被期待、焦虑或单次行为带偏。"
+        "先把故事说出来。",
+        "可以从一个片段开始，也可以先听我问几个温和的问题。你随时可以跳过或结束。"
       )}
+
+      ${storyPanel}
 
       <div class="form-layout">
         <form class="panel" id="event-form">
@@ -2255,6 +2554,10 @@ function formatBytes(bytes) {
 
 function clean(value) {
   return String(value || "").trim();
+}
+
+function isTypingTarget(target) {
+  return Boolean(target?.matches?.("input, textarea, select, [contenteditable='true']"));
 }
 
 function uid() {
