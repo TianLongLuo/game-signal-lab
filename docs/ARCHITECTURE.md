@@ -34,7 +34,7 @@ flowchart LR
     Access["会员 / grant / consent"]
     Audit["最小审计"]
     Provider["加密 provider 配置"]
-    RAG["user_id 隔离的个人 RAG"]
+    RAG["Qdrant 向量库\nuser_id payload filter"]
     Stream["SSE 清洗代理"]
   end
 
@@ -162,8 +162,11 @@ provider 开关与全局授权总闸是两个独立控制。全局关闭时管�
 默认登录、打开 Agent 或浏览本地档案都不会上传关系内容。用户在对象档案
 页明确点击同步后，客户端只发送经过 allowlist 的 profile/contact/event
 最少必要字段。服务端把文档写入 `user_rag_documents`，每一行都包含不可
-省略的 owner `user_id`；Node 建立 FTS5 辅助索引，Sites 使用 D1 owner
-过滤的有界关键词检索。
+省略的 owner `user_id`。Linux/Node 生产路径把文档向量写入 Qdrant，并在每次
+upsert/search/delete 中携带精确的 owner payload filter；SQLite 只保留同步缓存
+与迁移锚点。开发/测试未配置 Qdrant 时才回退到本地有界关键词检索。Sites/D1
+由于不能加载向量扩展，保留同一 owner 约束的关键词回退；两条路径共用 API
+契约和撤回清理语义。
 
 Agent 调用前先按当前会话 `user_id` 检索，不能使用客户端提供的用户 ID、
 档案 ID 或 system 消息。检索结果只在本次 DeepSeek 请求内作为私有上下文，
