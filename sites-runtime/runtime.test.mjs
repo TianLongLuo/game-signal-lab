@@ -870,7 +870,10 @@ test("Agent requires current explicit consent and filters provider SSE", async (
   assert.equal((await systemRole.json()).error.code, "invalid_message");
 
   const originalFetch = globalThis.fetch;
+  let transientAttempts = 0;
   globalThis.fetch = async (url, options) => {
+    transientAttempts += 1;
+    if (transientAttempts === 1) throw new TypeError("transient network failure");
     assert.equal(String(url), "https://api.deepseek.com/chat/completions");
     const upstreamBody = JSON.parse(options.body);
     assert.equal(upstreamBody.stream, true);
@@ -904,6 +907,7 @@ test("Agent requires current explicit consent and filters provider SSE", async (
     assert.match(text, /finish_reason/);
     assert.match(text, /\[DONE\]/);
     assert.doesNotMatch(text, /reasoning|provider-id|usage|prompt_tokens|index/);
+    assert.equal(transientAttempts, 2);
 
     const providerFailures = [
       [401, 502, "provider_auth_failed"],
