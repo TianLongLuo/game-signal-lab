@@ -23,8 +23,8 @@ const defaultState = createDefaultState();
 
 const viewTitles = {
   dashboard: "今日概览",
-  "new-event": "记录事件",
-  people: "关系档案",
+  "new-event": "开始记录",
+  people: "对象档案",
   review: "行动复盘",
   profile: "我的表达",
   privacy: "隐私与数据",
@@ -671,7 +671,6 @@ function renderAgentAuth() {
 }
 
 function authFields(prefix) {
-  const isRegister = prefix === "register";
   return `
     <div class="field">
       <label for="${prefix}-username">用户名</label>
@@ -692,12 +691,12 @@ function authFields(prefix) {
         id="${prefix}-password"
         name="password"
         type="password"
-        ${isRegister ? 'minlength="12"' : ""}
+        minlength="12"
         maxlength="128"
-        autocomplete="${isRegister ? "new-password" : "current-password"}"
+        autocomplete="${prefix === "register" ? "new-password" : "current-password"}"
         required
       />
-      <small>${isRegister ? "至少 12 个字符；密码只提交给同源服务。" : "密码只提交给同源服务。"}</small>
+      <small>至少 12 个字符；密码只提交给同源服务。</small>
     </div>
   `;
 }
@@ -1141,9 +1140,9 @@ function renderPeople() {
   return `
     <div class="page">
       ${pageHeading(
-        "关系档案",
-        "用代号，而不是真名。",
-        "只记录理解互动所需的信息。不要记录身份证、住址、定位或与关系判断无关的隐私。"
+        "对象档案",
+        "每一个对象，都是一张可以慢慢补全的卡片。",
+        "这里集中查看背景、目标、边界和互动深度。只用代号，不保存身份证、住址、定位等无关隐私。"
       )}
 
       <div class="form-layout">
@@ -1202,7 +1201,7 @@ function renderPeople() {
 
       <section class="section">
         <div class="section-title">
-          <h2>已保存档案</h2>
+          <h2>对象卡片</h2>
           <span class="tag"><i></i>${state.contacts.length} 个匿名对象</span>
         </div>
         ${
@@ -1224,15 +1223,56 @@ function renderPeople() {
 }
 
 function renderPersonCard(item) {
-  const count = state.events.filter((event) => event.contactId === item.id).length;
+  const events = state.events
+    .filter((event) => event.contactId === item.id)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const latest = events[0] || null;
+  const insights = contactInsights(events);
+  const latestSignal = latest
+    ? signalMeta[latest.analysis?.strength] || signalMeta.weak
+    : signalMeta.weak;
   return `
-    <article class="person-card">
-      <div class="person-avatar">${escapeHTML(item.alias.slice(0, 2).toUpperCase())}</div>
-      <h3>${escapeHTML(item.alias)}</h3>
-      <span class="person-stage">${escapeHTML(item.stage)}</span>
-      <p>${escapeHTML(item.context || "尚未添加认识背景。")}</p>
+    <article class="person-card" data-contact-id="${escapeAttribute(item.id)}">
+      <header class="person-card-head">
+        <div class="person-avatar">${escapeHTML(item.alias.slice(0, 2).toUpperCase())}</div>
+        <div>
+          <p class="person-kicker">对象档案 · ${escapeHTML(formatDate(item.createdAt?.slice(0, 10)))}</p>
+          <h3>${escapeHTML(item.alias)}</h3>
+          <span class="person-stage">${escapeHTML(item.stage || "阶段未填写")}</span>
+        </div>
+      </header>
+
+      <div class="person-summary">
+        <span>认识背景</span>
+        <p>${escapeHTML(item.context || "尚未添加认识背景。")}</p>
+      </div>
+
+      <dl class="person-details">
+        <div><dt>已表达目标</dt><dd>${escapeHTML(item.goal || "未知")}</dd></div>
+        <div><dt>已知边界</dt><dd>${escapeHTML(item.boundary || "暂未记录")}</dd></div>
+      </dl>
+
+      <div class="person-depth-grid" aria-label="档案完整度">
+        <div><span>具体程度</span><strong>${escapeHTML(insights.specificity)}</strong></div>
+        <div><span>话题深度</span><strong>${escapeHTML(insights.topicDepth)}</strong></div>
+        <div><span>情绪深度</span><strong>${escapeHTML(insights.emotionalDepth)}</strong></div>
+        <div><span>信号验证</span><strong>${escapeHTML(insights.verification)}</strong></div>
+      </div>
+
+      <div class="person-recent">
+        <div class="person-recent-head">
+          <span>最近互动 · ${events.length} 条记录</span>
+          <b class="signal-pill signal-pill--${latestSignal.className}">${latest ? latestSignal.label : "待记录"}</b>
+        </div>
+        ${latest ? `
+          <strong>${escapeHTML(latest.scene || latest.stage || "未命名场景")} · ${escapeHTML(formatDate(latest.date))}</strong>
+          <p>${escapeHTML(latest.fact)}</p>
+          <small>${escapeHTML(latest.analysis?.informationQuality || "信息质量有限")} · ${escapeHTML(latest.boundaryStatus === "stop" ? "已标记边界" : "持续观察")}</small>
+        ` : `<p class="person-empty-note">还没有互动记录，先从一次具体事件开始。</p>`}
+      </div>
+
       <div class="person-footer">
-        <span>${count} 条事件</span>
+        <span>${escapeHTML(insights.lastSeen)}</span>
         <span class="inline-actions">
           <button
             class="text-button"
@@ -1249,6 +1289,40 @@ function renderPersonCard(item) {
       </div>
     </article>
   `;
+}
+
+function contactInsights(events) {
+  if (!events.length) {
+    return {
+      specificity: "待补充",
+      topicDepth: "待补充",
+      emotionalDepth: "待补充",
+      verification: "待补充",
+      lastSeen: "尚无互动",
+    };
+  }
+  const count = events.length;
+  const specificCount = events.filter(
+    (event) => event.scene && event.fact.length >= 30 && event.date
+  ).length;
+  const topicCount = events.filter(
+    (event) => event.interpretation.length >= 10 || event.reply.length >= 8
+  ).length;
+  const emotionalCount = events.filter(
+    (event) => event.feeling.length >= 2 || event.review?.learning
+  ).length;
+  const verifiedCount = events.filter(
+    (event) => event.signals.length >= 2 && event.boundaryStatus
+  ).length;
+  const level = (value) => value / count >= 0.66 ? "深入" : value / count >= 0.34 ? "展开" : "初步";
+  const latestDate = events[0].date || events[0].createdAt?.slice(0, 10);
+  return {
+    specificity: level(specificCount),
+    topicDepth: level(topicCount),
+    emotionalDepth: level(emotionalCount),
+    verification: verifiedCount / count >= 0.66 ? "充分" : verifiedCount ? "部分" : "不足",
+    lastSeen: latestDate ? `最近记录 ${formatDate(latestDate)}` : "最近记录日期未知",
+  };
 }
 
 function renderProfile() {
