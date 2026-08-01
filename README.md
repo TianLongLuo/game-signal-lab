@@ -11,7 +11,7 @@ GAME 把高度敏感的关系记录与可选在线能力分开：
 | 平面 | 处理内容 | 存储与出站边界 |
 |---|---|---|
 | 本地关系平面 | 个人表达、匿名关系档案、事件、复盘、规则分析 | 仅保存在当前浏览器的 `localStorage`；可由用户手动导入/导出明文 JSON；应用不会把这些内容自动发送到服务器 |
-| 可选平台平面 | 账号、会员、Agent 授权、外部 AI 明示同意、管理员配置、最小审计与用户明确同步的个人 RAG | 由同源 Node/SQLite 或 Sites Worker/D1 服务处理；只有用户主动提交的 Agent 文本和已明确同步的个人档案片段会发送给 DeepSeek |
+| 可选平台平面 | 账号、会员、Agent 授权、外部 AI 明示同意、管理员配置、最小审计与用户明确同步的个人 RAG | 由同源 Node/SQLite + Qdrant 或 Sites Worker/D1 服务处理；只有用户主动提交的 Agent 文本和已明确同步的个人档案片段会发送给 DeepSeek |
 
 本地规则引擎不依赖账号或 AI。即使平台服务未启用，关系日记、双轴分析和复盘仍可在浏览器中使用。
 
@@ -40,7 +40,7 @@ GAME 把高度敏感的关系记录与可选在线能力分开：
 - 服务端固定安全提示词与 DeepSeek V4 流式 Agent；
 - 仅允许 `deepseek-v4-flash`（默认）和 `deepseek-v4-pro`；
 - DeepSeek API Key 由服务端使用 AES-256-GCM 加密，浏览器永远读不到密钥；
-- 用户可在对象档案页明确同步自己的匿名资料到个人 RAG；检索始终按服务端会话 `user_id` 隔离，管理员看不到正文；
+- 用户可在对象档案页明确同步自己的匿名资料到个人 RAG；Linux/Node 生产检索使用 Qdrant，始终按服务端会话 `user_id` 隔离，管理员看不到正文；
 - 管理员控制台：用户与授权、服务配置、全局开关、最小化行为审计；
 - Agent 输入/输出不落库，SSE 只转发经过清洗的 assistant 内容与终止状态；
 - 动态 `robots.txt`、`sitemap.xml`，管理员与 API 路径禁止索引。
@@ -70,7 +70,7 @@ npm run serve
 
 打开 `http://localhost:4173`。这个模式使用仓库内的 `runtime-config.js`，平台 API 关闭，所有关系功能保持本地运行。
 
-## Node / SQLite 运行
+## Node / SQLite + Qdrant 运行
 
 Node 适配器会同时提供静态站、同源 API、动态 SEO 和管理员控制台：
 
@@ -86,6 +86,12 @@ npm start
 - `ADMIN_BOOTSTRAP_PASSWORD`：仅空数据库首次创建管理员 `Drac` 时使用的强密码。
 
 不要把真实密码、主密钥或 API Key 写入仓库、命令历史、日志或前端配置。管理员创建成功后应从运行环境移除引导密码；Node 适配器要求普通密码至少 12 个字符。完整说明见 [`server/README.md`](server/README.md)。
+
+Linux/Node 生产环境还需要一个私有 Qdrant 实例（默认 `127.0.0.1:6333`）。
+通过 `VECTOR_DB_URL`、`VECTOR_DB_COLLECTION` 和可选的 embedding provider
+配置运行时向量化。每次 upsert、search、delete 都带当前会话 `user_id` 的
+payload filter；未配置 Qdrant 时的 SQLite 关键词回退仅用于本地测试，不能
+作为生产 RAG 部署。
 
 ## Sites / Worker / D1 构建
 
