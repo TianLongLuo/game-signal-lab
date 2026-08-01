@@ -268,6 +268,22 @@ test("unsafe auth requests require exact Origin and signed double-submit CSRF", 
   assert.equal(missingOrigin.status, 403);
   assert.equal((await missingOrigin.json()).error.code, "origin_denied");
 
+  const clientProofOrigin = await worker.fetch(
+    new Request(`${ORIGIN}/api/auth/login`, {
+      method: "POST",
+      headers: {
+        Cookie: csrf.cookie,
+        "Content-Type": "application/json",
+        "X-Game-Client": "same-origin",
+        "X-CSRF-Token": csrf.token,
+      },
+      body,
+    }),
+    harness.env,
+    harness.ctx
+  );
+  assert.equal(clientProofOrigin.status, 200);
+
   const missingCsrf = await worker.fetch(
     new Request(`${ORIGIN}/api/auth/login`, {
       method: "POST",
@@ -304,6 +320,7 @@ test("unsafe auth requests require exact Origin and signed double-submit CSRF", 
         Origin: "https://attacker.example",
         Cookie: csrf.cookie,
         "Content-Type": "application/json",
+        "X-Game-Client": "same-origin",
         "X-CSRF-Token": csrf.token,
       },
       body: JSON.stringify({
