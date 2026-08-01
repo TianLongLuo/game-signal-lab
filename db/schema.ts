@@ -149,3 +149,30 @@ export const authRateLimits = sqliteTable(
     index("auth_rate_limits_expires_at_idx").on(table.expiresAt),
   ]
 );
+
+export const userRagDocuments = sqliteTable(
+  "user_rag_documents",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    externalId: text("external_id").notNull(),
+    kind: text("kind", { enum: ["profile", "contact", "event"] }).notNull(),
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    contentHash: text("content_hash").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("user_rag_documents_owner_external_uq").on(
+      table.userId,
+      table.externalId
+    ),
+    index("user_rag_documents_owner_updated_idx").on(
+      table.userId,
+      table.updatedAt
+    ),
+  ]
+);
