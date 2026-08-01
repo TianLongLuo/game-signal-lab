@@ -97,6 +97,9 @@ const storyIntake = {
   voiceAutoSubmit: false,
   audioUrl: "",
   archiveContactId: "",
+  mediaRecorder: null,
+  recordingStream: null,
+  audioChunks: [],
 };
 
 const contactEditor = {
@@ -106,6 +109,10 @@ const contactEditor = {
   voiceDraft: "",
   voiceAutoOrganize: false,
   busy: false,
+  mediaRecorder: null,
+  recordingStream: null,
+  audioChunks: [],
+  nextQuestion: "",
 };
 
 const STORY_SCROLL_BOTTOM_THRESHOLD = 72;
@@ -1198,7 +1205,9 @@ function renderStoryIntake() {
   const hasStory = storyIntake.messages.length > 0;
   const isFirstIntroduction = userMessages.length === 0;
   const canUseAgent = Boolean(platform.user && platform.externalAiConsent?.current && platform.capabilities?.agent);
-  const speechSupported = Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+  const speechSupported = Boolean(
+    window.SpeechRecognition || window.webkitSpeechRecognition || canRecordAudio()
+  );
   const archiveTarget = storyIntake.archiveContactId || preferredContactId || "";
   return `
     <section class="story-intake panel panel--dark ${storyIntake.active ? "is-active" : ""}" aria-labelledby="story-intake-title">
@@ -1238,7 +1247,7 @@ function renderStoryIntake() {
               <span aria-hidden="true">${storyIntake.recording ? "■" : "◉"}</span>
               ${storyIntake.recording ? "正在听…" : speechSupported ? "语音输入" : "浏览器不支持语音"}
             </button>
-            <span class="story-shortcut">${isFirstIntroduction ? "首次介绍最多 60 秒" : "补充时点一下，10 秒后自动停"} · 电脑端按 R</span>
+            <span class="story-shortcut">${isFirstIntroduction ? "首次介绍最多 60 秒" : "补充时点一下，30 秒后自动停"} · 电脑端按 R</span>
             <button class="button button--light button--small" type="submit" ${storyIntake.busy ? "disabled" : ""}>继续说</button>
             <button class="text-button text-button--light" type="button" data-action="story-skip" ${storyIntake.busy ? "disabled" : ""}>先跳过</button>
             <button class="text-button text-button--light" type="button" data-action="story-end">归档并结束</button>
@@ -1253,7 +1262,7 @@ function renderStoryIntake() {
           ${!canUseAgent ? '<small class="story-access-note">需要登录并同意外部 AI 处理说明后开始。</small>' : ""}
         </div>
       `}
-      <small class="story-privacy">只发送你主动提交的文字；本地日记不会自动上传。语音输入优先使用浏览器本地识别，录音不会保存。</small>
+      <small class="story-privacy">只发送你主动提交的文字或录音；本地日记不会自动上传。录音仅用于当前 MiMo ASR 转写，服务端不保存音频。</small>
     </section>
   `;
 }
@@ -1485,6 +1494,73 @@ async function submitStoryAnswer(answer) {
   }
 }
 
+async function startStoryAudioRecording() {
+  if (!canRecordAudio()) return false;
+  if (!(await checkMicrophonePermission())) return true;
+  const isFirstIntroduction = storyIntake.messages.every((message) => message.role !== "user");
+  const voiceLimitMs = isFirstIntroduction ? 60_000 : 30_000;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    showToast("无法取得麦克风权限，请允许录音后重试", 3600);
+    return true;
+  }
+  const mimeType = preferredAudioMimeType();
+  let recorder;
+  try {
+    recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+  } catch {
+    stream.getTracks().forEach((track) => track.stop());
+    showToast("当前浏览器不支持可上传的录音格式，请改用文字输入", 3600);
+    return true;
+  }
+  storyIntake.mediaRecorder = recorder;
+  storyIntake.recordingStream = stream;
+  storyIntake.audioChunks = [];
+  recorder.ondataavailable = (event) => {
+    if (event.data?.size) storyIntake.audioChunks.push(event.data);
+  };
+  recorder.onstop = async () => {
+    const chunks = storyIntake.audioChunks;
+    storyIntake.audioChunks = [];
+    storyIntake.mediaRecorder = null;
+    storyIntake.recordingStream = null;
+    storyIntake.recording = false;
+    storyIntake.voiceAutoSubmit = false;
+    stream.getTracks().forEach((track) => track.stop());
+    window.clearTimeout(storyIntake.voiceTimeout);
+    renderStoryViewPreservingScroll();
+    const audio = new Blob(chunks, { type: recorder.mimeType || mimeType || "audio/webm" });
+    if (!audio.size || !storyIntake.active) return;
+    try {
+      storyIntake.draftInput = (await transcribeRecordedAudio(audio)).slice(0, 2400);
+      renderStoryViewPreservingScroll();
+      await submitCorrectedStoryVoice(storyIntake.draftInput);
+    } catch (error) {
+      showToast(error instanceof PlatformError ? error.message : "语音识别未完成，请改用文字输入", 4200);
+    }
+  };
+  recorder.onerror = () => {
+    storyIntake.mediaRecorder = null;
+    storyIntake.recordingStream = null;
+    storyIntake.recording = false;
+    stream.getTracks().forEach((track) => track.stop());
+    window.clearTimeout(storyIntake.voiceTimeout);
+    renderStoryViewPreservingScroll();
+    showToast("录音没有完成，请检查麦克风权限或改用文字输入", 3600);
+  };
+  storyIntake.recording = true;
+  storyIntake.voiceAutoSubmit = true;
+  storyIntake.voiceTimeout = window.setTimeout(
+    () => stopStoryVoice({ autoSubmit: true }),
+    voiceLimitMs
+  );
+  recorder.start(250);
+  renderStoryViewPreservingScroll();
+  return true;
+}
+
 async function toggleStoryVoice() {
   if (!storyIntake.active) {
     startStoryIntake({ beginVoice: true });
@@ -1494,6 +1570,7 @@ async function toggleStoryVoice() {
     stopStoryVoice({ autoSubmit: true });
     return;
   }
+  if (await startStoryAudioRecording()) return;
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Recognition) {
     showToast("当前浏览器不支持语音识别，请改用文字输入", 3600);
@@ -1506,7 +1583,7 @@ async function toggleStoryVoice() {
   recognition.interimResults = true;
   const startedAt = Date.now();
   const isFirstIntroduction = storyIntake.messages.every((message) => message.role !== "user");
-  const voiceLimitMs = isFirstIntroduction ? 60_000 : 10_000;
+  const voiceLimitMs = isFirstIntroduction ? 60_000 : 30_000;
   let finalText = storyIntake.draftInput;
   recognition.onresult = (event) => {
     let interim = "";
@@ -1579,6 +1656,12 @@ async function correctSpeechTranscript(draft) {
 function stopStoryVoice({ autoSubmit = false } = {}) {
   window.clearTimeout(storyIntake.voiceTimeout);
   if (autoSubmit) storyIntake.voiceAutoSubmit = true;
+  if (storyIntake.mediaRecorder) {
+    if (storyIntake.mediaRecorder.state !== "inactive") {
+      try { storyIntake.mediaRecorder.stop(); } catch { /* already stopped */ }
+    }
+    return;
+  }
   try { storyIntake.recognition?.stop(); } catch { /* already stopped */ }
   if (autoSubmit && !storyIntake.recognition) {
     const draft = storyIntake.draftInput;
@@ -1600,6 +1683,29 @@ async function checkMicrophonePermission() {
     // SpeechRecognition.start() below will request permission when supported.
   }
   return true;
+}
+
+function canRecordAudio() {
+  return Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
+}
+
+function preferredAudioMimeType() {
+  return [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+    "audio/ogg;codecs=opus",
+  ].find((type) => window.MediaRecorder?.isTypeSupported?.(type)) || "";
+}
+
+async function transcribeRecordedAudio(blob) {
+  try {
+    return await platformClient.transcribeVoice(blob);
+  } catch (error) {
+    throw error instanceof PlatformError
+      ? error
+      : new PlatformError("语音识别未完成，请改用文字输入。", { code: "asr_failed" });
+  }
 }
 
 async function speakStoryText(text) {
@@ -1815,7 +1921,9 @@ function renderPersonCard(item) {
 function renderContactEditor() {
   const contact = getContact(editingContactId);
   if (!contact) return "";
-  const speechSupported = Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+  const speechSupported = Boolean(
+    window.SpeechRecognition || window.webkitSpeechRecognition || canRecordAudio()
+  );
   return `
     <dialog class="contact-editor-dialog" id="contact-editor-dialog" aria-labelledby="contact-editor-title">
       <form class="contact-editor" id="contact-editor-form">
@@ -1863,7 +1971,7 @@ function renderContactEditor() {
             <button class="button button--quiet" type="button" data-action="contact-ai-organize" ${speechSupported || contactEditor.voiceDraft ? "" : ""}>AI 整理补充</button>
             <button class="button button--primary" type="submit">保存档案</button>
           </div>
-          <p class="contact-editor-status" id="contact-editor-status" role="status" aria-live="polite"></p>
+          <p class="contact-editor-status" id="contact-editor-status" role="status" aria-live="polite">${escapeHTML(contactEditor.nextQuestion ? `建议继续确认：${contactEditor.nextQuestion}` : "")}</p>
         </section>
       </form>
     </dialog>
@@ -1877,6 +1985,7 @@ function openContactEditor(contactId) {
   contactEditor.voiceDraft = "";
   contactEditor.busy = false;
   contactEditor.organized = false;
+  contactEditor.nextQuestion = "";
   renderCurrentView();
   requestAnimationFrame(() => {
     const dialog = document.querySelector("#contact-editor-dialog");
@@ -1893,6 +2002,7 @@ function closeContactEditor() {
   contactEditor.voiceDraft = "";
   contactEditor.busy = false;
   contactEditor.organized = false;
+  contactEditor.nextQuestion = "";
   if (currentView === "people") renderCurrentView();
 }
 
@@ -1901,6 +2011,7 @@ async function toggleContactVoice() {
     stopContactVoice({ autoOrganize: true });
     return;
   }
+  if (await startContactAudioRecording()) return;
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   const input = document.querySelector("#contact-voice-input");
   if (!Recognition || !input) {
@@ -1943,16 +2054,88 @@ async function toggleContactVoice() {
   };
   contactEditor.recording = true;
   contactEditor.recognition = recognition;
-  contactEditor.voiceTimeout = window.setTimeout(() => stopContactVoice({ autoOrganize: true }), 10_000);
+  contactEditor.voiceTimeout = window.setTimeout(() => stopContactVoice({ autoOrganize: true }), 30_000);
   updateContactVoiceButton();
   requestAnimationFrame(() => {
     try { recognition.start(); } catch { stopContactVoice(); }
   });
 }
 
+async function startContactAudioRecording() {
+  if (!canRecordAudio()) return false;
+  if (!(await checkMicrophonePermission())) return true;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    showToast("无法取得麦克风权限，请允许录音后重试", 3600);
+    return true;
+  }
+  const mimeType = preferredAudioMimeType();
+  let recorder;
+  try {
+    recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+  } catch {
+    stream.getTracks().forEach((track) => track.stop());
+    showToast("当前浏览器不支持可上传的录音格式，请改用文字输入", 3600);
+    return true;
+  }
+  contactEditor.mediaRecorder = recorder;
+  contactEditor.recordingStream = stream;
+  contactEditor.audioChunks = [];
+  recorder.ondataavailable = (event) => {
+    if (event.data?.size) contactEditor.audioChunks.push(event.data);
+  };
+  recorder.onstop = async () => {
+    const chunks = contactEditor.audioChunks;
+    contactEditor.audioChunks = [];
+    contactEditor.mediaRecorder = null;
+    contactEditor.recordingStream = null;
+    contactEditor.recording = false;
+    contactEditor.voiceAutoOrganize = false;
+    stream.getTracks().forEach((track) => track.stop());
+    window.clearTimeout(contactEditor.voiceTimeout);
+    updateContactVoiceButton();
+    const audio = new Blob(chunks, { type: recorder.mimeType || mimeType || "audio/webm" });
+    if (!audio.size || !editingContactId) return;
+    try {
+      contactEditor.voiceDraft = (await transcribeRecordedAudio(audio)).slice(0, 2400);
+      const input = document.querySelector("#contact-voice-input");
+      if (input) input.value = contactEditor.voiceDraft;
+      await organizeContactDraft();
+    } catch (error) {
+      showToast(error instanceof PlatformError ? error.message : "语音识别未完成，请改用文字输入", 4200);
+    }
+  };
+  recorder.onerror = () => {
+    contactEditor.mediaRecorder = null;
+    contactEditor.recordingStream = null;
+    contactEditor.recording = false;
+    stream.getTracks().forEach((track) => track.stop());
+    window.clearTimeout(contactEditor.voiceTimeout);
+    updateContactVoiceButton();
+    showToast("录音没有完成，请检查麦克风权限或改用文字输入", 3600);
+  };
+  contactEditor.recording = true;
+  contactEditor.voiceAutoOrganize = true;
+  contactEditor.voiceTimeout = window.setTimeout(
+    () => stopContactVoice({ autoOrganize: true }),
+    30_000
+  );
+  recorder.start(250);
+  updateContactVoiceButton();
+  return true;
+}
+
 function stopContactVoice({ autoOrganize = false } = {}) {
   window.clearTimeout(contactEditor.voiceTimeout);
   if (autoOrganize) contactEditor.voiceAutoOrganize = true;
+  if (contactEditor.mediaRecorder) {
+    if (contactEditor.mediaRecorder.state !== "inactive") {
+      try { contactEditor.mediaRecorder.stop(); } catch { /* already stopped */ }
+    }
+    return;
+  }
   try { contactEditor.recognition?.stop(); } catch { /* already stopped */ }
   contactEditor.recording = false;
   contactEditor.recognition = null;
@@ -1969,6 +2152,12 @@ function updateContactVoiceButton() {
 async function organizeContactDraft() {
   const input = document.querySelector("#contact-voice-input");
   const status = document.querySelector("#contact-editor-status");
+  const contact = getContact(editingContactId);
+  const existing = {
+    context: clean(document.querySelector("#editor-contact-context")?.value || contact?.context),
+    goal: clean(document.querySelector("#editor-contact-goal")?.value || contact?.goal),
+    boundary: clean(document.querySelector("#editor-contact-boundary")?.value || contact?.boundary),
+  };
   const draft = clean(input?.value).slice(0, 2400);
   if (!draft) {
     showToast("先输入或说一段想补充的内容", 2800);
@@ -1991,7 +2180,7 @@ async function organizeContactDraft() {
     const complete = await platformClient.streamAgent([
       {
         role: "user",
-        content: `请把下面这段匿名关系档案补充整理为 JSON，只允许包含 context、goal、boundary 三个字符串字段；不确定的信息写“未提及”，不要推断对方想法，不要输出 markdown。\n\n${draft}`,
+        content: `请结合已有档案和这次补充，整理成 JSON。只允许包含 context、goal、boundary、question 四个字符串字段：context 写认识背景和可观察事实，goal 写用户已表达的目标，boundary 写明确边界/拒绝/待确认点，question 只提出一个当前最缺失且具体的事实问题；没有问题时 question 写空字符串。不确定的信息写“未提及”，不要推断对方想法，不要输出 markdown。不要丢失已有事实。\n\n已有档案：\n${JSON.stringify(existing)}\n\n本次补充：\n${draft}`,
       },
     ]);
     const parsed = parseContactDraft(complete);
@@ -2002,8 +2191,11 @@ async function organizeContactDraft() {
       if (parsed.context) context.value = parsed.context;
       if (parsed.goal) goal.value = parsed.goal;
       if (parsed.boundary) boundary.value = parsed.boundary;
+      contactEditor.nextQuestion = parsed.question || "";
       contactEditor.organized = true;
-      if (status) status.textContent = "已整理到档案字段，确认无误后保存。";
+      if (status) status.textContent = parsed.question
+        ? `已整理到档案字段。建议继续确认：${parsed.question}`
+        : "已整理到档案字段，确认无误后保存。";
     } else {
       const context = document.querySelector("#editor-contact-context");
       if (context) context.value = `${context.value ? `${context.value}\n\n` : ""}${clean(complete || draft)}`.slice(-1200);
@@ -2027,6 +2219,7 @@ function parseContactDraft(text) {
       context: clean(parsed.context).slice(0, 1200),
       goal: clean(parsed.goal).slice(0, 600),
       boundary: clean(parsed.boundary).slice(0, 600),
+      question: clean(parsed.question).slice(0, 300),
     };
   } catch {
     return null;
@@ -3065,4 +3258,3 @@ function cssEscape(value) {
   if (globalThis.CSS?.escape) return globalThis.CSS.escape(String(value));
   return String(value).replace(/[^A-Za-z0-9_-]/g, "\\$&");
 }
-
