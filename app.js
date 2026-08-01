@@ -108,6 +108,8 @@ const contactEditor = {
   busy: false,
 };
 
+const STORY_SCROLL_BOTTOM_THRESHOLD = 72;
+
 const appShell = document.querySelector("#app-shell");
 const main = document.querySelector("#main-content");
 const ageGate = document.querySelector("#age-gate");
@@ -501,6 +503,31 @@ function renderCurrentView() {
     default:
       main.innerHTML = renderDashboard();
   }
+}
+
+function captureStoryThreadScroll() {
+  const thread = document.querySelector(".story-thread");
+  if (!thread) return null;
+  return {
+    top: thread.scrollTop,
+    distanceFromBottom: Math.max(0, thread.scrollHeight - thread.scrollTop - thread.clientHeight),
+  };
+}
+
+function restoreStoryThreadScroll(snapshot, { followLatest = false } = {}) {
+  const thread = document.querySelector(".story-thread");
+  if (!thread) return;
+  const maxTop = Math.max(0, thread.scrollHeight - thread.clientHeight);
+  const shouldFollowLatest = followLatest ||
+    (snapshot && snapshot.distanceFromBottom <= STORY_SCROLL_BOTTOM_THRESHOLD);
+  thread.scrollTop = shouldFollowLatest
+    ? maxTop
+    : Math.min(snapshot?.top ?? thread.scrollTop, maxTop);
+}
+
+function renderStoryViewPreservingScroll(snapshot = captureStoryThreadScroll(), options = {}) {
+  renderCurrentView();
+  requestAnimationFrame(() => restoreStoryThreadScroll(snapshot, options));
 }
 
 function updateNavigation() {
@@ -1426,7 +1453,9 @@ async function submitStoryAnswer(answer) {
     return message;
   });
   storyIntake.messages.push({ role: "assistant", content: "" });
-  renderCurrentView();
+  const threadScroll = captureStoryThreadScroll();
+  const followLatest = !threadScroll || threadScroll.distanceFromBottom <= STORY_SCROLL_BOTTOM_THRESHOLD;
+  renderStoryViewPreservingScroll(threadScroll, { followLatest });
   try {
     const complete = await platformClient.streamAgent(conversation, {
       signal: storyIntake.controller.signal,
@@ -1435,6 +1464,7 @@ async function submitStoryAnswer(answer) {
         if (target?.role === "assistant") target.content = fullText.slice(0, 5000);
         const node = document.querySelector(".story-thread .story-bubble--assistant:last-child p");
         if (node) node.textContent = target?.content || "";
+        if (followLatest) restoreStoryThreadScroll(null, { followLatest: true });
       },
     });
     const target = storyIntake.messages.at(-1);
@@ -1450,7 +1480,7 @@ async function submitStoryAnswer(answer) {
   } finally {
     storyIntake.busy = false;
     storyIntake.controller = null;
-    renderCurrentView();
+    renderStoryViewPreservingScroll(threadScroll, { followLatest });
     requestAnimationFrame(() => document.querySelector("#story-answer")?.focus());
   }
 }
@@ -1496,7 +1526,7 @@ async function toggleStoryVoice() {
     storyIntake.recording = false;
     storyIntake.recognition = null;
     window.clearTimeout(storyIntake.voiceTimeout);
-    renderCurrentView();
+    renderStoryViewPreservingScroll();
     if (shouldSubmit && draft) {
       window.setTimeout(() => {
         void submitCorrectedStoryVoice(draft);
@@ -1510,7 +1540,7 @@ async function toggleStoryVoice() {
     storyIntake.recording = false;
     storyIntake.recognition = null;
     window.clearTimeout(storyIntake.voiceTimeout);
-    renderCurrentView();
+    renderStoryViewPreservingScroll();
     showToast("语音输入没有完成，请检查麦克风权限或改用文字", 3600);
   };
   storyIntake.recording = true;
@@ -1519,7 +1549,7 @@ async function toggleStoryVoice() {
     () => stopStoryVoice({ autoSubmit: true }),
     Math.max(1000, voiceLimitMs - (Date.now() - startedAt))
   );
-  renderCurrentView();
+  renderStoryViewPreservingScroll();
   requestAnimationFrame(() => {
     try { recognition.start(); } catch { stopStoryVoice(); }
   });
@@ -3035,3 +3065,4 @@ function cssEscape(value) {
   if (globalThis.CSS?.escape) return globalThis.CSS.escape(String(value));
   return String(value).replace(/[^A-Za-z0-9_-]/g, "\\$&");
 }
+
