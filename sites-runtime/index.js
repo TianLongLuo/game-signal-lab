@@ -2552,7 +2552,12 @@ async function readJson(request, limit = MAX_JSON_BYTES) {
 
 function requireSameOrigin(request) {
   const origin = request.headers.get("origin");
-  if (!origin || origin !== new URL(request.url).origin) {
+  const fetchSite = String(request.headers.get("sec-fetch-site") || "").toLowerCase();
+  const clientProof = request.headers.get("x-game-client") === "same-origin";
+  if (origin && origin !== new URL(request.url).origin) {
+    throw new HttpError(403, "origin_denied", "请求来源不被允许。");
+  }
+  if (!origin && (!clientProof || (fetchSite && fetchSite !== "same-origin"))) {
     throw new HttpError(403, "origin_denied", "请求来源不被允许。");
   }
 }
