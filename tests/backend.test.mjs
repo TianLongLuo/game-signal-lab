@@ -175,7 +175,7 @@ test("a legacy version-1 database is upgraded without rewriting migration histor
       .prepare("SELECT version FROM schema_migrations ORDER BY version")
       .all()
       .map((row) => row.version),
-    [1, 2]
+    [1, 2, 3]
   );
   const auditColumns = backend.db
     .prepare("PRAGMA table_info(audit_events)")
@@ -932,6 +932,50 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
   assert.equal(consent.body.externalAiConsent.current, true);
   assert.equal(consent.body.capabilities.agent, true);
 
+  const ragSync = await requestJson(baseUrl, "/api/me/knowledge", {
+    method: "PUT",
+    jar: memberJar,
+    csrf: true,
+    body: {
+      documents: [
+        {
+          externalId: "contact:alice",
+          kind: "contact",
+          title: "Alice · 对象档案",
+          content: "RAG_OWNER_A 山茶 咖啡店见面，双方约好下周再确认时间。",
+        },
+      ],
+    },
+  });
+  assert.equal(ragSync.response.status, 200);
+  assert.equal(ragSync.body.knowledge.documentCount, 1);
+  assert.equal(ragSync.body.knowledge.isolatedToUser, true);
+  const otherUserId = fixtureUserIds.get("BetaMember");
+  backend.db
+    .prepare(
+      `INSERT INTO user_rag_documents
+        (user_id, external_id, kind, title, content, content_hash, created_at, updated_at)
+       VALUES (?, 'contact:other', 'contact', 'Other', 'RAG_OTHER_USER', 'hash', ?, ?)`
+    )
+    .run(otherUserId, fixtureNow, fixtureNow);
+
+  const ragStream = await requestText(baseUrl, "/api/agent/stream", {
+    method: "POST",
+    jar: memberJar,
+    csrf: true,
+    body: { messages: [{ role: "user", content: "请帮我回顾山茶最近的约会" }] },
+  });
+  assert.equal(ragStream.response.status, 200);
+  const ragRequest = upstreamRequests.at(-1).body;
+  assert.equal(
+    ragRequest.messages.some((message) => message.content.includes("RAG_OWNER_A")),
+    true
+  );
+  assert.equal(
+    ragRequest.messages.some((message) => message.content.includes("RAG_OTHER_USER")),
+    false
+  );
+
   const originalTag = backend.db
     .prepare("SELECT auth_tag FROM provider_configs WHERE provider = 'deepseek'")
     .get().auth_tag;
@@ -946,7 +990,7 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
   });
   assert.equal(tamperedConfigDenied.response.status, 503);
   assert.equal(tamperedConfigDenied.body.error.code, "deepseek_config_unavailable");
-  assert.equal(upstreamRequests.length, 0);
+  assert.equal(upstreamRequests.length, 1);
   backend.db
     .prepare("UPDATE provider_configs SET auth_tag = ? WHERE provider = 'deepseek'")
     .run(originalTag);
@@ -978,14 +1022,14 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
   assert.match(stream.text, /data: \[DONE\]/);
   assert.equal(stream.text.includes("reasoning_content"), false);
   assert.equal(stream.text.includes("private"), false);
-  assert.equal(upstreamRequests.length, 1);
-  assert.equal(upstreamRequests[0].path, "/chat/completions");
-  assert.equal(upstreamRequests[0].authorization, `Bearer ${apiKey}`);
-  assert.equal(upstreamRequests[0].body.stream, true);
-  assert.equal(upstreamRequests[0].body.model, "deepseek-v4-flash");
-  assert.deepEqual(upstreamRequests[0].body.thinking, { type: "disabled" });
-  assert.equal(upstreamRequests[0].body.messages.some((item) => item.content === promptSentinel), true);
-  assert.equal(upstreamRequests[0].body.messages[0].role, "system");
+  assert.equal(upstreamRequests.length, 2);
+  assert.equal(upstreamRequests[1].path, "/chat/completions");
+  assert.equal(upstreamRequests[1].authorization, `Bearer ${apiKey}`);
+  assert.equal(upstreamRequests[1].body.stream, true);
+  assert.equal(upstreamRequests[1].body.model, "deepseek-v4-flash");
+  assert.deepEqual(upstreamRequests[1].body.thinking, { type: "disabled" });
+  assert.equal(upstreamRequests[1].body.messages.some((item) => item.content === promptSentinel), true);
+  assert.equal(upstreamRequests[1].body.messages[0].role, "system");
 
   const incompleteStream = await requestText(baseUrl, "/api/agent/stream", {
     method: "POST",
@@ -1216,6 +1260,11 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
   });
   assert.equal(revokeConsent.response.status, 200);
   assert.equal(revokeConsent.body.externalAiConsent.current, false);
+  const ragAfterRevoke = await requestJson(baseUrl, "/api/me/knowledge", {
+    jar: memberJar,
+  });
+  assert.equal(ragAfterRevoke.response.status, 200);
+  assert.equal(ragAfterRevoke.body.knowledge.documentCount, 0);
   const deniedAfterRevoke = await requestJson(baseUrl, "/api/agent/stream", {
     method: "POST",
     jar: memberJar,
