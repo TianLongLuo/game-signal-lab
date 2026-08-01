@@ -811,9 +811,9 @@ async function streamAgent(request, env, ctx) {
 
   let upstream;
   try {
-    upstream = await fetch(endpoint, {
+    upstream = await fetchDeepSeekWithRetry(endpoint, {
       method: "POST",
-      redirect: "error",
+      redirect: "follow",
       signal: abortController.signal,
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -830,8 +830,9 @@ async function streamAgent(request, env, ctx) {
             : []),
           ...input.messages,
         ],
+        thinking: { type: "disabled" },
       }),
-    });
+    }, abortController.signal);
   } catch (error) {
     clearTimeout(timeoutId);
     request.signal.removeEventListener("abort", abortFromClient);
@@ -924,6 +925,20 @@ async function streamAgent(request, env, ctx) {
       },
     })
   );
+}
+
+async function fetchDeepSeekWithRetry(endpoint, options, signal) {
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await fetch(endpoint, options);
+    } catch (error) {
+      lastError = error;
+      if (signal?.aborted || attempt === 1) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 450));
+    }
+  }
+  throw lastError || new Error("DeepSeek request failed");
 }
 
 async function synthesizeVoice(request, env, ctx) {
