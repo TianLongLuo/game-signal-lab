@@ -168,6 +168,19 @@ export class PlatformClient {
     return complete;
   }
 
+  async synthesizeVoice(text, { voice = "茉莉", signal } = {}) {
+    const response = await fetch("/api/voice/tts", {
+      method: "POST",
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: this.#writeHeaders({ Accept: "audio/mpeg" }),
+      body: JSON.stringify({ text, voice }),
+      signal,
+    });
+    if (!response.ok) throw await responseError(response);
+    return response.blob();
+  }
+
   #writeHeaders(extra = {}) {
     const csrfToken = this.csrfToken;
     return {
