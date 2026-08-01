@@ -1,6 +1,7 @@
 const JSON_HEADERS = Object.freeze({
   Accept: "application/json",
   "Content-Type": "application/json",
+  "X-Game-Client": "same-origin",
 });
 
 export class PlatformError extends Error {
