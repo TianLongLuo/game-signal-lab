@@ -1570,6 +1570,23 @@ function renderPersonCard(item) {
         ` : `<p class="person-empty-note">还没有互动记录，先从一次具体事件开始。</p>`}
       </div>
 
+      ${events.length ? `
+        <details class="person-history" open>
+          <summary>全部互动记录 <span>${events.length}</span></summary>
+          <div class="person-history-list">
+            ${events.map((event) => `
+              <article>
+                <header><strong>${escapeHTML(event.scene || event.stage || "未命名场景")}</strong><time>${escapeHTML(formatDate(event.date))}</time></header>
+                <p><b>事实</b>${escapeHTML(event.fact)}</p>
+                <p><b>解释</b>${escapeHTML(event.interpretation || "未填写")}</p>
+                <p><b>感受</b>${escapeHTML(event.feeling || "未填写")} · <b>回应</b>${escapeHTML(event.reply || "未填写")}</p>
+                <small>${escapeHTML(event.analysis?.informationQuality || "信息质量有限")} · ${escapeHTML(event.boundaryStatus === "stop" ? "已标记边界" : "继续观察")}</small>
+              </article>
+            `).join("")}
+          </div>
+        </details>
+      ` : ""}
+
       <div class="person-footer">
         <span>${escapeHTML(insights.lastSeen)}</span>
         <span class="inline-actions">
