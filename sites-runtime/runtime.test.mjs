@@ -595,6 +595,57 @@ test("authorization matrix requires global policy and admin or active unexpired 
   assert.equal((await me.json()).capabilities.agent, false);
 });
 
+test("MiMo TTS configuration stays encrypted and never returns the API key", async () => {
+  const harness = await createHarness();
+  harness.env.DB = harness.DB;
+  const admin = await login(
+    harness.env,
+    harness.ctx,
+    "Drac",
+    "test-pass",
+    "203.0.113.39"
+  );
+  assert.equal(admin.response.status, 200);
+
+  const initial = await api(
+    harness.env,
+    harness.ctx,
+    "/api/admin/v1/integrations/mimo-tts",
+    admin
+  );
+  assert.equal(initial.status, 200);
+  assert.equal((await initial.json()).apiKeyConfigured, false);
+
+  const missingKey = await api(
+    harness.env,
+    harness.ctx,
+    "/api/admin/v1/integrations/mimo-tts",
+    admin,
+    { method: "PATCH", body: { enabled: true, model: "mimo-v2.5-tts" } }
+  );
+  assert.equal(missingKey.status, 422);
+
+  const saved = await api(
+    harness.env,
+    harness.ctx,
+    "/api/admin/v1/integrations/mimo-tts",
+    admin,
+    {
+      method: "PATCH",
+      body: { enabled: true, model: "mimo-v2.5-tts", apiKey: "test-mimo-key" },
+    }
+  );
+  assert.equal(saved.status, 200);
+  const savedPayload = await saved.json();
+  assert.equal(savedPayload.apiKeyConfigured, true);
+  assert.equal("apiKey" in savedPayload, false);
+  const stored = await harness.DB.prepare(
+    "SELECT ciphertext FROM provider_configs WHERE provider = 'mimo_tts'"
+  ).first();
+  assert.ok(stored?.ciphertext);
+  assert.notEqual(stored.ciphertext, "test-mimo-key");
+});
+
 test("Agent requires current explicit consent and filters provider SSE", async () => {
   const harness = await createHarness();
   harness.env.DB = harness.DB;
@@ -780,6 +831,42 @@ test("Agent requires current explicit consent and filters provider SSE", async (
     assert.match(text, /finish_reason/);
     assert.match(text, /\[DONE\]/);
     assert.doesNotMatch(text, /reasoning|provider-id|usage|prompt_tokens|index/);
+
+    const providerFailures = [
+      [401, 502, "provider_auth_failed"],
+      [402, 502, "provider_balance_insufficient"],
+      [429, 503, "provider_rate_limited"],
+      [503, 503, "provider_unavailable"],
+    ];
+    for (const [providerStatus, responseStatus, code] of providerFailures) {
+      globalThis.fetch = async () =>
+        new Response(
+          JSON.stringify({
+            error: { message: `raw-provider-error-${providerStatus}` },
+          }),
+          {
+            status: providerStatus,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      const failed = await api(
+        harness.env,
+        harness.ctx,
+        "/api/agent/stream",
+        admin,
+        {
+          method: "POST",
+          body: { messages: [{ role: "user", content: "test" }] },
+        }
+      );
+      assert.equal(failed.status, responseStatus);
+      const payload = await failed.json();
+      assert.equal(payload.error.code, code);
+      assert.doesNotMatch(
+        JSON.stringify(payload),
+        new RegExp(`raw-provider-error-${providerStatus}`)
+      );
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }
