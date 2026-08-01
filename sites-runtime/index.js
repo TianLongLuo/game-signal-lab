@@ -6,6 +6,7 @@ const PASSWORD_ITERATIONS = 100_000;
 const AUTH_RATE_LIMIT_NAMESPACE = "v2";
 const EXTERNAL_AI_POLICY_VERSION = "2026-07-30-v1";
 const MAX_JSON_BYTES = 128 * 1024;
+const MAX_ASR_BODY_BYTES = 12 * 1024 * 1024;
 const MAX_AGENT_BYTES = 80 * 1024;
 const MAX_AGENT_CONTENT_BYTES = 64 * 1024;
 const MAX_KNOWLEDGE_BYTES = 256 * 1024;
@@ -31,6 +32,8 @@ const MIMO_TTS_DEFAULT_MODEL = "mimo-v2.5-tts";
 const MIMO_TTS_MODELS = new Set([MIMO_TTS_DEFAULT_MODEL, "mimo-v2-tts"]);
 const MIMO_TTS_VOICES = new Set(["冰糖", "茉莉", "苏打", "白桦", "Mia", "Chloe", "Milo", "Dean"]);
 const MIMO_TTS_TIMEOUT_MS = 45_000;
+const MIMO_ASR_MODEL = "mimo-v2.5-asr";
+const MIMO_ASR_TIMEOUT_MS = 60_000;
 const SAFE_FINISH_REASONS = new Set([
   "stop",
   "length",
@@ -185,6 +188,9 @@ async function route(request, env, ctx) {
   }
   if (method === "POST" && path === "/api/voice/tts") {
     return synthesizeVoice(request, env, ctx);
+  }
+  if (method === "POST" && path === "/api/voice/asr") {
+    return transcribeVoice(request, env, ctx);
   }
 
   if (path.startsWith("/api/admin/v1/")) {
@@ -1048,6 +1054,105 @@ async function synthesizeVoice(request, env, ctx) {
     status: 200,
     headers: { "Content-Type": "audio/mpeg", "Cache-Control": "no-store" },
   }));
+}
+
+async function transcribeVoice(request, env, ctx) {
+  const auth = await requireAuth(request, env);
+  await requireCsrf(request, auth);
+  if (!(await hasAgentAccess(env, auth))) {
+    throw new HttpError(403, "agent_access_denied", "当前账户尚未获得语音 Agent 权限。");
+  }
+  if (!publicConsent(auth).current) {
+    throw new HttpError(403, "external_ai_consent_required", "请先确认外部 AI 数据处理说明。");
+  }
+  const body = await readJson(request, MAX_ASR_BODY_BYTES);
+  const audio = typeof body.audio === "string" ? body.audio.trim() : "";
+  const match = audio.match(/^data:([^;,]+)(?:;[^,]*)?;base64,([A-Za-z0-9+/=\s]+)$/);
+  const mimeType = match?.[1]?.toLowerCase() || "";
+  const encoded = match?.[2]?.replaceAll(/\s/g, "") || "";
+  if (!match || !mimeType.startsWith("audio/") || !encoded || encoded.length > 10 * 1024 * 1024) {
+    throw new HttpError(400, "invalid_audio", "语音文件格式不受支持或内容过大。");
+  }
+  let bytes;
+  try {
+    bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
+  } catch {
+    throw new HttpError(400, "invalid_audio", "语音文件无法读取。");
+  }
+  if (!bytes.length || bytes.byteLength > 8 * 1024 * 1024) {
+    throw new HttpError(413, "audio_too_large", "语音文件不能超过 8 MB。");
+  }
+  const config = await env.DB.prepare(
+    `SELECT enabled, ciphertext, iv
+     FROM provider_configs WHERE provider = 'mimo_tts'`
+  ).first();
+  if (!config?.enabled || !config.ciphertext || !config.iv) {
+    throw new HttpError(503, "asr_not_configured", "语音识别服务尚未在后台配置。");
+  }
+  const apiKey = await decryptProviderKey(env, config);
+  const endpoint = new URL("chat/completions", MIMO_TTS_BASE_URL);
+  const abortController = new AbortController();
+  const abortFromClient = () => abortController.abort();
+  if (request.signal.aborted) abortController.abort();
+  else request.signal.addEventListener("abort", abortFromClient, { once: true });
+  const timeoutId = setTimeout(() => abortController.abort(), MIMO_ASR_TIMEOUT_MS);
+  let upstream;
+  try {
+    upstream = await fetch(endpoint, {
+      method: "POST",
+      redirect: "error",
+      signal: abortController.signal,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        model: MIMO_ASR_MODEL,
+        messages: [{
+          role: "user",
+          content: [{ type: "input_audio", input_audio: { data: audio } }],
+        }],
+        asr_options: { language: "zh" },
+      }),
+    });
+  } catch (error) {
+    clearTimeout(timeoutId);
+    request.signal.removeEventListener("abort", abortFromClient);
+    ctx.waitUntil(audit(env, request, auth.id, "voice.asr", "provider", "mimo_asr", "failure"));
+    throw new HttpError(
+      error?.name === "AbortError" ? 504 : 502,
+      error?.name === "AbortError" ? "asr_timeout" : "asr_network_error",
+      error?.name === "AbortError" ? "语音识别超时，请稍后重试。" : "暂时无法连接语音识别服务，请稍后重试。"
+    );
+  }
+  clearTimeout(timeoutId);
+  request.signal.removeEventListener("abort", abortFromClient);
+  if (!upstream.ok) {
+    ctx.waitUntil(audit(env, request, auth.id, "voice.asr", "provider", "mimo_asr", "failure"));
+    const status = upstream.status;
+    const error = status === 401 || status === 403
+      ? new HttpError(502, "asr_auth_failed", "语音服务 Key 无效，请在后台重新配置。")
+      : status === 429
+        ? new HttpError(503, "asr_rate_limited", "语音识别请求过于频繁，请稍后重试。")
+        : status >= 500
+          ? new HttpError(503, "asr_provider_unavailable", "语音识别服务暂时繁忙，请稍后重试。")
+          : new HttpError(502, "asr_provider_rejected", "语音服务未接受本次音频，请检查录音格式。");
+    console.error("mimo_asr_request_rejected", { providerStatus: status, providerCode: error.code });
+    throw error;
+  }
+  let payload;
+  try {
+    payload = await upstream.json();
+  } catch {
+    throw new HttpError(502, "asr_protocol_error", "语音识别服务返回了无法识别的响应。");
+  }
+  const text = payload?.choices?.[0]?.message?.content;
+  if (typeof text !== "string" || !text.trim()) {
+    throw new HttpError(502, "asr_protocol_error", "语音识别服务没有返回文字。");
+  }
+  ctx.waitUntil(audit(env, request, auth.id, "voice.asr", "provider", "mimo_asr", "success"));
+  return withSecurity(json({ text: text.trim().slice(0, 12_000) }));
 }
 
 function providerHttpError(status) {
