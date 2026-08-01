@@ -11,7 +11,7 @@ GAME 把高度敏感的关系记录与可选在线能力分开：
 | 平面 | 处理内容 | 存储与出站边界 |
 |---|---|---|
 | 本地关系平面 | 个人表达、匿名关系档案、事件、复盘、规则分析 | 仅保存在当前浏览器的 `localStorage`；可由用户手动导入/导出明文 JSON；应用不会把这些内容自动发送到服务器 |
-| 可选平台平面 | 账号、会员、Agent 授权、外部 AI 明示同意、管理员配置与最小审计 | 由同源 Node/SQLite 或 Sites Worker/D1 服务处理；只有用户在 Agent 界面明确提交的文本会发送给 DeepSeek |
+| 可选平台平面 | 账号、会员、Agent 授权、外部 AI 明示同意、管理员配置、最小审计与用户明确同步的个人 RAG | 由同源 Node/SQLite 或 Sites Worker/D1 服务处理；只有用户主动提交的 Agent 文本和已明确同步的个人档案片段会发送给 DeepSeek |
 
 本地规则引擎不依赖账号或 AI。即使平台服务未启用，关系日记、双轴分析和复盘仍可在浏览器中使用。
 
@@ -40,6 +40,7 @@ GAME 把高度敏感的关系记录与可选在线能力分开：
 - 服务端固定安全提示词与 DeepSeek V4 流式 Agent；
 - 仅允许 `deepseek-v4-flash`（默认）和 `deepseek-v4-pro`；
 - DeepSeek API Key 由服务端使用 AES-256-GCM 加密，浏览器永远读不到密钥；
+- 用户可在对象档案页明确同步自己的匿名资料到个人 RAG；检索始终按服务端会话 `user_id` 隔离，管理员看不到正文；
 - 管理员控制台：用户与授权、服务配置、全局开关、最小化行为审计；
 - Agent 输入/输出不落库，SSE 只转发经过清洗的 assistant 内容与终止状态；
 - 动态 `robots.txt`、`sitemap.xml`，管理员与 API 路径禁止索引。
@@ -154,6 +155,7 @@ npm run check
 - [架构](docs/ARCHITECTURE.md)
 - [数据模型](docs/DATA_MODEL.md)
 - [安全、同意与隐私](docs/SAFETY.md)
+- [Linux 部署与更新](docs/DEPLOY_LINUX.md)
 - [原始 GAME 资料评审与安全转换](docs/CONTENT_EVALUATION.md)
 - [管理员 API 契约](admin/API_CONTRACT.md)
 - [Agent 协作契约](AGENTS.md)
