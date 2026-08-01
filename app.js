@@ -1139,13 +1139,14 @@ function renderStoryIntake() {
   const assistantMessages = storyIntake.messages.filter((message) => message.role === "assistant");
   const userMessages = storyIntake.messages.filter((message) => message.role === "user");
   const hasStory = storyIntake.messages.length > 0;
+  const isFirstIntroduction = userMessages.length === 0;
   const canUseAgent = Boolean(platform.user && platform.externalAiConsent?.current && platform.capabilities?.agent);
   const speechSupported = Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
   return `
     <section class="story-intake panel panel--dark ${storyIntake.active ? "is-active" : ""}" aria-labelledby="story-intake-title">
       <div class="story-intake-topline">
         <p class="eyebrow">STORY INTAKE · ${storyIntake.active ? "LIVE" : "01"}</p>
-        ${storyIntake.active ? `<span class="story-timer" aria-live="polite">${storyIntake.remaining}s</span>` : ""}
+        ${storyIntake.active && storyIntake.remaining !== null ? `<span class="story-timer" aria-live="polite">首次介绍 ${storyIntake.remaining}s</span>` : ""}
       </div>
       <div class="story-intake-copy">
         <h2 id="story-intake-title">我在听，你慢慢说。</h2>
@@ -1172,7 +1173,7 @@ function renderStoryIntake() {
               <span aria-hidden="true">${storyIntake.recording ? "■" : "◉"}</span>
               ${storyIntake.recording ? "正在听…" : speechSupported ? "语音输入" : "浏览器不支持语音"}
             </button>
-            <span class="story-shortcut">点一下开始，10 秒后自动停 · 电脑端按 R</span>
+            <span class="story-shortcut">${isFirstIntroduction ? "首次介绍最多 60 秒" : "补充时点一下，10 秒后自动停"} · 电脑端按 R</span>
             <button class="button button--light button--small" type="submit" ${storyIntake.busy ? "disabled" : ""}>继续说</button>
             <button class="text-button text-button--light" type="button" data-action="story-skip" ${storyIntake.busy ? "disabled" : ""}>先跳过</button>
             <button class="text-button text-button--light" type="button" data-action="story-end">先停在这里</button>
@@ -1231,7 +1232,7 @@ function startStoryTimer() {
     if (!storyIntake.remaining) {
       window.clearInterval(storyIntake.timer);
       if (storyIntake.recording) stopStoryVoice();
-      showToast("这一轮 60 秒到了，你可以继续打字补充或结束记录", 3600);
+      showToast("首次介绍的 60 秒到了，你可以继续打字补充或结束记录", 3600);
     }
   }, 500);
 }
@@ -1260,6 +1261,11 @@ async function submitStoryAnswer(answer) {
     return;
   }
   storyIntake.messages.push({ role: "user", content: normalized });
+  if (storyIntake.messages.filter((message) => message.role === "user").length === 1) {
+    window.clearInterval(storyIntake.timer);
+    storyIntake.timer = null;
+    storyIntake.remaining = null;
+  }
   storyIntake.busy = true;
   storyIntake.controller = new AbortController();
   const conversation = storyIntake.messages.slice(-12).map((message, index, list) => {
@@ -1316,6 +1322,8 @@ function toggleStoryVoice() {
   recognition.continuous = true;
   recognition.interimResults = true;
   const startedAt = Date.now();
+  const isFirstIntroduction = storyIntake.messages.every((message) => message.role !== "user");
+  const voiceLimitMs = isFirstIntroduction ? 60_000 : 10_000;
   let finalText = storyIntake.draftInput;
   recognition.onresult = (event) => {
     let interim = "";
@@ -1343,7 +1351,10 @@ function toggleStoryVoice() {
   };
   storyIntake.recording = true;
   storyIntake.recognition = recognition;
-  storyIntake.voiceTimeout = window.setTimeout(() => stopStoryVoice(), Math.max(1000, 10_000 - (Date.now() - startedAt)));
+  storyIntake.voiceTimeout = window.setTimeout(
+    () => stopStoryVoice(),
+    Math.max(1000, voiceLimitMs - (Date.now() - startedAt))
+  );
   renderCurrentView();
   requestAnimationFrame(() => {
     try { recognition.start(); } catch { stopStoryVoice(); }
