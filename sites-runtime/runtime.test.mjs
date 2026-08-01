@@ -64,9 +64,13 @@ async function createHarness() {
     new URL("../drizzle/0000_sites_runtime.sql", import.meta.url),
     "utf8"
   );
+  const personalRagSchema = await readFile(
+    new URL("../drizzle/0001_personal_rag.sql", import.meta.url),
+    "utf8"
+  );
   const pending = [];
   return {
-    DB: new TestD1(schema),
+    DB: new TestD1(`${schema}\n${personalRagSchema}`),
     env: {
       DB: null,
       ADMIN_BOOTSTRAP_USERNAME: "Drac",
@@ -553,6 +557,58 @@ test("authorization matrix requires global policy and admin or active unexpired 
   assert.equal(grantAudit.reason_code, "agent_approved");
   me = await api(harness.env, harness.ctx, "/api/me", member);
   assert.equal((await me.json()).capabilities.agent, true);
+
+  const memberConsent = await api(
+    harness.env,
+    harness.ctx,
+    "/api/me/external-ai-consent",
+    member,
+    { method: "PUT", body: { accepted: true, policyVersion: CONSENT_POLICY } }
+  );
+  assert.equal(memberConsent.status, 200);
+  const memberKnowledge = await api(
+    harness.env,
+    harness.ctx,
+    "/api/me/knowledge",
+    member,
+    {
+      method: "PUT",
+      body: {
+        documents: [
+          {
+            externalId: "contact:member",
+            kind: "contact",
+            title: "Member · 档案",
+            content: "RAG_MEMBER_ONLY 山茶 咖啡店",
+          },
+        ],
+      },
+    }
+  );
+  assert.equal(memberKnowledge.status, 200);
+  assert.equal((await memberKnowledge.json()).knowledge.documentCount, 1);
+  const memberKnowledgeStatus = await api(
+    harness.env,
+    harness.ctx,
+    "/api/me/knowledge",
+    member
+  );
+  assert.equal((await memberKnowledgeStatus.json()).knowledge.isolatedToUser, true);
+  const memberRevoke = await api(
+    harness.env,
+    harness.ctx,
+    "/api/me/external-ai-consent",
+    member,
+    { method: "PUT", body: { accepted: false } }
+  );
+  assert.equal(memberRevoke.status, 200);
+  const memberKnowledgeAfterRevoke = await api(
+    harness.env,
+    harness.ctx,
+    "/api/me/knowledge",
+    member
+  );
+  assert.equal((await memberKnowledgeAfterRevoke.json()).knowledge.documentCount, 0);
 
   await harness.DB.prepare(
     "UPDATE memberships SET expires_at = ? WHERE user_id = ?"
