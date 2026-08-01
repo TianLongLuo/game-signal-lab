@@ -35,6 +35,39 @@ Agent calls require `current: true`. Consent is created or revoked only through
 `PUT /api/me/external-ai-consent`; submitting an Agent prompt never creates
 consent.
 
+## Personal knowledge / RAG isolation
+
+The browser may explicitly synchronize a user's selected anonymous profile and
+event records through `PUT /api/me/knowledge`:
+
+```json
+{
+  "documents": [
+    {
+      "externalId": "contact:local-id",
+      "kind": "contact",
+      "title": "A · 对象档案",
+      "content": "用户主动选择同步的最少必要内容"
+    }
+  ]
+}
+```
+
+The endpoint requires the authenticated session, session CSRF, exact same
+origin, and current external-AI consent. Documents are stored with a mandatory
+`user_id` owner key, bounded length/count, and a per-owner index. `GET
+/api/me/knowledge` returns only the current user's document count and update
+time; `DELETE /api/me/knowledge` clears that user's records. Revoking external
+AI consent also clears the user's server-side knowledge records.
+
+`POST /api/agent/stream` retrieves only documents whose `user_id` equals the
+authenticated session user. The retrieved snippets are added as a server-owned
+private context before the DeepSeek call; the client cannot provide a system
+message or another user's identifier. Administrators receive no document
+content or search results. Sites/D1 does not expose a vector extension, so this
+adapter is a bounded owner-filtered fallback; Linux/Node production uses the
+Qdrant vector adapter documented in `docs/DEPLOY_LINUX.md`.
+
 ## Agent authorization
 
 Agent access is:
