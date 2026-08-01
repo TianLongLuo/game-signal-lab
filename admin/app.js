@@ -403,19 +403,36 @@ async function handleLogin(event) {
     loginForm.reset();
     await enterAdmin();
   } catch (error) {
-    const message =
-      error instanceof ApiError && error.status === 401
-        ? "用户名或密码不正确。"
-        : error instanceof ApiError && error.status === 429
-          ? "登录尝试次数过多，请 15 分钟后再试。"
-        : "登录失败，请稍后重试或联系系统管理员。";
-    loginMessage.textContent = message;
+    loginMessage.textContent = loginErrorMessage(error);
     document.querySelector("#admin-password").value = "";
     document.querySelector("#admin-password").focus();
   } finally {
     credentials.password = "";
     setButtonBusy(submitButton, false);
   }
+}
+
+function loginErrorMessage(error) {
+  if (!(error instanceof ApiError)) {
+    return "无法连接后台 API。请确认站点已部署运行时，并刷新后重试。";
+  }
+  if (error.status === 401 || ["invalid_credentials", "ADMIN_INVALID_CREDENTIALS"].includes(error.code)) {
+    return "用户名或密码不正确。管理员用户名区分大小写，请确认使用的是已初始化的 Drac 账号。";
+  }
+  if (error.status === 429) return "登录尝试次数过多，请 15 分钟后再试。";
+  if (["missing_runtime_binding", "runtime_not_configured", "configuration_missing"].includes(error.code)) {
+    return "后台运行时尚未完成配置（数据库或安全密钥缺失），请先在部署环境补齐配置。";
+  }
+  if (["bootstrap_admin_required", "admin_bootstrap_required"].includes(error.code)) {
+    return "后台还没有管理员账号，请在空数据库首次部署时配置一次性管理员密码。";
+  }
+  if (error.status === 403 || ["csrf_failed", "preauth_csrf_expired", "preauth_csrf_invalid"].includes(error.code)) {
+    return "安全登录会话已过期，请刷新页面后重试。";
+  }
+  if (error.status >= 500) {
+    return "后台服务暂时不可用，请检查数据库、CONFIG_MASTER_KEY 与运行时绑定后重试。";
+  }
+  return "登录失败，请稍后重试或联系系统管理员。";
 }
 
 function startDemoSession() {
