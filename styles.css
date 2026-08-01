@@ -1224,6 +1224,184 @@ main {
   color: var(--ink-500) !important;
 }
 
+.story-intake {
+  position: relative;
+  margin: 0 0 24px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 92% 8%, rgba(174, 232, 208, .18), transparent 26%),
+    var(--ink-900);
+}
+
+.story-intake.is-active {
+  border-color: rgba(174, 232, 208, .45);
+}
+
+.story-intake-topline,
+.story-recent-head,
+.story-controls,
+.story-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.story-intake-topline {
+  justify-content: space-between;
+}
+
+.story-intake-copy {
+  max-width: 620px;
+  margin: 28px 0 22px;
+}
+
+.story-intake-copy h2 {
+  margin: 0 0 9px;
+  color: white;
+  font-family: var(--font-display);
+  font-size: clamp(25px, 3.5vw, 43px);
+  font-weight: 500;
+  letter-spacing: -.035em;
+}
+
+.story-intake-copy p,
+.story-privacy,
+.story-access-note {
+  color: rgba(255, 255, 255, .68);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.story-timer {
+  min-width: 52px;
+  padding: 6px 9px;
+  border: 1px solid rgba(174, 232, 208, .5);
+  color: var(--mint);
+  font-family: var(--font-data);
+  font-size: 11px;
+  text-align: center;
+}
+
+.story-prompt-note {
+  display: grid;
+  gap: 6px;
+  margin: 19px 0 25px;
+  padding: 15px 17px;
+  border-left: 2px solid var(--mint);
+  background: rgba(255, 255, 255, .06);
+}
+
+.story-prompt-note span {
+  color: var(--mint);
+  font-family: var(--font-data);
+  font-size: 10px;
+  letter-spacing: .05em;
+}
+
+.story-prompt-note strong {
+  color: white;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 500;
+}
+
+.story-thread {
+  display: grid;
+  gap: 9px;
+  max-height: 330px;
+  margin: 0 0 18px;
+  overflow-y: auto;
+  padding-right: 5px;
+}
+
+.story-bubble {
+  display: grid;
+  grid-template-columns: 25px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  max-width: 86%;
+  padding: 10px 13px;
+  background: rgba(255, 255, 255, .07);
+}
+
+.story-bubble--user {
+  justify-self: end;
+  background: rgba(174, 232, 208, .15);
+}
+
+.story-bubble > span {
+  color: var(--mint);
+  font-family: var(--font-data);
+  font-size: 10px;
+}
+
+.story-bubble p {
+  margin: 0;
+  color: rgba(255, 255, 255, .9);
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.story-answer-form {
+  display: grid;
+  gap: 10px;
+}
+
+.story-answer-form textarea {
+  width: 100%;
+  min-height: 100px;
+  resize: vertical;
+  border: 1px solid rgba(255, 255, 255, .2);
+  background: rgba(255, 255, 255, .08);
+  color: white;
+}
+
+.story-answer-form textarea::placeholder {
+  color: rgba(255, 255, 255, .46);
+}
+
+.story-controls {
+  flex-wrap: wrap;
+}
+
+.story-controls .button {
+  margin-left: auto;
+}
+
+.story-voice-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, .24);
+  background: transparent;
+  color: rgba(255, 255, 255, .84);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.story-voice-button.is-recording {
+  border-color: var(--mint);
+  color: var(--mint);
+}
+
+.story-shortcut {
+  color: rgba(255, 255, 255, .45);
+  font-family: var(--font-data);
+  font-size: 9px;
+}
+
+.story-intake .text-button--light {
+  color: rgba(255, 255, 255, .72);
+}
+
+.story-privacy {
+  display: block;
+  margin-top: 18px;
+  font-size: 10px;
+}
+
 .person-card::before {
   position: absolute;
   top: -26px;
