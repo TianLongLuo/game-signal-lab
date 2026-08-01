@@ -1372,7 +1372,7 @@ export async function createBackend(options = {}) {
     response.once("close", abortForDisconnect);
 
     try {
-      const upstream = await fetch(new URL("chat/completions", deepseekBaseUrl), {
+      const upstream = await fetchDeepSeekWithRetry(new URL("chat/completions", deepseekBaseUrl), {
         method: "POST",
         headers: {
           accept: "text/event-stream",
@@ -1393,9 +1393,9 @@ export async function createBackend(options = {}) {
             ? {}
             : { temperature: agentInput.temperature }),
         }),
-        redirect: "error",
+        redirect: "follow",
         signal: controller.signal,
-      });
+      }, controller.signal);
 
       if (!upstream.ok || !upstream.body) {
         await upstream.body?.cancel();
@@ -2745,6 +2745,20 @@ function normalizeDeepSeekBaseUrl(value, allowInsecure) {
   }
   url.pathname = `${url.pathname.replace(/\/+$/, "")}/`;
   return url;
+}
+
+async function fetchDeepSeekWithRetry(endpoint, options, signal) {
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await fetch(endpoint, options);
+    } catch (error) {
+      lastError = error;
+      if (signal?.aborted || attempt === 1) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 450));
+    }
+  }
+  throw lastError || new Error("DeepSeek request failed");
 }
 
 function normalizePublicOrigin(value, allowMissing) {
