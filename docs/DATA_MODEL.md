@@ -165,7 +165,23 @@ Analysis 不是事实，不写入 `localStorage` 或导出备份，也不作为�
 | `agent_member_grants` | user id、enabled、updatedBy/At | 每用户 Agent grant |
 | `provider_configs` | provider、encrypted key parts、algorithm/key version、model、enabled、updatedBy/At | DeepSeek 配置 |
 | `audit_events` | actor、action、resource、result、reasonCode、requestId、occurredAt | 最小行为审计 |
+| `user_rag_documents` | user id、external id、kind、title、content、content hash、timestamps | 用户明确同步后的个人知识库文档；严格按 owner 隔离 |
 | `auth_rate_limits`（Sites） | 不可逆 key hash、scope、窗口/过期、count | 有界认证频率控制，不属于审计 |
+
+`user_rag_documents` 不是管理员可见的行为日志。Linux/Node 生产适配器把文档
+向量写入 Qdrant 的私有 collection，并在 upsert、search、delete 的每一个请求
+中强制使用当前会话的 `user_id` payload filter；SQLite 表只作为事务性同步
+缓存与恢复锚点。Node 测试环境未配置 Qdrant 时才使用 SQLite FTS5/关键词回退。
+Sites/D1 受运行时能力限制，保留 owner + 时间索引和有界关键词回退；若需要
+生产级语义检索，应使用 Linux/Node + Qdrant 部署。服务端不会接受客户端传入
+的 owner ID，也不会把个人知识库内容写入审计。
+
+个人知识库的生命周期：
+
+1. 用户在当前外部 AI 同意下明确点击同步，提交经过 allowlist、长度、数量和匿名 ID 校验的 profile/contact/event 文档；
+2. 服务端以当前会话用户替换其自己的文档集合，并写入一条不含正文的 `knowledge.sync` 审计元数据；
+3. Agent 请求只按当前用户最后一条问题检索自己的文档，并把有界片段作为服务端私有上下文发送给 DeepSeek；
+4. 用户删除知识库或撤回外部 AI 同意时，服务端删除该用户全部 RAG 文档；本机 localStorage 不受影响。
 
 Sites `users` 可包含部署适配器使用的可选 email、盐、迭代数与 `mustChangePassword`；主产品身份仍以用户名为准。管理员列表只返回契约允许的脱敏/空值字段。
 
