@@ -94,6 +94,7 @@ const storyIntake = {
   timer: null,
   draft: "",
   draftInput: "",
+  voiceAutoSubmit: false,
   audioUrl: "",
   archiveContactId: "",
 };
@@ -1246,7 +1247,8 @@ function startStoryIntake({ beginVoice = false } = {}) {
     return;
   }
   storyIntake.active = true;
-  storyIntake.remaining = 60;
+  const hasUserAnswer = storyIntake.messages.some((message) => message.role === "user");
+  storyIntake.remaining = hasUserAnswer ? null : 60;
   storyIntake.startedAt = Date.now();
   storyIntake.draftInput = "";
   if (!storyIntake.messages.length) {
@@ -1256,7 +1258,7 @@ function startStoryIntake({ beginVoice = false } = {}) {
     });
     void speakStoryText(storyIntake.messages.at(-1).content);
   }
-  startStoryTimer();
+  if (!hasUserAnswer) startStoryTimer();
   renderCurrentView();
   requestAnimationFrame(() => {
     if (beginVoice) toggleStoryVoice();
@@ -1269,10 +1271,10 @@ function startStoryTimer() {
   storyIntake.timer = window.setInterval(() => {
     storyIntake.remaining = Math.max(0, 60 - Math.floor((Date.now() - storyIntake.startedAt) / 1000));
     const timer = document.querySelector(".story-timer");
-    if (timer) timer.textContent = `${storyIntake.remaining}s`;
+    if (timer) timer.textContent = `首次介绍 ${storyIntake.remaining}s`;
     if (!storyIntake.remaining) {
       window.clearInterval(storyIntake.timer);
-      if (storyIntake.recording) stopStoryVoice();
+      if (storyIntake.recording) stopStoryVoice({ autoSubmit: true });
       showToast("首次介绍的 60 秒到了，你可以继续打字补充或结束记录", 3600);
     }
   }, 500);
@@ -1281,6 +1283,7 @@ function startStoryTimer() {
 async function endStoryIntake() {
   window.clearInterval(storyIntake.timer);
   stopStoryVoice();
+  storyIntake.voiceAutoSubmit = false;
   storyIntake.controller?.abort();
   const storyText = storyIntake.messages
     .filter((message) => message.role === "user")
@@ -1398,7 +1401,9 @@ async function submitStoryAnswer(answer) {
     if (message.role === "user" && index === list.length - 1) {
       return {
         role: "user",
-        content: `这是故事记录模式中的一次回答：${message.content}\n请保持温和、不要替用户下结论，只追问一个最有帮助的具体问题（最多两句话）；如果已经足够，就先简短总结并邀请用户补充。`,
+        content: `这是故事访谈中的一次回答：${message.content}
+你的目标是逐步建立一个可核对的对象档案。优先检查这些信息是否出现：认识背景（时间/地点/场景）、可观察事实与原话、用户当时的状态和感受、对方可观察的回应、已表达目标或需求、明确边界/拒绝/不确定性、用户想要厘清的问题。
+保持温和，不替任何人下结论，不把沉默、回避或隐性信号当成同意。每次只追问一个最缺失、最具体的问题，最多两句话；如果用户说“不想回答”就接受并换一个问题。如果仍有关键空白，不要急着总结；只有信息已经覆盖或用户明确想结束时，才用几句事实摘要收束，并邀请用户选择继续或归档。`,
       };
     }
     return message;
@@ -1433,7 +1438,7 @@ async function submitStoryAnswer(answer) {
   }
 }
 
-function toggleStoryVoice() {
+async function toggleStoryVoice() {
   if (!storyIntake.active) {
     startStoryIntake({ beginVoice: true });
     return;
@@ -1447,6 +1452,7 @@ function toggleStoryVoice() {
     showToast("当前浏览器不支持语音识别，请改用文字输入", 3600);
     return;
   }
+  if (!(await checkMicrophonePermission())) return;
   const recognition = new Recognition();
   recognition.lang = "zh-CN";
   recognition.continuous = true;
@@ -1467,12 +1473,22 @@ function toggleStoryVoice() {
     if (input) input.value = storyIntake.draftInput;
   };
   recognition.onend = () => {
+    const shouldSubmit = storyIntake.voiceAutoSubmit;
+    storyIntake.voiceAutoSubmit = false;
     storyIntake.recording = false;
     storyIntake.recognition = null;
     window.clearTimeout(storyIntake.voiceTimeout);
     renderCurrentView();
+    if (shouldSubmit) {
+      window.setTimeout(() => {
+        const draft = storyIntake.draftInput;
+        if (draft) void submitStoryAnswer(draft);
+        else showToast("没有听到可提交的内容，可以再试一次或改用文字", 3200);
+      }, 0);
+    }
   };
   recognition.onerror = () => {
+    storyIntake.voiceAutoSubmit = false;
     storyIntake.recording = false;
     storyIntake.recognition = null;
     window.clearTimeout(storyIntake.voiceTimeout);
@@ -1482,7 +1498,7 @@ function toggleStoryVoice() {
   storyIntake.recording = true;
   storyIntake.recognition = recognition;
   storyIntake.voiceTimeout = window.setTimeout(
-    () => stopStoryVoice(),
+    () => stopStoryVoice({ autoSubmit: true }),
     Math.max(1000, voiceLimitMs - (Date.now() - startedAt))
   );
   renderCurrentView();
@@ -1491,11 +1507,30 @@ function toggleStoryVoice() {
   });
 }
 
-function stopStoryVoice() {
+function stopStoryVoice({ autoSubmit = false } = {}) {
   window.clearTimeout(storyIntake.voiceTimeout);
+  if (autoSubmit) storyIntake.voiceAutoSubmit = true;
   try { storyIntake.recognition?.stop(); } catch { /* already stopped */ }
+  if (autoSubmit && !storyIntake.recognition) {
+    const draft = storyIntake.draftInput;
+    storyIntake.voiceAutoSubmit = false;
+    if (draft) void submitStoryAnswer(draft);
+  }
   storyIntake.recording = false;
   storyIntake.recognition = null;
+}
+
+async function checkMicrophonePermission() {
+  try {
+    const permission = await navigator.permissions?.query({ name: "microphone" });
+    if (permission?.state === "denied") {
+      showToast("麦克风权限已被拒绝，请在浏览器地址栏设置中允许后重试", 4200);
+      return false;
+    }
+  } catch {
+    // SpeechRecognition.start() below will request permission when supported.
+  }
+  return true;
 }
 
 async function speakStoryText(text) {
@@ -1792,7 +1827,7 @@ function closeContactEditor() {
   if (currentView === "people") renderCurrentView();
 }
 
-function toggleContactVoice() {
+async function toggleContactVoice() {
   if (contactEditor.recording) {
     stopContactVoice();
     return;
@@ -1803,6 +1838,7 @@ function toggleContactVoice() {
     showToast("当前浏览器不支持语音识别，请改用文字输入", 3600);
     return;
   }
+  if (!(await checkMicrophonePermission())) return;
   const recognition = new Recognition();
   recognition.lang = "zh-CN";
   recognition.continuous = true;
