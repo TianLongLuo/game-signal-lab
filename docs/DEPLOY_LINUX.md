@@ -135,7 +135,9 @@ server {
 `CONFIG_MASTER_KEY` 和同源 `/api/auth/csrf` 是否可访问；若提示“还没有管理员账号”，
 说明这是空数据库，需临时配置 `ADMIN_BOOTSTRAP_PASSWORD` 后首次登录。已有数据库时，
 引导密码不会重置现有 `Drac` 密码。登录页会把 401、CSRF、限流和服务端 5xx 分开提示，
-便于定位问题；不要把密码或 Key 粘贴到 GitHub、日志或前端配置。
+便于定位问题；前端会携带同源证明以兼容省略 `Origin` 的浏览器/嵌入式 WebView，
+服务端仍拒绝带有跨站 `Origin` 或 `Sec-Fetch-Site` 的请求。不要把密码或 Key 粘贴到
+GitHub、日志或前端配置。
 
 ## 6. Qdrant 向量库与个人 RAG
 
