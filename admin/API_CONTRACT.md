@@ -214,9 +214,9 @@ RAG 文档、档案正文、检索片段或 Agent 对话。个人知识库接口
 - `enabled: true` 但没有可用密钥时返回 `422`；
 - 配置变更与不含秘密的审计元数据原子写入。
 
-## MiMo V2.5 TTS 语音服务
+## MiMo V2.5 TTS + ASR 语音服务
 
-语音供应商地址固定为 `https://api.xiaomimimo.com/v1/`，用于 Agent 的可选语音回应。
+语音供应商地址固定为 `https://api.xiaomimimo.com/v1/`，同一把 MiMo Key 用于 Agent 的可选语音回应（TTS）和更准确的语音转文字（ASR）。
 
 ### `GET /integrations/mimo-tts`
 
