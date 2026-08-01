@@ -210,6 +210,18 @@
 - `enabled: true` 但没有可用密钥时返回 `422`；
 - 配置变更与不含秘密的审计元数据原子写入。
 
+## MiMo V2.5 TTS 语音服务
+
+语音供应商地址固定为 `https://api.xiaomimimo.com/v1/`，用于 Agent 的可选语音回应。
+
+### `GET /integrations/mimo-tts`
+
+返回 `enabled`、允许的 `model`、固定 `baseUrl`、`apiKeyConfigured` 和更新时间；不返回密钥或掩码。
+
+### `PATCH /integrations/mimo-tts`
+
+接受 `{ "enabled": boolean, "model": "mimo-v2.5-tts" | "mimo-v2-tts", "apiKey"?: string }`。省略 `apiKey` 表示保留现有密钥；启用但没有密钥时返回 `422`。配置使用与 DeepSeek 相同的服务端 AES-256-GCM 加密和管理员审计。
+
 ## Agent 全局访问
 
 模型服务配置与 Agent 授权总闸相互独立。
