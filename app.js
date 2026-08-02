@@ -16,6 +16,11 @@ import {
   toPortableState,
 } from "./src/state-schema.js";
 import { PlatformClient, PlatformError } from "./src/platform-client.js";
+import {
+  encodeMonoWav,
+  extractCompletedSpeechChunks,
+  normalizeAssistantText,
+} from "./src/voice-utils.js";
 
 const STORAGE_KEY = "game-signal-lab:v2";
 const LEGACY_STORAGE_KEYS = ["game-signal-lab:v1"];
@@ -96,12 +101,14 @@ const storyIntake = {
   draft: "",
   draftInput: "",
   voiceAutoSubmit: false,
-  audioUrl: "",
   archiveContactId: "",
-  mediaRecorder: null,
+  audioRecorder: null,
   recordingStream: null,
-  audioChunks: [],
   voiceStatus: "",
+  finalizingVoice: false,
+  motionSuppressed: false,
+  liveAsrTimer: null,
+  liveAsrController: null,
 };
 
 const contactEditor = {
@@ -112,11 +119,23 @@ const contactEditor = {
   voiceDraft: "",
   voiceAutoOrganize: false,
   busy: false,
-  mediaRecorder: null,
+  audioRecorder: null,
   recordingStream: null,
-  audioChunks: [],
   nextQuestion: "",
   voiceStatus: "",
+  finalizingVoice: false,
+  liveAsrTimer: null,
+  liveAsrController: null,
+};
+
+const ttsState = {
+  queue: [],
+  playing: false,
+  controller: null,
+  currentAudio: null,
+  currentUrl: "",
+  streamBuffer: "",
+  generation: 0,
 };
 
 const STORY_SCROLL_BOTTOM_THRESHOLD = 72;
@@ -425,7 +444,7 @@ function bindGlobalEvents() {
       !isTypingTarget(event.target)
     ) {
       event.preventDefault();
-      toggleStoryVoice();
+      toggleStoryVoice({ fromKeyboard: true });
     }
 
     const card = event.target.closest('[data-action="open-contact-editor"]');
@@ -858,7 +877,7 @@ function renderAgentMessage(message, index) {
         <small>${String(index + 1).padStart(2, "0")}</small>
       </header>
       <p ${assistant && index === platform.agentMessages.length - 1 ? 'id="agent-response-last"' : ""}>${
-        message.content ? escapeHTML(message.content) : "正在组织回应…"
+        message.content ? escapeHTML(normalizeAssistantText(message.content)) : "正在组织回应…"
       }</p>
     </article>
   `;
@@ -1055,6 +1074,7 @@ function buildKnowledgeDocuments() {
 }
 
 async function submitAgentPrompt(form, formData) {
+  cancelStorySpeech();
   if (!platform.user || platform.agentBusy) return;
   const prompt = clean(formData.get("prompt"));
   const errorNode = form.querySelector("#agent-error");
@@ -1091,7 +1111,7 @@ async function submitAgentPrompt(form, formData) {
         const target = platform.agentMessages.at(-1);
         if (target?.role === "assistant") target.content = fullText.slice(0, 20000);
         const node = document.querySelector("#agent-response-last");
-        if (node) node.textContent = target?.content || "";
+        if (node) node.textContent = normalizeAssistantText(target?.content || "");
       },
     });
     const target = platform.agentMessages.at(-1);
@@ -1235,7 +1255,7 @@ function renderStoryIntake() {
           ${storyIntake.messages.slice(-8).map((message) => `
             <div class="story-bubble story-bubble--${message.role}">
               <span>${message.role === "assistant" ? "我" : "你"}</span>
-              <p>${escapeHTML(message.content)}</p>
+              <p>${escapeHTML(normalizeAssistantText(message.content))}</p>
             </div>
           `).join("")}
         </div>
@@ -1247,9 +1267,9 @@ function renderStoryIntake() {
           <label class="visually-hidden" for="story-answer">告诉我你的故事</label>
           <textarea id="story-answer" name="answer" maxlength="2400" placeholder="想到哪儿说到哪儿…" ${storyIntake.busy ? "disabled" : ""}>${escapeHTML(storyIntake.draftInput)}</textarea>
           <div class="story-controls">
-            <button class="story-voice-button ${storyIntake.recording ? "is-recording" : ""}" type="button" data-action="story-voice" aria-label="${storyIntake.recording ? "停止语音输入" : "开始语音输入"}">
-              <span class="voice-recording-visual ${storyIntake.recording ? "is-live" : ""}" aria-hidden="true">${storyIntake.recording ? "<i></i><i></i><i></i><i></i><i></i>" : "◉"}</span>
-              ${storyIntake.recording ? "正在听…" : speechSupported ? "语音输入" : "浏览器不支持语音"}
+            <button class="story-voice-button ${storyIntake.recording ? "is-recording" : ""} ${storyIntake.finalizingVoice ? "is-processing" : ""} ${storyIntake.motionSuppressed ? "motion-suppressed" : ""}" type="button" data-action="story-voice" aria-label="${storyIntake.recording ? "停止语音输入" : storyIntake.finalizingVoice ? "正在校正语音" : "开始语音输入"}" ${storyIntake.finalizingVoice ? "disabled" : ""}>
+              <span class="voice-recording-visual ${storyIntake.recording ? "is-live" : storyIntake.finalizingVoice ? "is-processing" : ""}" aria-hidden="true">${storyIntake.recording ? "<i></i><i></i><i></i><i></i><i></i>" : storyIntake.finalizingVoice ? "<b></b><b></b><b></b>" : "◉"}</span>
+              ${storyIntake.recording ? "停止并校正" : storyIntake.finalizingVoice ? "MiMo 校正中…" : speechSupported ? "语音输入" : "浏览器不支持语音"}
             </button>
             <span class="story-shortcut">${isFirstIntroduction ? "首次介绍最多 60 秒" : "补充时点一下，30 秒后自动停"} · 电脑端按 R</span>
             ${storyIntake.voiceStatus ? `<span class="story-voice-status" role="status" aria-live="polite">${escapeHTML(storyIntake.voiceStatus)}</span>` : ""}
@@ -1273,6 +1293,7 @@ function renderStoryIntake() {
 }
 
 function startStoryIntake({ beginVoice = false } = {}) {
+  cancelStorySpeech();
   if (!platform.user) {
     showToast("请先在 Agent 页面登录，再开始故事记录", 3600);
     navigate("agent");
@@ -1299,7 +1320,7 @@ function startStoryIntake({ beginVoice = false } = {}) {
       role: "assistant",
       content: "告诉我你的故事。你可以从你们在哪里认识、那天发生了什么开始，也可以从此刻最让你在意的地方说起。",
     });
-    void speakStoryText(storyIntake.messages.at(-1).content);
+    speakCompleteStoryText(storyIntake.messages.at(-1).content);
   }
   if (!hasUserAnswer) startStoryTimer();
   renderCurrentView();
@@ -1324,6 +1345,7 @@ function startStoryTimer() {
 }
 
 async function endStoryIntake() {
+  cancelStorySpeech();
   window.clearInterval(storyIntake.timer);
   storyIntake.active = false;
   const pendingInput = clean(storyIntake.draftInput).slice(0, 2400);
@@ -1443,6 +1465,7 @@ async function summarizeStoryForArchive(storyText) {
 
 async function submitStoryAnswer(answer) {
   if (!storyIntake.active || storyIntake.busy) return;
+  cancelStorySpeech();
   const normalized = clean(answer).slice(0, 2400);
   storyIntake.draftInput = "";
   if (!normalized) {
@@ -1463,7 +1486,7 @@ async function submitStoryAnswer(answer) {
         role: "user",
         content: `这是故事访谈中的一次回答：${message.content}
 你的目标是逐步建立一个可核对的对象档案。优先检查这些信息是否出现：认识背景（时间/地点/场景）、可观察事实与原话、用户当时的状态和感受、对方可观察的回应、已表达目标或需求、明确边界/拒绝/不确定性、用户想要厘清的问题。
-保持温和，不替任何人下结论，不把沉默、回避或隐性信号当成同意。每次只追问一个最缺失、最具体的问题，最多两句话；如果用户说“不想回答”就接受并换一个问题。如果仍有关键空白，不要急着总结；只有信息已经覆盖或用户明确想结束时，才用几句事实摘要收束，并邀请用户选择继续或归档。`,
+保持温和，不替任何人下结论，不把沉默、回避或隐性信号当成同意。每次只追问一个最缺失、最具体的问题，最多两句话；如果用户说“不想回答”就接受并换一个问题。如果仍有关键空白，不要急着总结；只有信息已经覆盖或用户明确想结束时，才用几句事实摘要收束，并邀请用户选择继续或归档。只输出自然的纯文本中文，不要使用 Markdown、星号、标题符号、列表符号或引号包裹。`,
       };
     }
     return message;
@@ -1471,13 +1494,17 @@ async function submitStoryAnswer(answer) {
   storyIntake.messages.push({ role: "assistant", content: "" });
   const threadScroll = captureStoryThreadScroll();
   const followLatest = !threadScroll || threadScroll.distanceFromBottom <= STORY_SCROLL_BOTTOM_THRESHOLD;
+  beginStreamingStorySpeech();
   renderStoryViewPreservingScroll(threadScroll, { followLatest });
   try {
     const complete = await platformClient.streamAgent(conversation, {
       signal: storyIntake.controller.signal,
-      onText(_chunk, fullText) {
+      onText(chunk, fullText) {
         const target = storyIntake.messages.at(-1);
-        if (target?.role === "assistant") target.content = fullText.slice(0, 5000);
+        if (target?.role === "assistant") {
+          target.content = normalizeAssistantText(fullText).slice(0, 5000);
+        }
+        queueStreamingStorySpeech(chunk);
         const node = document.querySelector(".story-thread .story-bubble--assistant:last-child p");
         if (node) node.textContent = target?.content || "";
         if (followLatest) restoreStoryThreadScroll(null, { followLatest: true });
@@ -1485,10 +1512,11 @@ async function submitStoryAnswer(answer) {
     });
     const target = storyIntake.messages.at(-1);
     if (target?.role === "assistant" && !target.content) {
-      target.content = complete || "你还想补充哪一个具体片段？";
+      target.content = normalizeAssistantText(complete) || "你还想补充哪一个具体片段？";
     }
-    if (target?.content) void speakStoryText(target.content);
+    flushStreamingStorySpeech();
   } catch (error) {
+    cancelStorySpeech();
     storyIntake.messages.push({
       role: "assistant",
       content: error instanceof PlatformError ? error.message : "这次没有接上回应，你可以继续写下去。",
@@ -1514,70 +1542,31 @@ async function startStoryAudioRecording() {
     showToast("无法取得麦克风权限，请允许录音后重试", 3600);
     return true;
   }
-  const mimeType = preferredAudioMimeType();
   let recorder;
   try {
-    recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    recorder = await createWavRecorder(stream);
   } catch {
     stream.getTracks().forEach((track) => track.stop());
-    showToast("当前浏览器不支持可上传的录音格式，请改用文字输入", 3600);
-    return true;
+    showToast("当前浏览器无法建立 WAV 录音，将改用实时语音识别", 3600);
+    return false;
   }
-  storyIntake.mediaRecorder = recorder;
+  storyIntake.audioRecorder = recorder;
   storyIntake.recordingStream = stream;
-  storyIntake.audioChunks = [];
-  recorder.ondataavailable = (event) => {
-    if (event.data?.size) storyIntake.audioChunks.push(event.data);
-  };
-  recorder.onstop = async () => {
-    const chunks = storyIntake.audioChunks;
-    storyIntake.audioChunks = [];
-    stopStoryPreviewRecognition();
-    storyIntake.mediaRecorder = null;
-    storyIntake.recordingStream = null;
-    storyIntake.recording = false;
-    storyIntake.voiceAutoSubmit = false;
-    storyIntake.voiceStatus = "正在用 MiMo ASR 校正语音…";
-    stream.getTracks().forEach((track) => track.stop());
-    window.clearTimeout(storyIntake.voiceTimeout);
-    renderStoryViewPreservingScroll();
-    const audio = new Blob(chunks, { type: recorder.mimeType || mimeType || "audio/webm" });
-    if (!audio.size || !storyIntake.active) return;
-    try {
-      storyIntake.draftInput = (await transcribeRecordedAudio(audio)).slice(0, 2400);
-      storyIntake.voiceStatus = "已完成语音校正 · 正在发送";
-      renderStoryViewPreservingScroll();
-      await submitCorrectedStoryVoice(storyIntake.draftInput);
-    } catch (error) {
-      storyIntake.voiceStatus = "";
-      showToast(error instanceof PlatformError ? error.message : "语音识别未完成，请改用文字输入", 4200);
-    }
-  };
-  recorder.onerror = () => {
-    storyIntake.mediaRecorder = null;
-    storyIntake.recordingStream = null;
-    storyIntake.recording = false;
-    stopStoryPreviewRecognition();
-    storyIntake.voiceStatus = "";
-    stream.getTracks().forEach((track) => track.stop());
-    window.clearTimeout(storyIntake.voiceTimeout);
-    renderStoryViewPreservingScroll();
-    showToast("录音没有完成，请检查麦克风权限或改用文字输入", 3600);
-  };
+  storyIntake.finalizingVoice = false;
   storyIntake.recording = true;
   storyIntake.voiceAutoSubmit = true;
-  storyIntake.voiceStatus = "实时预览中 · 停止后 MiMo ASR 校正";
+  storyIntake.voiceStatus = "实时识别中 · MiMo 将持续校正最终文本";
   storyIntake.voiceTimeout = window.setTimeout(
     () => stopStoryVoice({ autoSubmit: true }),
     voiceLimitMs
   );
-  recorder.start(250);
   startStoryPreviewRecognition();
+  startStoryLiveAsr();
   renderStoryViewPreservingScroll();
   return true;
 }
 
-async function toggleStoryVoice() {
+async function toggleStoryVoice({ fromKeyboard = false } = {}) {
   if (!storyIntake.active) {
     startStoryIntake({ beginVoice: true });
     return;
@@ -1586,9 +1575,11 @@ async function toggleStoryVoice() {
     stopStoryVoice({ autoSubmit: true });
     return;
   }
+  storyIntake.motionSuppressed = fromKeyboard;
   if (await startStoryAudioRecording()) return;
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Recognition) {
+    storyIntake.motionSuppressed = false;
     showToast("当前浏览器不支持语音识别，请改用文字输入", 3600);
     return;
   }
@@ -1618,6 +1609,7 @@ async function toggleStoryVoice() {
     storyIntake.voiceAutoSubmit = false;
     storyIntake.recording = false;
     storyIntake.recognition = null;
+    storyIntake.motionSuppressed = false;
     storyIntake.voiceStatus = "";
     window.clearTimeout(storyIntake.voiceTimeout);
     renderStoryViewPreservingScroll();
@@ -1633,6 +1625,7 @@ async function toggleStoryVoice() {
     storyIntake.voiceAutoSubmit = false;
     storyIntake.recording = false;
     storyIntake.recognition = null;
+    storyIntake.motionSuppressed = false;
     storyIntake.voiceStatus = "";
     window.clearTimeout(storyIntake.voiceTimeout);
     renderStoryViewPreservingScroll();
@@ -1675,11 +1668,29 @@ async function correctSpeechTranscript(draft) {
 function stopStoryVoice({ autoSubmit = false } = {}) {
   window.clearTimeout(storyIntake.voiceTimeout);
   if (autoSubmit) storyIntake.voiceAutoSubmit = true;
-  if (storyIntake.mediaRecorder) {
+  if (storyIntake.audioRecorder) {
+    const recorder = storyIntake.audioRecorder;
+    const stream = storyIntake.recordingStream;
+    const shouldSubmit = storyIntake.voiceAutoSubmit;
+    const preview = clean(storyIntake.draftInput).slice(0, 2400);
+    stopStoryLiveAsr();
     stopStoryPreviewRecognition();
-    if (storyIntake.mediaRecorder.state !== "inactive") {
-      try { storyIntake.mediaRecorder.stop(); } catch { /* already stopped */ }
+    storyIntake.audioRecorder = null;
+    storyIntake.recordingStream = null;
+    storyIntake.recording = false;
+    storyIntake.voiceAutoSubmit = false;
+    storyIntake.finalizingVoice = true;
+    storyIntake.voiceStatus = "正在用 MiMo ASR 校正语音…";
+    const blob = recorder.stop();
+    stream?.getTracks().forEach((track) => track.stop());
+    renderStoryViewPreservingScroll();
+    if (!storyIntake.active) {
+      storyIntake.finalizingVoice = false;
+      storyIntake.motionSuppressed = false;
+      storyIntake.voiceStatus = "";
+      return;
     }
+    void finalizeStoryRecording(blob, { preview, shouldSubmit });
     return;
   }
   try { storyIntake.recognition?.stop(); } catch { /* already stopped */ }
@@ -1691,6 +1702,32 @@ function stopStoryVoice({ autoSubmit = false } = {}) {
   storyIntake.recording = false;
   storyIntake.recognition = null;
   storyIntake.voiceStatus = "";
+}
+
+async function finalizeStoryRecording(blob, { preview, shouldSubmit }) {
+  let transcript = preview;
+  try {
+    if (blob.size) transcript = (await transcribeRecordedAudio(blob, { timeoutMs: 25_000 })).slice(0, 2400);
+    if (transcript && storyIntake.active) {
+      storyIntake.draftInput = transcript;
+      storyIntake.voiceStatus = shouldSubmit ? "MiMo 校正完成 · 正在发送" : "MiMo 校正完成";
+      renderStoryViewPreservingScroll();
+      if (shouldSubmit) await submitCorrectedStoryVoice(transcript);
+    }
+  } catch (error) {
+    if (preview && storyIntake.active) {
+      storyIntake.draftInput = preview;
+      showToast("MiMo 校正超时，已保留实时识别文字并继续", 3800);
+      if (shouldSubmit) await submitCorrectedStoryVoice(preview);
+    } else if (storyIntake.active) {
+      showToast(error instanceof PlatformError ? error.message : "语音识别未完成，请改用文字输入", 4200);
+    }
+  } finally {
+    storyIntake.finalizingVoice = false;
+    storyIntake.motionSuppressed = false;
+    storyIntake.voiceStatus = "";
+    renderStoryViewPreservingScroll();
+  }
 }
 
 function startStoryPreviewRecognition() {
@@ -1714,9 +1751,10 @@ function startStoryPreviewRecognition() {
   };
   recognition.onerror = () => {
     if (storyIntake.recording) storyIntake.voiceStatus = "录音中 · 停止后 MiMo ASR 校正";
+    renderStoryViewPreservingScroll();
   };
   recognition.onend = () => {
-    if (!storyIntake.recording || storyIntake.mediaRecorder?.state === "inactive") return;
+    if (!storyIntake.recording || !storyIntake.audioRecorder) return;
     window.setTimeout(() => {
       if (!storyIntake.recording || storyIntake.previewRecognition !== recognition) return;
       try { recognition.start(); } catch { /* browser is already restarting */ }
@@ -1730,6 +1768,106 @@ function stopStoryPreviewRecognition() {
   const recognition = storyIntake.previewRecognition;
   storyIntake.previewRecognition = null;
   try { recognition?.stop(); } catch { /* already stopped */ }
+}
+
+function startStoryLiveAsr() {
+  stopStoryLiveAsr();
+  storyIntake.liveAsrTimer = window.setInterval(() => {
+    void refreshStoryLiveAsr();
+  }, 6_000);
+}
+
+function stopStoryLiveAsr() {
+  window.clearInterval(storyIntake.liveAsrTimer);
+  storyIntake.liveAsrTimer = null;
+  storyIntake.liveAsrController?.abort();
+  storyIntake.liveAsrController = null;
+}
+
+async function refreshStoryLiveAsr() {
+  const recorder = storyIntake.audioRecorder;
+  if (!storyIntake.recording || !recorder || storyIntake.liveAsrController) return;
+  if (recorder.durationMs() < 2_500) return;
+  const snapshot = recorder.snapshot();
+  if (snapshot.size <= 44) return;
+  const previewAtRequest = storyIntake.draftInput;
+  const controller = new AbortController();
+  storyIntake.liveAsrController = controller;
+  try {
+    const corrected = (await transcribeRecordedAudio(snapshot, {
+      timeoutMs: 12_000,
+      signal: controller.signal,
+    })).slice(0, 2400);
+    if (!corrected || !storyIntake.recording || storyIntake.liveAsrController !== controller) return;
+    const current = storyIntake.draftInput;
+    const newerTail = previewAtRequest && current.startsWith(previewAtRequest)
+      ? current.slice(previewAtRequest.length)
+      : "";
+    storyIntake.draftInput = `${corrected}${newerTail}`.slice(0, 2400);
+    const input = document.querySelector("#story-answer");
+    if (input) input.value = storyIntake.draftInput;
+    storyIntake.voiceStatus = "MiMo 已实时校正 · 继续说即可";
+    restartStoryPreviewRecognition();
+    window.setTimeout(() => {
+      if (!storyIntake.recording) return;
+      storyIntake.voiceStatus = "实时识别中 · MiMo 将持续校正最终文本";
+      renderStoryViewPreservingScroll();
+    }, 1_200);
+    renderStoryViewPreservingScroll();
+  } catch {
+    // Browser live recognition stays visible; the final WAV pass still runs on stop.
+  } finally {
+    if (storyIntake.liveAsrController === controller) storyIntake.liveAsrController = null;
+  }
+}
+
+function restartStoryPreviewRecognition() {
+  if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) return;
+  stopStoryPreviewRecognition();
+  window.setTimeout(() => {
+    if (storyIntake.recording && storyIntake.audioRecorder) startStoryPreviewRecognition();
+  }, 160);
+}
+
+async function createWavRecorder(stream) {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) throw new Error("audio_context_unavailable");
+  const context = new AudioContextClass();
+  if (context.state === "suspended") await context.resume();
+  const source = context.createMediaStreamSource(stream);
+  const processor = context.createScriptProcessor(4096, 1, 1);
+  const silentGain = context.createGain();
+  silentGain.gain.value = 0;
+  const chunks = [];
+  let sampleCount = 0;
+  processor.onaudioprocess = (event) => {
+    const chunk = new Float32Array(event.inputBuffer.getChannelData(0));
+    chunks.push(chunk);
+    sampleCount += chunk.length;
+  };
+  source.connect(processor);
+  processor.connect(silentGain);
+  silentGain.connect(context.destination);
+  let stopped = false;
+  return {
+    snapshot() {
+      return encodeMonoWav(chunks, context.sampleRate);
+    },
+    durationMs() {
+      return Math.round((sampleCount / context.sampleRate) * 1000);
+    },
+    stop() {
+      if (stopped) return new Blob([], { type: "audio/wav" });
+      stopped = true;
+      processor.onaudioprocess = null;
+      try { source.disconnect(); } catch { /* already disconnected */ }
+      try { processor.disconnect(); } catch { /* already disconnected */ }
+      try { silentGain.disconnect(); } catch { /* already disconnected */ }
+      const blob = encodeMonoWav(chunks, context.sampleRate);
+      void context.close().catch(() => {});
+      return blob;
+    },
+  };
 }
 
 async function checkMicrophonePermission() {
@@ -1746,38 +1884,33 @@ async function checkMicrophonePermission() {
 }
 
 function canRecordAudio() {
-  return Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
+  return Boolean(
+    navigator.mediaDevices?.getUserMedia
+    && (window.AudioContext || window.webkitAudioContext)
+  );
 }
 
-function preferredAudioMimeType() {
-  return [
-    "audio/webm;codecs=opus",
-    "audio/webm",
-    "audio/mp4",
-    "audio/ogg;codecs=opus",
-  ].find((type) => window.MediaRecorder?.isTypeSupported?.(type)) || "";
-}
-
-async function transcribeRecordedAudio(blob) {
+async function transcribeRecordedAudio(blob, { timeoutMs = 25_000, signal } = {}) {
+  const controller = new AbortController();
+  const abortFromCaller = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await platformClient.transcribeVoice(blob);
+    return await platformClient.transcribeVoice(blob, { signal: controller.signal });
   } catch (error) {
+    if (controller.signal.aborted) {
+      throw new PlatformError("MiMo ASR 响应超时，已保留实时识别结果。", {
+        code: "asr_timeout",
+        status: 504,
+      });
+    }
     throw error instanceof PlatformError
       ? error
       : new PlatformError("语音识别未完成，请改用文字输入。", { code: "asr_failed" });
-  }
-}
-
-async function speakStoryText(text) {
-  if (!text || !platform.user || !platform.externalAiConsent?.current || !platform.capabilities?.agent) return;
-  try {
-    const blob = await platformClient.synthesizeVoice(text.slice(0, 1200), { voice: "茉莉" });
-    if (storyIntake.audioUrl) URL.revokeObjectURL(storyIntake.audioUrl);
-    storyIntake.audioUrl = URL.createObjectURL(blob);
-    const audio = new Audio(storyIntake.audioUrl);
-    await audio.play().catch(() => {});
-  } catch {
-    // Text remains the primary response when the optional TTS provider is disabled.
+  } finally {
+    window.clearTimeout(timeout);
+    signal?.removeEventListener("abort", abortFromCaller);
   }
 }
 
@@ -1984,8 +2117,8 @@ function renderContactEditor() {
           </div>
           <textarea id="contact-voice-input" name="voiceDraft" maxlength="2400" placeholder="例如：她最近主动提到下周的展览，但说临时安排不太方便。">${escapeHTML(contactEditor.voiceDraft)}</textarea>
           <div class="contact-editor-actions">
-            <button class="story-voice-button" id="contact-voice-button" type="button" data-action="contact-voice" ${speechSupported ? "" : "disabled"}>
-              <span class="voice-recording-visual ${contactEditor.recording ? "is-live" : ""}" aria-hidden="true">${contactEditor.recording ? "<i></i><i></i><i></i><i></i><i></i>" : "◉"}</span>${contactEditor.recording ? "正在听…" : speechSupported ? "语音输入" : "浏览器不支持语音"}
+            <button class="story-voice-button ${contactEditor.recording ? "is-recording" : ""} ${contactEditor.finalizingVoice ? "is-processing" : ""}" id="contact-voice-button" type="button" data-action="contact-voice" ${speechSupported && !contactEditor.finalizingVoice ? "" : "disabled"}>
+              <span class="voice-recording-visual ${contactEditor.recording ? "is-live" : contactEditor.finalizingVoice ? "is-processing" : ""}" aria-hidden="true">${contactEditor.recording ? "<i></i><i></i><i></i><i></i><i></i>" : contactEditor.finalizingVoice ? "<b></b><b></b><b></b>" : "◉"}</span>${contactEditor.recording ? "停止并校正" : contactEditor.finalizingVoice ? "MiMo 校正中…" : speechSupported ? "语音输入" : "浏览器不支持语音"}
             </button>
             <button class="button button--quiet" type="button" data-action="contact-ai-organize" ${speechSupported || contactEditor.voiceDraft ? "" : ""}>AI 整理补充</button>
             <button class="button button--primary" type="submit">保存档案</button>
@@ -1999,7 +2132,7 @@ function renderContactEditor() {
 
 function openContactEditor(contactId) {
   if (!getContact(contactId)) return;
-  stopContactVoice();
+  stopContactVoice({ discard: true });
   editingContactId = contactId;
   contactEditor.voiceDraft = "";
   contactEditor.busy = false;
@@ -2015,7 +2148,7 @@ function openContactEditor(contactId) {
 }
 
 function closeContactEditor() {
-  stopContactVoice();
+  stopContactVoice({ discard: true });
   const dialog = document.querySelector("#contact-editor-dialog");
   if (dialog?.open) dialog.close();
   editingContactId = null;
@@ -2056,7 +2189,7 @@ async function toggleContactVoice() {
     input.value = contactEditor.voiceDraft;
   };
   recognition.onend = () => {
-    const shouldOrganize = contactEditor.voiceAutoOrganize || Boolean(contactEditor.voiceDraft);
+    const shouldOrganize = contactEditor.voiceAutoOrganize;
     contactEditor.voiceAutoOrganize = false;
     contactEditor.recording = false;
     contactEditor.recognition = null;
@@ -2095,78 +2228,56 @@ async function startContactAudioRecording() {
     showToast("无法取得麦克风权限，请允许录音后重试", 3600);
     return true;
   }
-  const mimeType = preferredAudioMimeType();
   let recorder;
   try {
-    recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    recorder = await createWavRecorder(stream);
   } catch {
     stream.getTracks().forEach((track) => track.stop());
-    showToast("当前浏览器不支持可上传的录音格式，请改用文字输入", 3600);
-    return true;
+    showToast("当前浏览器无法建立 WAV 录音，将改用实时语音识别", 3600);
+    return false;
   }
-  contactEditor.mediaRecorder = recorder;
+  contactEditor.audioRecorder = recorder;
   contactEditor.recordingStream = stream;
-  contactEditor.audioChunks = [];
-  recorder.ondataavailable = (event) => {
-    if (event.data?.size) contactEditor.audioChunks.push(event.data);
-  };
-  recorder.onstop = async () => {
-    const chunks = contactEditor.audioChunks;
-    contactEditor.audioChunks = [];
-    stopContactPreviewRecognition();
-    contactEditor.mediaRecorder = null;
-    contactEditor.recordingStream = null;
-    contactEditor.recording = false;
-    contactEditor.voiceAutoOrganize = false;
-    contactEditor.voiceStatus = "正在用 MiMo ASR 校正语音…";
-    stream.getTracks().forEach((track) => track.stop());
-    window.clearTimeout(contactEditor.voiceTimeout);
-    updateContactVoiceButton();
-    const audio = new Blob(chunks, { type: recorder.mimeType || mimeType || "audio/webm" });
-    if (!audio.size || !editingContactId) return;
-    try {
-      contactEditor.voiceDraft = (await transcribeRecordedAudio(audio)).slice(0, 2400);
-      contactEditor.voiceStatus = "已完成语音校正 · 正在整理档案";
-      const input = document.querySelector("#contact-voice-input");
-      if (input) input.value = contactEditor.voiceDraft;
-      await organizeContactDraft();
-    } catch (error) {
-      contactEditor.voiceStatus = "";
-      showToast(error instanceof PlatformError ? error.message : "语音识别未完成，请改用文字输入", 4200);
-    }
-  };
-  recorder.onerror = () => {
-    contactEditor.mediaRecorder = null;
-    contactEditor.recordingStream = null;
-    contactEditor.recording = false;
-    stopContactPreviewRecognition();
-    contactEditor.voiceStatus = "";
-    stream.getTracks().forEach((track) => track.stop());
-    window.clearTimeout(contactEditor.voiceTimeout);
-    updateContactVoiceButton();
-    showToast("录音没有完成，请检查麦克风权限或改用文字输入", 3600);
-  };
+  contactEditor.finalizingVoice = false;
   contactEditor.recording = true;
   contactEditor.voiceAutoOrganize = true;
-  contactEditor.voiceStatus = "实时预览中 · 停止后 MiMo ASR 校正";
+  contactEditor.voiceStatus = "实时识别中 · MiMo 将校正最终文本";
   contactEditor.voiceTimeout = window.setTimeout(
     () => stopContactVoice({ autoOrganize: true }),
     30_000
   );
-  recorder.start(250);
   startContactPreviewRecognition();
+  startContactLiveAsr();
   updateContactVoiceButton();
   return true;
 }
 
-function stopContactVoice({ autoOrganize = false } = {}) {
+function stopContactVoice({ autoOrganize = false, discard = false } = {}) {
   window.clearTimeout(contactEditor.voiceTimeout);
-  if (autoOrganize) contactEditor.voiceAutoOrganize = true;
-  if (contactEditor.mediaRecorder) {
+  if (discard) contactEditor.voiceAutoOrganize = false;
+  else if (autoOrganize) contactEditor.voiceAutoOrganize = true;
+  if (contactEditor.audioRecorder) {
+    const recorder = contactEditor.audioRecorder;
+    const stream = contactEditor.recordingStream;
+    const shouldOrganize = !discard && contactEditor.voiceAutoOrganize;
+    const preview = clean(contactEditor.voiceDraft).slice(0, 2400);
+    stopContactLiveAsr();
     stopContactPreviewRecognition();
-    if (contactEditor.mediaRecorder.state !== "inactive") {
-      try { contactEditor.mediaRecorder.stop(); } catch { /* already stopped */ }
+    contactEditor.audioRecorder = null;
+    contactEditor.recordingStream = null;
+    contactEditor.recording = false;
+    contactEditor.voiceAutoOrganize = false;
+    contactEditor.finalizingVoice = true;
+    contactEditor.voiceStatus = "正在用 MiMo ASR 校正语音…";
+    const blob = recorder.stop();
+    stream?.getTracks().forEach((track) => track.stop());
+    updateContactVoiceButton();
+    if (discard) {
+      contactEditor.finalizingVoice = false;
+      contactEditor.voiceStatus = "";
+      return;
     }
+    void finalizeContactRecording(blob, { preview, shouldOrganize });
     return;
   }
   try { contactEditor.recognition?.stop(); } catch { /* already stopped */ }
@@ -2174,6 +2285,33 @@ function stopContactVoice({ autoOrganize = false } = {}) {
   contactEditor.recognition = null;
   contactEditor.voiceStatus = "";
   updateContactVoiceButton();
+}
+
+async function finalizeContactRecording(blob, { preview, shouldOrganize }) {
+  let transcript = preview;
+  try {
+    if (blob.size) transcript = (await transcribeRecordedAudio(blob, { timeoutMs: 25_000 })).slice(0, 2400);
+    if (transcript && editingContactId) {
+      contactEditor.voiceDraft = transcript;
+      contactEditor.voiceStatus = shouldOrganize ? "MiMo 校正完成 · 正在整理档案" : "MiMo 校正完成";
+      const input = document.querySelector("#contact-voice-input");
+      if (input) input.value = transcript;
+      updateContactVoiceButton();
+      if (shouldOrganize) await organizeContactDraft();
+    }
+  } catch (error) {
+    if (preview && editingContactId) {
+      contactEditor.voiceDraft = preview;
+      showToast("MiMo 校正超时，已保留实时识别文字", 3800);
+      if (shouldOrganize) await organizeContactDraft();
+    } else if (editingContactId) {
+      showToast(error instanceof PlatformError ? error.message : "语音识别未完成，请改用文字输入", 4200);
+    }
+  } finally {
+    contactEditor.finalizingVoice = false;
+    contactEditor.voiceStatus = "";
+    updateContactVoiceButton();
+  }
 }
 
 function startContactPreviewRecognition() {
@@ -2199,7 +2337,7 @@ function startContactPreviewRecognition() {
     if (contactEditor.recording) contactEditor.voiceStatus = "录音中 · 停止后 MiMo ASR 校正";
   };
   recognition.onend = () => {
-    if (!contactEditor.recording || contactEditor.mediaRecorder?.state === "inactive") return;
+    if (!contactEditor.recording || !contactEditor.audioRecorder) return;
     window.setTimeout(() => {
       if (!contactEditor.recording || contactEditor.previewRecognition !== recognition) return;
       try { recognition.start(); } catch { /* browser is already restarting */ }
@@ -2215,11 +2353,79 @@ function stopContactPreviewRecognition() {
   try { recognition?.stop(); } catch { /* already stopped */ }
 }
 
+function startContactLiveAsr() {
+  stopContactLiveAsr();
+  contactEditor.liveAsrTimer = window.setInterval(() => {
+    void refreshContactLiveAsr();
+  }, 6_000);
+}
+
+function stopContactLiveAsr() {
+  window.clearInterval(contactEditor.liveAsrTimer);
+  contactEditor.liveAsrTimer = null;
+  contactEditor.liveAsrController?.abort();
+  contactEditor.liveAsrController = null;
+}
+
+async function refreshContactLiveAsr() {
+  const recorder = contactEditor.audioRecorder;
+  if (!contactEditor.recording || !recorder || contactEditor.liveAsrController) return;
+  if (recorder.durationMs() < 2_500) return;
+  const snapshot = recorder.snapshot();
+  if (snapshot.size <= 44) return;
+  const previewAtRequest = contactEditor.voiceDraft;
+  const controller = new AbortController();
+  contactEditor.liveAsrController = controller;
+  try {
+    const corrected = (await transcribeRecordedAudio(snapshot, {
+      timeoutMs: 12_000,
+      signal: controller.signal,
+    })).slice(0, 2400);
+    if (!corrected || !contactEditor.recording || contactEditor.liveAsrController !== controller) return;
+    const current = contactEditor.voiceDraft;
+    const newerTail = previewAtRequest && current.startsWith(previewAtRequest)
+      ? current.slice(previewAtRequest.length)
+      : "";
+    contactEditor.voiceDraft = `${corrected}${newerTail}`.slice(0, 2400);
+    const input = document.querySelector("#contact-voice-input");
+    if (input) input.value = contactEditor.voiceDraft;
+    contactEditor.voiceStatus = "MiMo 已实时校正 · 继续说即可";
+    restartContactPreviewRecognition();
+    window.setTimeout(() => {
+      if (!contactEditor.recording) return;
+      contactEditor.voiceStatus = "实时识别中 · MiMo 将校正最终文本";
+      updateContactVoiceButton();
+    }, 1_200);
+    updateContactVoiceButton();
+  } catch {
+    // Preserve the browser preview and retry at the next interval.
+  } finally {
+    if (contactEditor.liveAsrController === controller) contactEditor.liveAsrController = null;
+  }
+}
+
+function restartContactPreviewRecognition() {
+  if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) return;
+  stopContactPreviewRecognition();
+  window.setTimeout(() => {
+    if (contactEditor.recording && contactEditor.audioRecorder) startContactPreviewRecognition();
+  }, 160);
+}
+
 function updateContactVoiceButton() {
   const button = document.querySelector("#contact-voice-button");
   if (!button) return;
   button.classList.toggle("is-recording", contactEditor.recording);
-  button.innerHTML = `<span class="voice-recording-visual ${contactEditor.recording ? "is-live" : ""}" aria-hidden="true">${contactEditor.recording ? "<i></i><i></i><i></i><i></i><i></i>" : "◉"}</span>${contactEditor.recording ? "正在听…" : "语音输入"}`;
+  button.classList.toggle("is-processing", contactEditor.finalizingVoice);
+  button.disabled = contactEditor.finalizingVoice;
+  button.innerHTML = `<span class="voice-recording-visual ${contactEditor.recording ? "is-live" : contactEditor.finalizingVoice ? "is-processing" : ""}" aria-hidden="true">${contactEditor.recording ? "<i></i><i></i><i></i><i></i><i></i>" : contactEditor.finalizingVoice ? "<b></b><b></b><b></b>" : "◉"}</span>${contactEditor.recording ? "停止并校正" : contactEditor.finalizingVoice ? "MiMo 校正中…" : "语音输入"}`;
+  const status = document.querySelector("#contact-editor-status");
+  if (status) {
+    status.textContent = [
+      contactEditor.voiceStatus,
+      contactEditor.nextQuestion ? `建议继续确认：${contactEditor.nextQuestion}` : "",
+    ].filter(Boolean).join(" · ");
+  }
 }
 
 async function organizeContactDraft() {
@@ -3241,6 +3447,127 @@ function reanalyzeState(targetState) {
     };
   });
   return targetState;
+}
+
+function canSpeakStoryText() {
+  return Boolean(
+    platform.user
+    && platform.externalAiConsent?.current
+    && platform.capabilities?.agent
+  );
+}
+
+function beginStreamingStorySpeech() {
+  cancelStorySpeech();
+  ttsState.streamBuffer = "";
+}
+
+function queueStreamingStorySpeech(rawChunk) {
+  if (!canSpeakStoryText() || typeof rawChunk !== "string" || !rawChunk) return;
+  ttsState.streamBuffer += rawChunk;
+  const result = extractCompletedSpeechChunks(ttsState.streamBuffer);
+  ttsState.streamBuffer = result.remainder;
+  enqueueStorySpeechChunks(result.chunks);
+}
+
+function flushStreamingStorySpeech() {
+  if (!canSpeakStoryText()) return;
+  const result = extractCompletedSpeechChunks(ttsState.streamBuffer, { flush: true });
+  ttsState.streamBuffer = "";
+  enqueueStorySpeechChunks(result.chunks);
+}
+
+function speakCompleteStoryText(text) {
+  beginStreamingStorySpeech();
+  ttsState.streamBuffer = text || "";
+  flushStreamingStorySpeech();
+}
+
+function enqueueStorySpeechChunks(chunks) {
+  for (const chunk of chunks) {
+    const text = normalizeAssistantText(chunk).slice(0, 220);
+    if (text) ttsState.queue.push(text);
+  }
+  if (!ttsState.playing && ttsState.queue.length) {
+    void playStorySpeechQueue(ttsState.generation);
+  }
+}
+
+async function playStorySpeechQueue(generation) {
+  if (ttsState.playing || generation !== ttsState.generation) return;
+  ttsState.playing = true;
+  document.body.classList.add("is-agent-speaking");
+  try {
+    while (generation === ttsState.generation && ttsState.queue.length) {
+      const text = ttsState.queue.shift();
+      const controller = new AbortController();
+      ttsState.controller = controller;
+      let url = "";
+      try {
+        const blob = await platformClient.synthesizeVoice(text, {
+          voice: "茉莉",
+          signal: controller.signal,
+        });
+        if (generation !== ttsState.generation) break;
+        url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        ttsState.currentAudio = audio;
+        ttsState.currentUrl = url;
+        await playAudioToEnd(audio, controller.signal);
+      } catch (error) {
+        if (controller.signal.aborted || generation !== ttsState.generation) break;
+        console.info("story_tts_unavailable", { code: error?.code || error?.name || "request_failed" });
+      } finally {
+        if (url) URL.revokeObjectURL(url);
+        if (ttsState.currentUrl === url) {
+          ttsState.currentAudio = null;
+          ttsState.currentUrl = "";
+        }
+        if (ttsState.controller === controller) ttsState.controller = null;
+      }
+    }
+  } finally {
+    if (generation === ttsState.generation) {
+      ttsState.playing = false;
+      document.body.classList.remove("is-agent-speaking");
+    }
+  }
+}
+
+function playAudioToEnd(audio, signal) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      audio.onended = null;
+      audio.onerror = null;
+      signal.removeEventListener("abort", abort);
+      resolve();
+    };
+    const abort = () => {
+      audio.pause();
+      finish();
+    };
+    audio.onended = finish;
+    audio.onerror = finish;
+    signal.addEventListener("abort", abort, { once: true });
+    audio.play().catch(finish);
+  });
+}
+
+function cancelStorySpeech() {
+  ttsState.generation += 1;
+  ttsState.controller?.abort();
+  ttsState.currentAudio?.pause();
+  if (ttsState.currentUrl) URL.revokeObjectURL(ttsState.currentUrl);
+  ttsState.queue = [];
+  ttsState.playing = false;
+  ttsState.controller = null;
+  ttsState.currentAudio = null;
+  ttsState.currentUrl = "";
+  ttsState.streamBuffer = "";
+  document.body.classList.remove("is-agent-speaking");
 }
 
 async function copyText(text) {

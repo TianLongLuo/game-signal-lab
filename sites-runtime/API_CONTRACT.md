@@ -126,7 +126,12 @@ external-AI consent as the text Agent. The Worker calls MiMo server-side and
 returns only audio bytes; prompts, audio payloads and provider response bodies
 are not persisted or written to audit logs.
 
-`POST /api/voice/asr` accepts `{ "audio": "data:<audio-mime>;base64,..." }`,
+`POST /api/voice/asr` accepts a WAV or MP3 data URL in
+`{ "audio": "data:<audio-mime>;base64,..." }`. Browser PCM is downsampled and
+encoded as mono 16 kHz WAV before upload; WebM, OGG and MP4 are rejected because
+the upstream MiMo V2.5 ASR contract does not accept them. The client performs
+throttled live correction while recording and a final correction on stop, with
+a bounded timeout and browser-live-text fallback. The endpoint
 requires the same authentication, Agent entitlement and current external-AI
 consent, and calls the fixed `mimo-v2.5-asr` model with the official
 `input_audio` message shape. It returns `{ "text": string }`; uploaded audio

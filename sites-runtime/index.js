@@ -995,7 +995,7 @@ async function synthesizeVoice(request, env, ctx) {
       body: JSON.stringify({
         model: config.model,
         messages: [
-          { role: "user", content: "请用自然、清晰的普通话朗读下面的内容。" },
+          { role: "user", content: "请用成熟、自信、温暖的御姐声线自然朗读下面的内容。注意语速平稳，情感温和。只输出清晰的普通话，不添加任何开场白或结束语。" },
           { role: "assistant", content: text },
         ],
         audio: { format: "wav", voice },
@@ -1076,8 +1076,9 @@ async function transcribeVoice(request, env, ctx) {
   const match = audio.match(/^data:([^;,]+)(?:;[^,]*)?;base64,([A-Za-z0-9+/=\s]+)$/);
   const mimeType = match?.[1]?.toLowerCase() || "";
   const encoded = match?.[2]?.replaceAll(/\s/g, "") || "";
-  if (!match || !mimeType.startsWith("audio/") || !encoded || encoded.length > 10 * 1024 * 1024) {
-    throw new HttpError(400, "invalid_audio", "语音文件格式不受支持或内容过大。");
+  const supportedMime = mimeType === "audio/wav" || mimeType === "audio/mpeg" || mimeType === "audio/mp3";
+  if (!match || !supportedMime || !encoded || encoded.length > 10 * 1024 * 1024) {
+    throw new HttpError(400, "invalid_audio", "MiMo ASR 只接受 WAV 或 MP3，且文件不能超过 8 MB。");
   }
   let bytes;
   try {

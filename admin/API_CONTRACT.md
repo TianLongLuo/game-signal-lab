@@ -218,6 +218,8 @@ RAG 文档、档案正文、检索片段或 Agent 对话。个人知识库接口
 
 语音供应商地址固定为 `https://token-plan-cn.xiaomimimo.com/v1/`，同一把 Token Plan MiMo Key 用于 Agent 的可选语音回应（TTS）和更准确的语音转文字（ASR）。密钥只在后台提交并以密文保存。
 
+浏览器录音统一转换为单声道 16 kHz WAV，再调用 `mimo-v2.5-asr`；不向上游发送 WebM、OGG 或 MP4。录音过程中按节流策略实时校正，停止后再做最终校正；超时会保留浏览器实时文本，不会让界面停在“校正中”。TTS 使用 `茉莉` 预置女声并通过风格指令生成成熟、知性、温暖的御姐表达。
+
 ### `GET /integrations/mimo-tts`
 
 返回 `enabled`、允许的 `model`、固定 `baseUrl`、`apiKeyConfigured` 和更新时间；不返回密钥或掩码。
