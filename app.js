@@ -109,6 +109,7 @@ const storyIntake = {
   motionSuppressed: false,
   liveAsrTimer: null,
   liveAsrController: null,
+  lastAsrChunkIndex: 0,
 };
 
 const contactEditor = {
@@ -126,6 +127,7 @@ const contactEditor = {
   finalizingVoice: false,
   liveAsrTimer: null,
   liveAsrController: null,
+  lastAsrChunkIndex: 0,
 };
 
 const ttsState = {
@@ -1782,23 +1784,27 @@ function stopStoryLiveAsr() {
   storyIntake.liveAsrTimer = null;
   storyIntake.liveAsrController?.abort();
   storyIntake.liveAsrController = null;
+  storyIntake.lastAsrChunkIndex = 0;
 }
 
 async function refreshStoryLiveAsr() {
   const recorder = storyIntake.audioRecorder;
   if (!storyIntake.recording || !recorder || storyIntake.liveAsrController) return;
   if (recorder.durationMs() < 2_500) return;
-  const snapshot = recorder.snapshot();
+  // Incremental snapshot: only the audio recorded since the last correction.
+  const fromIndex = storyIntake.lastAsrChunkIndex || 0;
+  const snapshot = recorder.snapshot(fromIndex);
   if (snapshot.size <= 44) return;
   const previewAtRequest = storyIntake.draftInput;
   const controller = new AbortController();
   storyIntake.liveAsrController = controller;
   try {
     const corrected = (await transcribeRecordedAudio(snapshot, {
-      timeoutMs: 12_000,
+      timeoutMs: 45_000,
       signal: controller.signal,
     })).slice(0, 2400);
     if (!corrected || !storyIntake.recording || storyIntake.liveAsrController !== controller) return;
+    storyIntake.lastAsrChunkIndex = recorder.chunkCount();
     const current = storyIntake.draftInput;
     const newerTail = previewAtRequest && current.startsWith(previewAtRequest)
       ? current.slice(previewAtRequest.length)
@@ -1850,8 +1856,11 @@ async function createWavRecorder(stream) {
   silentGain.connect(context.destination);
   let stopped = false;
   return {
-    snapshot() {
-      return encodeMonoWav(chunks, context.sampleRate);
+    snapshot(fromIndex = 0) {
+      return encodeMonoWav(chunks.slice(fromIndex), context.sampleRate);
+    },
+    chunkCount() {
+      return chunks.length;
     },
     durationMs() {
       return Math.round((sampleCount / context.sampleRate) * 1000);
@@ -2365,23 +2374,27 @@ function stopContactLiveAsr() {
   contactEditor.liveAsrTimer = null;
   contactEditor.liveAsrController?.abort();
   contactEditor.liveAsrController = null;
+  contactEditor.lastAsrChunkIndex = 0;
 }
 
 async function refreshContactLiveAsr() {
   const recorder = contactEditor.audioRecorder;
   if (!contactEditor.recording || !recorder || contactEditor.liveAsrController) return;
   if (recorder.durationMs() < 2_500) return;
-  const snapshot = recorder.snapshot();
+  // Incremental snapshot: only the audio recorded since the last correction.
+  const fromIndex = contactEditor.lastAsrChunkIndex || 0;
+  const snapshot = recorder.snapshot(fromIndex);
   if (snapshot.size <= 44) return;
   const previewAtRequest = contactEditor.voiceDraft;
   const controller = new AbortController();
   contactEditor.liveAsrController = controller;
   try {
     const corrected = (await transcribeRecordedAudio(snapshot, {
-      timeoutMs: 12_000,
+      timeoutMs: 45_000,
       signal: controller.signal,
     })).slice(0, 2400);
     if (!corrected || !contactEditor.recording || contactEditor.liveAsrController !== controller) return;
+    contactEditor.lastAsrChunkIndex = recorder.chunkCount();
     const current = contactEditor.voiceDraft;
     const newerTail = previewAtRequest && current.startsWith(previewAtRequest)
       ? current.slice(previewAtRequest.length)
