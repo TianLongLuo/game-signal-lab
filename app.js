@@ -37,25 +37,25 @@ const signalMeta = {
     label: "弱信号",
     short: "弱",
     className: "weak",
-    color: "#aeb6c8",
+    color: "#8b7fa3",
   },
   medium: {
     label: "中等信号",
     short: "中",
     className: "medium",
-    color: "#e0a63a",
+    color: "#22d3ee",
   },
   strong: {
     label: "强信号",
     short: "强",
     className: "strong",
-    color: "#aee8d0",
+    color: "#c084fc",
   },
   stop: {
     label: "停止推进",
     short: "停",
     className: "stop",
-    color: "#f57464",
+    color: "#ff3b5c",
   },
 };
 
