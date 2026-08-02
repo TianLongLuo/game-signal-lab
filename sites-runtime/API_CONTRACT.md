@@ -122,17 +122,24 @@ legacy-compatible `mimo-v2-tts`. The GET response only exposes
 same AES-256-GCM service-side configuration used for DeepSeek.
 
 `POST /api/voice/tts` accepts a short `{ "text": string, "voice"?: string }`
-payload. It requires the same authentication, Agent entitlement and current
-external-AI consent as the text Agent. The Worker calls MiMo server-side and
-returns only audio bytes; prompts, audio payloads and provider response bodies
-are not persisted or written to audit logs.
+payload. Add `"stream": true` to use MiMo's low-latency streaming contract:
+the Worker requests `audio.format = "pcm16"` and proxies the SSE audio deltas
+without buffering; the browser schedules 24 kHz mono PCM chunks immediately.
+Without `stream`, the endpoint retains the WAV compatibility response. It
+requires the same authentication, Agent entitlement and current external-AI
+consent as the text Agent. Prompts, audio payloads and provider response
+bodies are not persisted or written to audit logs.
 
 `POST /api/voice/asr` accepts a WAV or MP3 data URL in
-`{ "audio": "data:<audio-mime>;base64,..." }`. Browser PCM is downsampled and
+`{ "audio": "data:<audio-mime>;base64,..." }`. Add `"stream": true` to
+receive MiMo's SSE partial text deltas; without it the endpoint returns the
+final JSON response. Browser PCM is downsampled and
 encoded as mono 16 kHz WAV before upload; WebM, OGG and MP4 are rejected because
-the upstream MiMo V2.5 ASR contract does not accept them. The client performs
-throttled live correction while recording and a final correction on stop, with
-a bounded timeout and browser-live-text fallback. The endpoint
+the upstream MiMo V2.5 ASR contract does not accept them. The client sends
+small incremental WAV chunks over the streaming ASR contract while recording
+(2.2 second cadence, 1.2 second minimum), then only sends the uncorrected tail
+on stop; this avoids waiting for a second full-file pass. A bounded timeout and
+browser-live-text fallback remain in place. The endpoint
 requires the same authentication, Agent entitlement and current external-AI
 consent, and calls the fixed `mimo-v2.5-asr` model with the official
 `input_audio` message shape. It returns `{ "text": string }`; uploaded audio

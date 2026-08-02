@@ -73,3 +73,57 @@ test("TTS client requests the configured Chinese voice and returns audio", async
   assert.equal(blob.type, "audio/wav");
   assert.equal(blob.size, 4);
 });
+
+test("streaming TTS requests pcm16 and emits audio deltas", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, "/api/voice/tts");
+    assert.equal(options.headers.Accept, "text/event-stream");
+    assert.deepEqual(JSON.parse(options.body), {
+      text: "请继续说。",
+      voice: "茉莉",
+      stream: true,
+    });
+    return new Response(
+      'data: {"choices":[{"delta":{"audio":{"data":"AQI="}}}]}\n\n' +
+      "data: [DONE]\n\n",
+      { status: 200, headers: { "content-type": "text/event-stream" } }
+    );
+  };
+  const chunks = [];
+  const client = new PlatformClient();
+  client.setCsrfToken("csrf-test");
+  const count = await client.streamVoice("请继续说。", {
+    onAudio(chunk) { chunks.push(chunk); },
+  });
+  assert.equal(count, 1);
+  assert.deepEqual(chunks, ["AQI="]);
+});
+
+test("streaming ASR requests short audio chunks and emits cumulative text", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, "/api/voice/asr");
+    assert.equal(options.headers.Accept, "text/event-stream");
+    const payload = JSON.parse(options.body);
+    assert.equal(payload.stream, true);
+    assert.match(payload.audio, /^data:audio\/wav;base64,/);
+    return new Response(
+      'data: {"choices":[{"delta":{"content":"你好"}}]}\n\n' +
+      'data: {"choices":[{"delta":{"content":"，继续。"}}]}\n\n' +
+      "data: [DONE]\n\n",
+      { status: 200, headers: { "content-type": "text/event-stream" } }
+    );
+  };
+  const source = new Blob([new Uint8Array([82, 73, 70, 70])], { type: "audio/wav" });
+  const partials = [];
+  const client = new PlatformClient();
+  client.setCsrfToken("csrf-test");
+  const result = await client.streamTranscribeVoice(source, {
+    onText(text) { partials.push(text); },
+  });
+  assert.equal(result, "你好，继续。");
+  assert.deepEqual(partials, ["你好", "你好，继续。"]);
+});

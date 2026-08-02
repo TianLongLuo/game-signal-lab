@@ -963,6 +963,7 @@ async function synthesizeVoice(request, env, ctx) {
   }
   const body = await readJson(request, 24 * 1024);
   const text = typeof body.text === "string" ? body.text.trim() : "";
+  const streamRequested = body.stream === true;
   if (!text || text.length > 1_200) {
     throw new HttpError(400, "invalid_tts_text", "语音文本不能为空且不能超过 1200 个字符。");
   }
@@ -997,10 +998,11 @@ async function synthesizeVoice(request, env, ctx) {
       body: JSON.stringify({
         model: config.model,
         messages: [
-          { role: "user", content: "请用成熟、自信、温暖的御姐声线自然朗读下面的内容。注意语速平稳，情感温和。只输出清晰的普通话，不添加任何开场白或结束语。" },
+          { role: "user", content: "自然、清晰、温和地朗读，语速稍快；只读正文，不添加开场白。" },
           { role: "assistant", content: text },
         ],
-        audio: { format: "wav", voice },
+        audio: { format: streamRequested ? "pcm16" : "wav", voice },
+        ...(streamRequested ? { stream: true } : {}),
       }),
     });
   } catch (error) {
@@ -1031,6 +1033,18 @@ async function synthesizeVoice(request, env, ctx) {
       model: config.model,
     });
     throw error;
+  }
+  if (streamRequested) {
+    ctx.waitUntil(audit(env, request, auth.id, "voice.tts", "provider", "mimo_tts", "success"));
+    return withSecurity(new Response(upstream.body, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-store, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      },
+    }));
   }
   const contentType = String(upstream.headers.get("content-type") || "").toLowerCase();
   if (contentType.startsWith("audio/")) {
@@ -1075,6 +1089,7 @@ async function transcribeVoice(request, env, ctx) {
   }
   const body = await readJson(request, MAX_ASR_BODY_BYTES);
   const audio = typeof body.audio === "string" ? body.audio.trim() : "";
+  const streamRequested = body.stream === true;
   const match = audio.match(/^data:([^;,]+)(?:;[^,]*)?;base64,([A-Za-z0-9+/=\s]+)$/);
   const mimeType = match?.[1]?.toLowerCase() || "";
   const encoded = match?.[2]?.replaceAll(/\s/g, "") || "";
@@ -1122,7 +1137,8 @@ async function transcribeVoice(request, env, ctx) {
           role: "user",
           content: [{ type: "input_audio", input_audio: { data: audio } }],
         }],
-        asr_options: { language: "auto" },
+        asr_options: { language: "zh" },
+        ...(streamRequested ? { stream: true } : {}),
       }),
     });
   } catch (error) {
@@ -1149,6 +1165,18 @@ async function transcribeVoice(request, env, ctx) {
           : new HttpError(502, "asr_provider_rejected", "语音服务未接受本次音频，请检查录音格式。");
     console.error("mimo_asr_request_rejected", { providerStatus: status, providerCode: error.code });
     throw error;
+  }
+  if (streamRequested) {
+    ctx.waitUntil(audit(env, request, auth.id, "voice.asr", "provider", "mimo_asr", "success"));
+    return withSecurity(new Response(upstream.body, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-store, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      },
+    }));
   }
   let payload;
   try {

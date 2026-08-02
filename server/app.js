@@ -914,6 +914,7 @@ export async function createBackend(options = {}) {
       }
       const body = await readJson(request, 24 * 1024);
       const text = typeof body.text === "string" ? body.text.trim() : "";
+      const streamRequested = body.stream === true;
       if (!text || text.length > 1_200) {
         throw new HttpError(400, "invalid_tts_text", "语音文本不能为空且不能超过 1200 个字符。");
       }
@@ -960,10 +961,11 @@ export async function createBackend(options = {}) {
           body: JSON.stringify({
             model: config.model,
             messages: [
-              { role: "user", content: "请用成熟、自信、温暖的御姐声线自然朗读下面的内容。注意语速平稳，情感温和。只输出清晰的普通话，不添加任何开场白或结束语。" },
+              { role: "user", content: "自然、清晰、温和地朗读，语速稍快；只读正文，不添加开场白。" },
               { role: "assistant", content: text },
             ],
-            audio: { format: "wav", voice },
+            audio: { format: streamRequested ? "pcm16" : "wav", voice },
+            ...(streamRequested ? { stream: true } : {}),
           }),
         });
       } catch (error) {
@@ -1017,6 +1019,21 @@ export async function createBackend(options = {}) {
                 ? "语音服务暂时繁忙，请稍后重试。"
                 : "语音服务未接受本次请求，请检查后台模型配置。"
         );
+      }
+      if (streamRequested) {
+        writeAudit(db, request, masterKey, {
+          actorUserId: auth.id,
+          action: "voice.tts",
+          targetType: "provider",
+          targetId: "mimo_tts",
+        });
+        response.statusCode = 200;
+        response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+        response.setHeader("Cache-Control", "no-store, no-transform");
+        response.setHeader("Connection", "keep-alive");
+        response.setHeader("X-Accel-Buffering", "no");
+        await streamBody(upstream.body, response);
+        return;
       }
       const contentType = String(upstream.headers.get("content-type") || "").toLowerCase();
       if (contentType.startsWith("audio/")) {
@@ -1098,6 +1115,7 @@ export async function createBackend(options = {}) {
       }
       const body = await readJson(request, MAX_ASR_BODY_BYTES);
       const audio = typeof body.audio === "string" ? body.audio.trim() : "";
+      const streamRequested = body.stream === true;
       const match = audio.match(/^data:([^;,]+)(?:;[^,]*)?;base64,([A-Za-z0-9+/=\s]+)$/);
       const mimeType = match?.[1]?.toLowerCase() || "";
       const encoded = match?.[2]?.replaceAll(/\s/g, "") || "";
@@ -1152,7 +1170,8 @@ export async function createBackend(options = {}) {
               role: "user",
               content: [{ type: "input_audio", input_audio: { data: audio } }],
             }],
-            asr_options: { language: "auto" },
+            asr_options: { language: "zh" },
+            ...(streamRequested ? { stream: true } : {}),
           }),
         });
       } catch (error) {
@@ -1200,6 +1219,21 @@ export async function createBackend(options = {}) {
                 ? "语音识别服务暂时繁忙，请稍后重试。"
                 : "语音识别服务未接受本次请求。"
         );
+      }
+      if (streamRequested) {
+        writeAudit(db, request, masterKey, {
+          actorUserId: auth.id,
+          action: "voice.asr",
+          targetType: "provider",
+          targetId: "mimo_asr",
+        });
+        response.statusCode = 200;
+        response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+        response.setHeader("Cache-Control", "no-store, no-transform");
+        response.setHeader("Connection", "keep-alive");
+        response.setHeader("X-Accel-Buffering", "no");
+        await streamBody(upstream.body, response);
+        return;
       }
       let payload;
       try {
