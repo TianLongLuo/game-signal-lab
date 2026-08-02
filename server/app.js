@@ -78,6 +78,7 @@ const STATIC_ASSETS = new Map([
   ["/src/platform-client.js", ["src/platform-client.js", "text/javascript; charset=utf-8"]],
   ["/src/signal-engine.js", ["src/signal-engine.js", "text/javascript; charset=utf-8"]],
   ["/src/state-schema.js", ["src/state-schema.js", "text/javascript; charset=utf-8"]],
+  ["/src/voice-utils.js", ["src/voice-utils.js", "text/javascript; charset=utf-8"]],
   ["/admin", ["admin/index.html", "text/html; charset=utf-8"]],
   ["/admin/", ["admin/index.html", "text/html; charset=utf-8"]],
   ["/admin/index.html", ["admin/index.html", "text/html; charset=utf-8"]],
