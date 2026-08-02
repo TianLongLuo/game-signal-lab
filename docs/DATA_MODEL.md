@@ -165,7 +165,7 @@ Analysis 不是事实，不写入 `localStorage` 或导出备份，也不作为�
 | `agent_member_grants` | user id、enabled、updatedBy/At | 每用户 Agent grant |
 | `provider_configs` | provider、encrypted key parts、algorithm/key version、model、enabled、updatedBy/At | DeepSeek 配置 |
 | `audit_events` | actor、action、resource、result、reasonCode、requestId、occurredAt | 最小行为审计 |
-| `user_rag_documents` | user id、external id、kind、title、content、content hash、timestamps | 用户明确同步后的个人知识库文档；严格按 owner 隔离 |
+| `user_rag_documents` | user id、external id、kind、title、content、content hash、timestamps | 用户确认条款并提交 Agent 问题时更新的个人知识库文档；严格按 owner 隔离 |
 | `auth_rate_limits`（Sites） | 不可逆 key hash、scope、窗口/过期、count | 有界认证频率控制，不属于审计 |
 
 `user_rag_documents` 不是管理员可见的行为日志。Linux/Node 生产适配器把文档

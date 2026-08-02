@@ -176,7 +176,7 @@ Agent 调用前先按当前会话 `user_id` 检索，不能使用客户端提供
 ### 4.4 Agent 请求
 
 1. 用户在 Agent 视图明确提交最少必要文本。
-2. 客户端只提交受限的 `user` / `assistant` 消息；未明确同步的本地 profile、contacts、events、reviews 不参与组装。
+2. 客户端只提交受限的 `user` / `assistant` 消息；确认当前外部 AI 条款并提交 Agent 问题时，profile/contacts/events 的有界匿名文档先更新到当前账号 RAG，reviews 不参与组装。
 3. 服务端以会话 `user_id` 检索已同步的个人 RAG 文档，再拒绝客户端 `system` 消息并注入固定安全提示词。
 4. 服务端解密 API Key，调用固定 `https://api.deepseek.com/chat/completions`。
 5. 模型只允许 `deepseek-v4-flash` 或 `deepseek-v4-pro`。

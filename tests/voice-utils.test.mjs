@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  appendVoiceTranscript,
   encodeMonoWav,
   extractCompletedSpeechChunks,
+  mergeCumulativeVoiceTranscript,
   normalizeAssistantText,
+  reconcileCumulativeAsrText,
 } from "../src/voice-utils.js";
 
 test("assistant text removes markdown and decorative quote wrappers", () => {
@@ -19,6 +22,43 @@ test("streaming speech emits only complete sentences until flush", () => {
   const final = extractCompletedSpeechChunks(first.remainder, { flush: true });
   assert.deepEqual(final.chunks, ["第二句还没说完"]);
   assert.equal(final.remainder, "");
+});
+
+test("ASR correction preserves text that existed before recording", () => {
+  assert.equal(
+    appendVoiceTranscript("前面已经记录的事实。", "这是本次新录音"),
+    "前面已经记录的事实。这是本次新录音"
+  );
+  assert.equal(
+    mergeCumulativeVoiceTranscript({
+      baseText: "前面已经记录的事实。",
+      correctedText: "这是本次新录音。",
+      requestText: "前面已经记录的事实。这是本次新录音",
+      currentText: "前面已经记录的事实。这是本次新录音，后面还在继续说",
+    }),
+    "前面已经记录的事实。这是本次新录音。后面还在继续说"
+  );
+});
+
+test("ASR merge removes overlap instead of duplicating corrected text", () => {
+  assert.equal(
+    appendVoiceTranscript("我们在咖啡店认识", "咖啡店认识以后加了微信"),
+    "我们在咖啡店认识以后加了微信"
+  );
+});
+
+test("a shorter live ASR response cannot erase earlier recognized speech", () => {
+  assert.equal(
+    reconcileCumulativeAsrText(
+      "第一段说我们在地铁站认识，第二段说她给了二维码",
+      "第二段说她给了二维码，后来互相加了微信"
+    ),
+    "第一段说我们在地铁站认识，第二段说她给了二维码，后来互相加了微信"
+  );
+  assert.equal(
+    reconcileCumulativeAsrText("已经识别出的完整内容", "已经识别"),
+    "已经识别出的完整内容"
+  );
 });
 
 test("PCM encoder produces a mono 16 kHz WAV accepted by MiMo ASR", async () => {

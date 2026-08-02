@@ -23,7 +23,7 @@ mutations additionally require the session CSRF token.
 ```json
 {
   "externalAiConsent": {
-    "policyVersion": "2026-07-30-v1",
+    "policyVersion": "2026-08-02-v2",
     "accepted": true,
     "current": true,
     "consentedAt": "2026-07-30T00:00:00.000Z"
@@ -37,8 +37,9 @@ consent.
 
 ## Personal knowledge / RAG isolation
 
-The browser may explicitly synchronize a user's selected anonymous profile and
-event records through `PUT /api/me/knowledge`:
+After current external-AI consent and an explicit Agent form submission, the
+browser updates that user's bounded anonymous profile/contact/event records
+through `PUT /api/me/knowledge` before calling the model:
 
 ```json
 {

@@ -926,7 +926,7 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
     method: "PUT",
     jar: memberJar,
     csrf: true,
-    body: { accepted: true, policyVersion: "2026-07-30-v1" },
+    body: { accepted: true, policyVersion: "2026-08-02-v2" },
   });
   assert.equal(consent.response.status, 200);
   assert.equal(consent.body.externalAiConsent.current, true);
@@ -975,6 +975,8 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
     ragRequest.messages.some((message) => message.content.includes("RAG_OTHER_USER")),
     false
   );
+  assert.match(ragRequest.messages[0].content, /可以分析当前登录用户/);
+  assert.match(ragRequest.messages[0].content, /不得因为请求涉及某个对象就笼统拒绝/);
 
   const originalTag = backend.db
     .prepare("SELECT auth_tag FROM provider_configs WHERE provider = 'deepseek'")
@@ -1277,7 +1279,7 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
     method: "PUT",
     jar: memberJar,
     csrf: true,
-    body: { accepted: true, policyVersion: "2026-07-30-v1" },
+    body: { accepted: true, policyVersion: "2026-08-02-v2" },
   });
   assert.equal(reconsent.response.status, 200);
   const revokeGrant = await requestJson(

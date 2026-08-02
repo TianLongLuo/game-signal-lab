@@ -13,6 +13,64 @@ export function normalizeAssistantText(value) {
     .trim();
 }
 
+export function appendVoiceTranscript(baseText, nextText) {
+  const base = typeof baseText === "string" ? baseText.trim() : "";
+  let next = typeof nextText === "string" ? nextText.trim() : "";
+  if (!base) return next;
+  if (!next) return base;
+  if (next.startsWith(base)) return next;
+  if (base.endsWith(next)) return base;
+
+  const overlapLimit = Math.min(base.length, next.length, 160);
+  for (let size = overlapLimit; size >= 2; size -= 1) {
+    if (base.slice(-size) === next.slice(0, size)) {
+      return `${base}${next.slice(size)}`;
+    }
+  }
+
+  if (/[。！？!?；;，,：:]$/u.test(base) && /^[。！？!?；;，,：:]+/u.test(next)) {
+    next = next.replace(/^[。！？!?；;，,：:]+/u, "");
+  }
+
+  const separator = /[\s。！？!?；;，,：:]$/u.test(base) ? "" : " ";
+  return `${base}${separator}${next}`;
+}
+
+export function mergeCumulativeVoiceTranscript({
+  baseText = "",
+  correctedText = "",
+  requestText = "",
+  currentText = "",
+  maxLength = 2_400,
+} = {}) {
+  const stable = appendVoiceTranscript(baseText, correctedText);
+  const requested = typeof requestText === "string" ? requestText : "";
+  const current = typeof currentText === "string" ? currentText : "";
+  const newerTail = requested && current.startsWith(requested)
+    ? current.slice(requested.length)
+    : "";
+  return appendVoiceTranscript(stable, newerTail).slice(0, maxLength);
+}
+
+export function reconcileCumulativeAsrText(previousText, correctedText) {
+  const previous = typeof previousText === "string" ? previousText.trim() : "";
+  const corrected = typeof correctedText === "string" ? correctedText.trim() : "";
+  if (!previous) return corrected;
+  if (!corrected) return previous;
+  if (corrected.startsWith(previous)) return corrected;
+  if (previous.startsWith(corrected) || previous.includes(corrected)) return previous;
+
+  let sharedPrefix = 0;
+  const shortest = Math.min(previous.length, corrected.length);
+  while (sharedPrefix < shortest && previous[sharedPrefix] === corrected[sharedPrefix]) {
+    sharedPrefix += 1;
+  }
+  if (sharedPrefix >= Math.min(12, Math.floor(shortest * 0.45))) {
+    return corrected.length >= previous.length * 0.7 ? corrected : previous;
+  }
+  return appendVoiceTranscript(previous, corrected);
+}
+
 export function extractCompletedSpeechChunks(buffer, { flush = false, maxChunkLength = 180 } = {}) {
   const source = typeof buffer === "string" ? buffer : "";
   const chunks = [];

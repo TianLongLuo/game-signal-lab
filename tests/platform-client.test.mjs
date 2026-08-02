@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  PlatformClient,
   PlatformError,
   normalizeAgentMessages,
 } from "../src/platform-client.js";
@@ -51,4 +52,24 @@ test("Agent history preserves a contiguous newest suffix within 64 KiB", () => {
     ) <=
       64 * 1024
   );
+});
+
+test("TTS client requests the configured Chinese voice and returns audio", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, "/api/voice/tts");
+    assert.equal(options.method, "POST");
+    assert.equal(options.headers.Accept, "audio/mpeg");
+    assert.deepEqual(JSON.parse(options.body), { text: "请继续说。", voice: "茉莉" });
+    return new Response(new Uint8Array([82, 73, 70, 70]), {
+      status: 200,
+      headers: { "content-type": "audio/wav" },
+    });
+  };
+  const client = new PlatformClient();
+  client.setCsrfToken("csrf-test");
+  const blob = await client.synthesizeVoice("请继续说。");
+  assert.equal(blob.type, "audio/wav");
+  assert.equal(blob.size, 4);
 });

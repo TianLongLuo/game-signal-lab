@@ -17,9 +17,12 @@ import {
 } from "./src/state-schema.js";
 import { PlatformClient, PlatformError } from "./src/platform-client.js";
 import {
+  appendVoiceTranscript,
   encodeMonoWav,
   extractCompletedSpeechChunks,
+  mergeCumulativeVoiceTranscript,
   normalizeAssistantText,
+  reconcileCumulativeAsrText,
 } from "./src/voice-utils.js";
 
 const STORAGE_KEY = "game-signal-lab:v2";
@@ -81,6 +84,7 @@ const platform = {
   externalAiConsent: null,
   capabilities: null,
   knowledge: null,
+  knowledgeSignature: "",
   knowledgeBusy: false,
   agentMessages: [],
   agentBusy: false,
@@ -110,6 +114,8 @@ const storyIntake = {
   liveAsrTimer: null,
   liveAsrController: null,
   lastAsrChunkIndex: 0,
+  recordingBaseText: "",
+  recordingAsrText: "",
 };
 
 const contactEditor = {
@@ -128,6 +134,8 @@ const contactEditor = {
   liveAsrTimer: null,
   liveAsrController: null,
   lastAsrChunkIndex: 0,
+  recordingBaseText: "",
+  recordingAsrText: "",
 };
 
 const ttsState = {
@@ -138,6 +146,9 @@ const ttsState = {
   currentUrl: "",
   streamBuffer: "",
   generation: 0,
+  audioContext: null,
+  currentSource: null,
+  errorNotified: false,
 };
 
 const STORY_SCROLL_BOTTOM_THRESHOLD = 72;
@@ -339,6 +350,7 @@ function bindGlobalEvents() {
     }
 
     if (actionName === "story-start") {
+      void unlockStoryAudio();
       startStoryIntake();
     }
 
@@ -347,10 +359,12 @@ function bindGlobalEvents() {
     }
 
     if (actionName === "story-skip") {
+      void unlockStoryAudio();
       submitStoryAnswer("（跳过这一题）");
     }
 
     if (actionName === "story-voice") {
+      void unlockStoryAudio();
       toggleStoryVoice();
     }
 
@@ -416,11 +430,13 @@ function bindGlobalEvents() {
 
     if (event.target.matches("#agent-form")) {
       event.preventDefault();
+      void unlockStoryAudio();
       await submitAgentPrompt(event.target, new FormData(event.target));
     }
 
     if (event.target.matches("#story-answer-form")) {
       event.preventDefault();
+      void unlockStoryAudio();
       await submitStoryAnswer(clean(new FormData(event.target).get("answer")));
     }
 
@@ -446,6 +462,7 @@ function bindGlobalEvents() {
       !isTypingTarget(event.target)
     ) {
       event.preventDefault();
+      void unlockStoryAudio();
       toggleStoryVoice({ fromKeyboard: true });
     }
 
@@ -581,6 +598,7 @@ async function refreshPlatformSession() {
     platform.externalAiConsent = null;
     platform.capabilities = null;
     platform.knowledge = null;
+    platform.knowledgeSignature = "";
     syncPlatformStatus();
     if (currentView === "agent") renderCurrentView();
     return;
@@ -596,6 +614,7 @@ async function refreshPlatformSession() {
       platform.knowledge = (await platformClient.knowledgeStatus()).knowledge || null;
     } catch {
       platform.knowledge = null;
+      platform.knowledgeSignature = "";
     }
   } catch (error) {
     if (error instanceof PlatformError && error.status === 401) {
@@ -605,6 +624,7 @@ async function refreshPlatformSession() {
       platform.externalAiConsent = null;
       platform.capabilities = null;
       platform.knowledge = null;
+      platform.knowledgeSignature = "";
     } else {
       platform.available = false;
       platform.user = null;
@@ -612,6 +632,7 @@ async function refreshPlatformSession() {
       platform.externalAiConsent = null;
       platform.capabilities = null;
       platform.knowledge = null;
+      platform.knowledgeSignature = "";
     }
   }
   syncPlatformStatus();
@@ -639,7 +660,7 @@ function renderAgent() {
   if (platform.available === null) {
     return `
       <div class="page">
-        ${pageHeading("一起想想", "我先确认一下房间是否准备好。", "你的本地关系记录不会在后台自动上传。")}
+        ${pageHeading("一起想想", "我先确认一下房间是否准备好。", "只有在你同意并发起 Agent 提问时，匿名档案才会同步到账号专属空间。")}
         <section class="panel agent-loading" aria-live="polite">正在连接同源服务…</section>
       </div>
     `;
@@ -677,7 +698,7 @@ function renderAgent() {
           <span>已登录</span>
           <strong>${escapeHTML(platform.user.username)}</strong>
           <small>${escapeHTML(membershipLabel(platform.membership))}</small>
-          <small>${platform.knowledge?.documentCount ? `个人档案 ${platform.knowledge.documentCount} 条` : "尚未同步个人档案"}</small>
+          <small>${platform.knowledge?.documentCount ? `个人档案 ${platform.knowledge.documentCount} 条` : "首次提问时同步匿名档案"}</small>
           <button class="text-button" type="button" data-action="revoke-ai-consent">撤回 AI 同意</button>
           <button class="text-button" type="button" data-action="platform-logout">退出账户</button>
         </div>
@@ -722,7 +743,7 @@ function renderAgent() {
             </div>
           </form>
           <p class="agent-privacy-note">
-            明示发送的内容会由服务器转交 DeepSeek；只有你主动同步的个人档案会被当前账号检索。服务端不保存提示词或回复正文，管理员也看不到档案正文。
+            发送问题时，当前浏览器里的匿名对象档案会先更新到该账号的隔离知识库，再由 DeepSeek 只检索这个账号的数据。服务端不保存提示词或回复正文，管理员也看不到档案正文。
           </p>
         </aside>
       </div>
@@ -738,7 +759,7 @@ function renderExternalAiConsent() {
       <header class="auth-masthead">
         <p class="eyebrow">EXTERNAL AI · CONSENT NOTE</p>
         <h1>发送之前，<br /><em>先把数据去向说清楚。</em></h1>
-        <p>本地日记不会自动上传。你可以只发送当前文字，也可以之后在“对象档案”页明确同步自己的匿名资料，让 Agent 只在你的个人空间里检索。</p>
+        <p>登录或打开页面不会上传本地日记。你确认本说明并提交 Agent 问题时，匿名 profile/contact/event 的最少必要字段会更新到账号专属空间，让 Agent 只检索你的资料。</p>
       </header>
       <div class="consent-layout">
         <section>
@@ -746,7 +767,7 @@ function renderExternalAiConsent() {
           <h2>这项同意与会员资格分开。</h2>
           <ul>
             <li>请只使用代号和最少必要上下文，不发送姓名、账号、地址、定位或完整聊天记录。</li>
-            <li>GAME 服务端不保存提示词和模型回复正文；个人档案只有在你明确同步后才进入自己的隔离知识库。</li>
+            <li>GAME 服务端不保存提示词和模型回复正文；你发起 Agent 提问时，当前匿名档案会同步到自己的隔离知识库，供本次和后续提问检索。</li>
             <li>DeepSeek 作为外部模型提供方会接收你明确发送的文字；其处理受相应服务政策约束。</li>
             <li>你可以随时撤回。撤回后新的 Agent 请求会被服务端拒绝，并清空服务器个人知识库；本地日记不受影响。</li>
           </ul>
@@ -755,7 +776,7 @@ function renderExternalAiConsent() {
           <input type="hidden" name="policyVersion" value="${escapeAttribute(policyVersion)}" />
           <label class="check-row consent-check">
             <input type="checkbox" name="accepted" required />
-            <span>我已阅读并同意将我主动发送的文字，以及我之后明确同步的个人档案片段，交给 DeepSeek 处理。</span>
+            <span>我已阅读并同意：发起 Agent 提问时，将我主动发送的文字和当前匿名档案同步到账号专属知识库，并交给 DeepSeek 处理。</span>
           </label>
           <p class="form-error" data-consent-error role="alert" aria-live="assertive"></p>
           <button class="button button--primary" type="submit">同意并继续</button>
@@ -794,7 +815,7 @@ function renderAgentAuth() {
   const serviceNote =
     platform.available === false
       ? "当前以纯静态方式打开，账号服务不可用；本地记录功能仍可正常使用。请通过 Node 服务启动后再登录。"
-      : "登录后才会向后台发送账号操作。你的本地档案、事件与复盘不会自动同步。";
+      : "登录本身不会上传档案；同意外部 AI 并发起 Agent 提问后，匿名档案才会同步到账号专属空间。";
   return `
     <div class="page">
       <header class="auth-masthead">
@@ -934,6 +955,7 @@ async function logoutPlatform() {
   platform.externalAiConsent = null;
   platform.capabilities = null;
   platform.knowledge = null;
+  platform.knowledgeSignature = "";
   platform.agentMessages = [];
   platform.agentController?.abort();
   platform.agentBusy = false;
@@ -978,8 +1000,10 @@ async function syncPersonalKnowledge() {
   platform.knowledgeBusy = true;
   renderCurrentView();
   try {
-    const payload = await platformClient.syncKnowledge(buildKnowledgeDocuments());
+    const documents = buildKnowledgeDocuments();
+    const payload = await platformClient.syncKnowledge(documents);
     platform.knowledge = payload.knowledge || null;
+    platform.knowledgeSignature = knowledgeDocumentsSignature(documents);
     showToast(
       `已把 ${payload.knowledge?.documentCount ?? 0} 条档案同步到你的个人知识库`
     );
@@ -1005,6 +1029,7 @@ async function clearPersonalKnowledge() {
   try {
     const payload = await platformClient.clearKnowledge();
     platform.knowledge = payload.knowledge || null;
+    platform.knowledgeSignature = knowledgeDocumentsSignature([]);
     showToast("服务器个人知识库已清空");
   } catch (error) {
     showToast(
@@ -1075,6 +1100,32 @@ function buildKnowledgeDocuments() {
   return documents.slice(0, 500);
 }
 
+function knowledgeDocumentsSignature(documents) {
+  let hash = 2166136261;
+  const source = JSON.stringify(documents);
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${documents.length}:${(hash >>> 0).toString(16)}`;
+}
+
+async function ensurePersonalKnowledgeForAgent() {
+  const documents = buildKnowledgeDocuments();
+  const signature = knowledgeDocumentsSignature(documents);
+  if (
+    platform.knowledgeSignature === signature
+    && Number(platform.knowledge?.documentCount || 0) === documents.length
+  ) return;
+  if (!documents.length && Number(platform.knowledge?.documentCount || 0) === 0) {
+    platform.knowledgeSignature = signature;
+    return;
+  }
+  const payload = await platformClient.syncKnowledge(documents);
+  platform.knowledge = payload.knowledge || null;
+  platform.knowledgeSignature = signature;
+}
+
 async function submitAgentPrompt(form, formData) {
   cancelStorySpeech();
   if (!platform.user || platform.agentBusy) return;
@@ -1082,6 +1133,18 @@ async function submitAgentPrompt(form, formData) {
   const errorNode = form.querySelector("#agent-error");
   if (!prompt) {
     errorNode.textContent = "请先写下一个想讨论的问题。";
+    return;
+  }
+
+  const submit = form.querySelector('button[type="submit"]');
+  if (submit) submit.disabled = true;
+  try {
+    await ensurePersonalKnowledgeForAgent();
+  } catch (error) {
+    errorNode.textContent = error instanceof PlatformError
+      ? `对象档案未能进入专属知识库：${error.message}`
+      : "对象档案同步失败，请稍后重试。";
+    if (submit) submit.disabled = false;
     return;
   }
 
@@ -1110,10 +1173,10 @@ async function submitAgentPrompt(form, formData) {
   try {
     const complete = await platformClient.streamAgent(conversation, {
       signal: platform.agentController.signal,
-      onText(_chunk, fullText) {
+      onText(chunk, fullText) {
         const target = platform.agentMessages.at(-1);
         if (target?.role === "assistant") target.content = fullText.slice(0, 20000);
-        queueStreamingStorySpeech(_chunk);
+        queueStreamingStorySpeech(chunk);
         const node = document.querySelector("#agent-response-last");
         if (node) node.textContent = normalizeAssistantText(target?.content || "");
       },
@@ -1558,6 +1621,8 @@ async function startStoryAudioRecording() {
   }
   storyIntake.audioRecorder = recorder;
   storyIntake.recordingStream = stream;
+  storyIntake.recordingBaseText = clean(storyIntake.draftInput).slice(0, 2400);
+  storyIntake.recordingAsrText = "";
   storyIntake.finalizingVoice = false;
   storyIntake.recording = true;
   storyIntake.voiceAutoSubmit = true;
@@ -1665,7 +1730,8 @@ async function correctSpeechTranscript(draft) {
         content: `请只校正下面这段中文语音识别文本中的明显错别字、同音词、断句和标点。保留原意、人物、时间、地点、数量和不确定性，不要补写事实，不要解释，只输出校正后的原文：\n\n${draft}`,
       },
     ]);
-    return clean(complete).slice(0, 2400) || draft;
+    const corrected = clean(complete).slice(0, 2400);
+    return corrected && corrected.length >= draft.length * 0.7 ? corrected : draft;
   } catch {
     return draft;
   }
@@ -1691,6 +1757,8 @@ function stopStoryVoice({ autoSubmit = false } = {}) {
     stream?.getTracks().forEach((track) => track.stop());
     renderStoryViewPreservingScroll();
     if (!storyIntake.active) {
+      storyIntake.recordingBaseText = "";
+      storyIntake.recordingAsrText = "";
       storyIntake.finalizingVoice = false;
       storyIntake.motionSuppressed = false;
       storyIntake.voiceStatus = "";
@@ -1713,7 +1781,11 @@ function stopStoryVoice({ autoSubmit = false } = {}) {
 async function finalizeStoryRecording(blob, { preview, shouldSubmit }) {
   let transcript = preview;
   try {
-    if (blob.size) transcript = (await transcribeRecordedAudio(blob, { timeoutMs: 25_000 })).slice(0, 2400);
+    if (blob.size) {
+      const corrected = await transcribeRecordedAudio(blob, { timeoutMs: 25_000 });
+      const stable = reconcileCumulativeAsrText(storyIntake.recordingAsrText, corrected);
+      transcript = appendVoiceTranscript(storyIntake.recordingBaseText, stable).slice(0, 2400);
+    }
     if (transcript && storyIntake.active) {
       storyIntake.draftInput = transcript;
       storyIntake.voiceStatus = shouldSubmit ? "MiMo 校正完成 · 正在发送" : "MiMo 校正完成";
@@ -1729,6 +1801,8 @@ async function finalizeStoryRecording(blob, { preview, shouldSubmit }) {
       showToast(error instanceof PlatformError ? error.message : "语音识别未完成，请改用文字输入", 4200);
     }
   } finally {
+    storyIntake.recordingBaseText = "";
+    storyIntake.recordingAsrText = "";
     storyIntake.finalizingVoice = false;
     storyIntake.motionSuppressed = false;
     storyIntake.voiceStatus = "";
@@ -1809,11 +1883,14 @@ async function refreshStoryLiveAsr() {
     })).slice(0, 2400);
     if (!corrected || !storyIntake.recording || storyIntake.liveAsrController !== controller) return;
     storyIntake.lastAsrChunkIndex = recorder.chunkCount();
-    const current = storyIntake.draftInput;
-    const newerTail = previewAtRequest && current.startsWith(previewAtRequest)
-      ? current.slice(previewAtRequest.length)
-      : "";
-    storyIntake.draftInput = `${corrected}${newerTail}`.slice(0, 2400);
+    const stableCorrection = appendVoiceTranscript(storyIntake.recordingAsrText, corrected);
+    storyIntake.recordingAsrText = stableCorrection;
+    storyIntake.draftInput = mergeCumulativeVoiceTranscript({
+      baseText: storyIntake.recordingBaseText,
+      correctedText: stableCorrection,
+      requestText: previewAtRequest,
+      currentText: storyIntake.draftInput,
+    });
     const input = document.querySelector("#story-answer");
     if (input) input.value = storyIntake.draftInput;
     storyIntake.voiceStatus = "MiMo 已实时校正 · 继续说即可";
@@ -2170,6 +2247,8 @@ function closeContactEditor() {
   contactEditor.organized = false;
   contactEditor.nextQuestion = "";
   contactEditor.voiceStatus = "";
+  contactEditor.recordingBaseText = "";
+  contactEditor.recordingAsrText = "";
   if (currentView === "people") renderCurrentView();
 }
 
@@ -2234,6 +2313,7 @@ async function toggleContactVoice() {
 async function startContactAudioRecording() {
   if (!canRecordAudio()) return false;
   if (!(await checkMicrophonePermission())) return true;
+  const input = document.querySelector("#contact-voice-input");
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -2251,6 +2331,8 @@ async function startContactAudioRecording() {
   }
   contactEditor.audioRecorder = recorder;
   contactEditor.recordingStream = stream;
+  contactEditor.recordingBaseText = clean(input?.value || contactEditor.voiceDraft).slice(0, 2400);
+  contactEditor.recordingAsrText = "";
   contactEditor.finalizingVoice = false;
   contactEditor.recording = true;
   contactEditor.voiceAutoOrganize = true;
@@ -2286,6 +2368,8 @@ function stopContactVoice({ autoOrganize = false, discard = false } = {}) {
     stream?.getTracks().forEach((track) => track.stop());
     updateContactVoiceButton();
     if (discard) {
+      contactEditor.recordingBaseText = "";
+      contactEditor.recordingAsrText = "";
       contactEditor.finalizingVoice = false;
       contactEditor.voiceStatus = "";
       return;
@@ -2303,7 +2387,11 @@ function stopContactVoice({ autoOrganize = false, discard = false } = {}) {
 async function finalizeContactRecording(blob, { preview, shouldOrganize }) {
   let transcript = preview;
   try {
-    if (blob.size) transcript = (await transcribeRecordedAudio(blob, { timeoutMs: 25_000 })).slice(0, 2400);
+    if (blob.size) {
+      const corrected = await transcribeRecordedAudio(blob, { timeoutMs: 25_000 });
+      const stable = reconcileCumulativeAsrText(contactEditor.recordingAsrText, corrected);
+      transcript = appendVoiceTranscript(contactEditor.recordingBaseText, stable).slice(0, 2400);
+    }
     if (transcript && editingContactId) {
       contactEditor.voiceDraft = transcript;
       contactEditor.voiceStatus = shouldOrganize ? "MiMo 校正完成 · 正在整理档案" : "MiMo 校正完成";
@@ -2321,6 +2409,8 @@ async function finalizeContactRecording(blob, { preview, shouldOrganize }) {
       showToast(error instanceof PlatformError ? error.message : "语音识别未完成，请改用文字输入", 4200);
     }
   } finally {
+    contactEditor.recordingBaseText = "";
+    contactEditor.recordingAsrText = "";
     contactEditor.finalizingVoice = false;
     contactEditor.voiceStatus = "";
     updateContactVoiceButton();
@@ -2399,11 +2489,14 @@ async function refreshContactLiveAsr() {
     })).slice(0, 2400);
     if (!corrected || !contactEditor.recording || contactEditor.liveAsrController !== controller) return;
     contactEditor.lastAsrChunkIndex = recorder.chunkCount();
-    const current = contactEditor.voiceDraft;
-    const newerTail = previewAtRequest && current.startsWith(previewAtRequest)
-      ? current.slice(previewAtRequest.length)
-      : "";
-    contactEditor.voiceDraft = `${corrected}${newerTail}`.slice(0, 2400);
+    const stableCorrection = appendVoiceTranscript(contactEditor.recordingAsrText, corrected);
+    contactEditor.recordingAsrText = stableCorrection;
+    contactEditor.voiceDraft = mergeCumulativeVoiceTranscript({
+      baseText: contactEditor.recordingBaseText,
+      correctedText: stableCorrection,
+      requestText: previewAtRequest,
+      currentText: contactEditor.voiceDraft,
+    });
     const input = document.querySelector("#contact-voice-input");
     if (input) input.value = contactEditor.voiceDraft;
     contactEditor.voiceStatus = "MiMo 已实时校正 · 继续说即可";
@@ -2940,8 +3033,8 @@ function renderPrivacy() {
       ${renderStorageRecoveryNotice()}
       ${pageHeading(
         "隐私与数据",
-        "关系记录留在本地，Agent 只接收你明确发送的内容。",
-        "匿名档案、事件、规则分析与复盘保存在当前浏览器；可选账号只用于会员授权和 Agent，不会自动同步本地日记。"
+        "关系日记留在本地，匿名档案只在你提交 Agent 问题时同步。",
+        "规则分析、复盘和完整本地日记不会上传；经同意后，Agent 会把匿名 profile/contact/event 的最少必要字段更新到当前账号的隔离知识库。"
       )}
 
       <div class="data-grid">
@@ -3477,6 +3570,7 @@ function canSpeakStoryText() {
 function beginStreamingStorySpeech() {
   cancelStorySpeech();
   ttsState.streamBuffer = "";
+  ttsState.errorNotified = false;
 }
 
 function queueStreamingStorySpeech(rawChunk) {
@@ -3526,14 +3620,27 @@ async function playStorySpeechQueue(generation) {
           signal: controller.signal,
         });
         if (generation !== ttsState.generation) break;
-        url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        ttsState.currentAudio = audio;
-        ttsState.currentUrl = url;
-        await playAudioToEnd(audio, controller.signal);
+        if (!(await playStoryAudioBlob(blob, controller.signal))) {
+          url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          ttsState.currentAudio = audio;
+          ttsState.currentUrl = url;
+          await playAudioToEnd(audio, controller.signal);
+        }
       } catch (error) {
         if (controller.signal.aborted || generation !== ttsState.generation) break;
         console.info("story_tts_unavailable", { code: error?.code || error?.name || "request_failed" });
+        if (!ttsState.errorNotified) {
+          ttsState.errorNotified = true;
+          showToast(
+            error instanceof PlatformError
+              ? `AI 语音未播放：${error.message}`
+              : "AI 语音被浏览器阻止，请点击一次输入区后继续",
+            4600
+          );
+        }
+        ttsState.queue = [];
+        break;
       } finally {
         if (url) URL.revokeObjectURL(url);
         if (ttsState.currentUrl === url) {
@@ -3551,37 +3658,93 @@ async function playStorySpeechQueue(generation) {
   }
 }
 
-function playAudioToEnd(audio, signal) {
-  return new Promise((resolve) => {
+async function unlockStoryAudio() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return false;
+  try {
+    if (!ttsState.audioContext || ttsState.audioContext.state === "closed") {
+      ttsState.audioContext = new AudioContextClass();
+    }
+    if (ttsState.audioContext.state !== "running") {
+      await ttsState.audioContext.resume();
+    }
+    return ttsState.audioContext.state === "running";
+  } catch {
+    return false;
+  }
+}
+
+async function playStoryAudioBlob(blob, signal) {
+  const unlocked = await unlockStoryAudio();
+  const context = ttsState.audioContext;
+  if (!unlocked || !context) return false;
+  const bytes = await blob.arrayBuffer();
+  if (signal.aborted) return true;
+  let buffer;
+  try {
+    buffer = await context.decodeAudioData(bytes.slice(0));
+  } catch {
+    return false;
+  }
+  if (signal.aborted) return true;
+  await new Promise((resolve) => {
     let settled = false;
+    const source = context.createBufferSource();
     const finish = () => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", abort);
+      if (ttsState.currentSource === source) ttsState.currentSource = null;
+      resolve();
+    };
+    const abort = () => {
+      try { source.stop(); } catch { /* source may not have started */ }
+      finish();
+    };
+    source.buffer = buffer;
+    source.connect(context.destination);
+    source.onended = finish;
+    signal.addEventListener("abort", abort, { once: true });
+    ttsState.currentSource = source;
+    source.start();
+  });
+  return true;
+}
+
+function playAudioToEnd(audio, signal) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error = null) => {
       if (settled) return;
       settled = true;
       audio.onended = null;
       audio.onerror = null;
       signal.removeEventListener("abort", abort);
-      resolve();
+      if (error) reject(error);
+      else resolve();
     };
     const abort = () => {
       audio.pause();
       finish();
     };
     audio.onended = finish;
-    audio.onerror = finish;
+    audio.onerror = () => finish(new Error("audio_decode_failed"));
     signal.addEventListener("abort", abort, { once: true });
-    audio.play().catch(finish);
+    audio.play().catch((error) => finish(error));
   });
 }
 
 function cancelStorySpeech() {
   ttsState.generation += 1;
   ttsState.controller?.abort();
+  try { ttsState.currentSource?.stop(); } catch { /* source may already be stopped */ }
   ttsState.currentAudio?.pause();
   if (ttsState.currentUrl) URL.revokeObjectURL(ttsState.currentUrl);
   ttsState.queue = [];
   ttsState.playing = false;
   ttsState.controller = null;
   ttsState.currentAudio = null;
+  ttsState.currentSource = null;
   ttsState.currentUrl = "";
   ttsState.streamBuffer = "";
   document.body.classList.remove("is-agent-speaking");

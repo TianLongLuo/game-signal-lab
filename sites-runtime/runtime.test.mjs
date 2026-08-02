@@ -7,7 +7,7 @@ import worker from "./index.js";
 
 const ORIGIN = "https://game.example";
 const MASTER_KEY = "11".repeat(32);
-const CONSENT_POLICY = "2026-07-30-v1";
+const CONSENT_POLICY = "2026-08-02-v2";
 
 class TestD1Statement {
   constructor(database, sql) {
@@ -878,6 +878,7 @@ test("Agent requires current explicit consent and filters provider SSE", async (
     const upstreamBody = JSON.parse(options.body);
     assert.equal(upstreamBody.stream, true);
     assert.match(upstreamBody.messages[0].content, /拒绝/);
+    assert.match(upstreamBody.messages[0].content, /可以分析当前登录用户/);
     return new Response(
       [
         'data: {"id":"provider-id","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"hidden chain","content":"先看事实。"},"finish_reason":null}]}',
