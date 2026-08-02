@@ -28,6 +28,7 @@ const DEEPSEEK_MODELS = new Set([
   "deepseek-v4-pro",
 ]);
 const MIMO_TTS_BASE_URL = "https://api.xiaomimimo.com/v1/";
+const MIMO_BASE_URL_ENV = "MIMO_BASE_URL";
 const MIMO_TTS_DEFAULT_MODEL = "mimo-v2.5-tts";
 const MIMO_TTS_MODELS = new Set([MIMO_TTS_DEFAULT_MODEL, "mimo-v2-tts"]);
 const MIMO_TTS_VOICES = new Set(["冰糖", "茉莉", "苏打", "白桦", "Mia", "Chloe", "Milo", "Dean"]);
@@ -972,7 +973,7 @@ async function synthesizeVoice(request, env, ctx) {
     throw new HttpError(503, "tts_not_configured", "语音服务尚未在后台配置。");
   }
   const apiKey = await decryptProviderKey(env, config);
-  const endpoint = new URL("chat/completions", MIMO_TTS_BASE_URL);
+  const endpoint = new URL("chat/completions", mimoBaseUrl(env));
   const abortController = new AbortController();
   const abortFromClient = () => abortController.abort();
   if (request.signal.aborted) abortController.abort();
@@ -1090,7 +1091,7 @@ async function transcribeVoice(request, env, ctx) {
     throw new HttpError(503, "asr_not_configured", "语音识别服务尚未在后台配置。");
   }
   const apiKey = await decryptProviderKey(env, config);
-  const endpoint = new URL("chat/completions", MIMO_TTS_BASE_URL);
+  const endpoint = new URL("chat/completions", mimoBaseUrl(env));
   const abortController = new AbortController();
   const abortFromClient = () => abortController.abort();
   if (request.signal.aborted) abortController.abort();
@@ -1762,6 +1763,12 @@ async function publicProviderConfig(env) {
   };
 }
 
+function mimoBaseUrl(env) {
+  const override = String(env?.[MIMO_BASE_URL_ENV] ?? "").trim();
+  const base = override || MIMO_TTS_BASE_URL;
+  return base.endsWith("/") ? base : `${base}/`;
+}
+
 async function publicMimoTtsConfig(env) {
   const row = await env.DB.prepare(
     `SELECT enabled, model, ciphertext, updated_at
@@ -1769,7 +1776,7 @@ async function publicMimoTtsConfig(env) {
   ).first();
   return {
     enabled: Boolean(row?.enabled),
-    baseUrl: MIMO_TTS_BASE_URL,
+    baseUrl: mimoBaseUrl(env),
     model: row?.model || MIMO_TTS_DEFAULT_MODEL,
     apiKeyConfigured: Boolean(row?.ciphertext),
     updatedAt: row?.updated_at || null,

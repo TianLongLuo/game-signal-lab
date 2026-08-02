@@ -34,7 +34,8 @@ const KNOWLEDGE_MAX_CONTENT_LENGTH = 6_000;
 const KNOWLEDGE_MAX_RETRIEVED_DOCUMENTS = 8;
 const KNOWLEDGE_MAX_CONTEXT_BYTES = 24 * 1024;
 const DEEPSEEK_TIMEOUT_MS = 120_000;
-const MIMO_TTS_BASE_URL = "https://api.xiaomimimo.com/v1/";
+const MIMO_TTS_BASE_URL = String(process.env.MIMO_BASE_URL ?? "https://api.xiaomimimo.com/v1/").trim() || "https://api.xiaomimimo.com/v1/";
+const MIMO_TTS_BASE_URL_NORMALIZED = MIMO_TTS_BASE_URL.endsWith("/") ? MIMO_TTS_BASE_URL : `${MIMO_TTS_BASE_URL}/`;
 const MIMO_TTS_DEFAULT_MODEL = "mimo-v2.5-tts";
 const MIMO_TTS_MODELS = new Set([MIMO_TTS_DEFAULT_MODEL, "mimo-v2-tts"]);
 const MIMO_TTS_VOICES = new Set(["冰糖", "茉莉", "苏打", "白桦", "Mia", "Chloe", "Milo", "Dean"]);
@@ -944,7 +945,7 @@ export async function createBackend(options = {}) {
       timeout.unref?.();
       let upstream;
       try {
-        upstream = await fetch(new URL("chat/completions", MIMO_TTS_BASE_URL), {
+        upstream = await fetch(new URL("chat/completions", MIMO_TTS_BASE_URL_NORMALIZED), {
           method: "POST",
           redirect: "error",
           signal: controller.signal,
@@ -1129,7 +1130,7 @@ export async function createBackend(options = {}) {
       timeout.unref?.();
       let upstream;
       try {
-        upstream = await fetch(new URL("chat/completions", MIMO_TTS_BASE_URL), {
+        upstream = await fetch(new URL("chat/completions", MIMO_TTS_BASE_URL_NORMALIZED), {
           method: "POST",
           redirect: "error",
           signal: controller.signal,
