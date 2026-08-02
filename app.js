@@ -3698,21 +3698,17 @@ async function playStorySpeechQueue(generation) {
       ttsState.controller = controller;
       let url = "";
       try {
-        const audioChunks = await playStreamingStoryText(text, controller.signal);
+        const blob = await platformClient.synthesizeVoice(text, {
+          voice: "茉莉",
+          signal: controller.signal,
+        });
         if (generation !== ttsState.generation) break;
-        if (!audioChunks) {
-          const blob = await platformClient.synthesizeVoice(text, {
-            voice: "茉莉",
-            signal: controller.signal,
-          });
-          if (generation !== ttsState.generation) break;
-          if (!(await playStoryAudioBlob(blob, controller.signal))) {
-            url = URL.createObjectURL(blob);
-            const audio = new Audio(url);
-            ttsState.currentAudio = audio;
-            ttsState.currentUrl = url;
-            await playAudioToEnd(audio, controller.signal);
-          }
+        if (!(await playStoryAudioBlob(blob, controller.signal))) {
+          url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          ttsState.currentAudio = audio;
+          ttsState.currentUrl = url;
+          await playAudioToEnd(audio, controller.signal);
         }
       } catch (error) {
         if (controller.signal.aborted || generation !== ttsState.generation) break;
