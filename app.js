@@ -1743,11 +1743,6 @@ function renderNewEvent() {
   return `
     <div class="page">
       ${renderStorageRecoveryNotice()}
-      ${pageHeading(
-        "开始记录",
-        "只保留一个聊天框。",
-        "把故事说出来，文字或语音都可以。结束后，AI 会把摘要归档到对象档案。"
-      )}
       ${renderStoryIntake()}
     </div>
   `;
@@ -1765,42 +1760,6 @@ function signalCheckbox(name, title, description, risk = false) {
 function renderPeople() {
   return `
     <div class="page">
-      ${pageHeading(
-        "对象档案",
-        "把你在意的人，放回一段完整的故事里。",
-        "从“开始记录”说起，档案会在对话里慢慢长出来。这里集中查看背景、目标、边界和互动深度。"
-      )}
-
-      <section class="knowledge-sync panel" aria-labelledby="knowledge-sync-title">
-        <div>
-          <p class="eyebrow">只属于你的个人知识库</p>
-          <h2 id="knowledge-sync-title">让 Agent 只记得你愿意保留的部分。</h2>
-          <p>点击同步后，本机的匿名档案和事件会发送到你的账户专属空间。之后 Agent 只会检索你的资料，不会读取其他用户的内容；撤回外部 AI 同意会同时清空服务器知识库。</p>
-        </div>
-        <div class="knowledge-sync-actions">
-          <span class="knowledge-status" aria-live="polite">${
-            platform.knowledge?.documentCount
-              ? `已保存 ${platform.knowledge.documentCount} 条 · ${escapeHTML(formatDate(platform.knowledge.updatedAt?.slice(0, 10)))}`
-              : platform.user
-                ? "尚未同步到服务器"
-                : "登录后可同步"
-          }</span>
-          <div class="button-row">
-            <button class="button button--primary" type="button" data-action="sync-knowledge" ${platform.knowledgeBusy ? "disabled" : ""}>
-              ${platform.knowledgeBusy ? "同步中…" : "同步我的档案"}
-            </button>
-            ${platform.knowledge?.documentCount ? `<button class="button button--quiet" type="button" data-action="clear-knowledge" ${platform.knowledgeBusy ? "disabled" : ""}>清空服务器档案</button>` : ""}
-          </div>
-          <small>同步是一次明确操作，不会因为登录或打开 Agent 自动发生。</small>
-        </div>
-      </section>
-
-      <section class="archive-guidance panel" aria-label="档案编辑说明">
-        <p class="eyebrow">档案会从对话里长出来</p>
-        <h2 class="panel-title">点击对象卡片，编辑、语音补充，或让 AI 帮你整理。</h2>
-        <p>开始记录里的故事结束后会自动归档到这里。你可以随时打开卡片二级窗口修正代号、阶段、背景、目标和边界。</p>
-      </section>
-
       <section class="section">
         <div class="section-title">
           <h2>对象卡片</h2>
