@@ -34,7 +34,7 @@ const KNOWLEDGE_MAX_CONTENT_LENGTH = 6_000;
 const KNOWLEDGE_MAX_RETRIEVED_DOCUMENTS = 8;
 const KNOWLEDGE_MAX_CONTEXT_BYTES = 24 * 1024;
 const DEEPSEEK_TIMEOUT_MS = 120_000;
-const MIMO_TTS_BASE_URL = String(process.env.MIMO_BASE_URL ?? "https://api.xiaomimimo.com/v1/").trim() || "https://api.xiaomimimo.com/v1/";
+const MIMO_TTS_BASE_URL = String(process.env.MIMO_BASE_URL ?? "https://token-plan-cn.xiaomimimo.com/v1/").trim() || "https://token-plan-cn.xiaomimimo.com/v1/";
 const MIMO_TTS_BASE_URL_NORMALIZED = MIMO_TTS_BASE_URL.endsWith("/") ? MIMO_TTS_BASE_URL : `${MIMO_TTS_BASE_URL}/`;
 const MIMO_TTS_DEFAULT_MODEL = "mimo-v2.5-tts";
 const MIMO_TTS_MODELS = new Set([MIMO_TTS_DEFAULT_MODEL, "mimo-v2-tts"]);
@@ -956,8 +956,11 @@ export async function createBackend(options = {}) {
           },
           body: JSON.stringify({
             model: config.model,
-            messages: [{ role: "assistant", content: text }],
-            audio: { format: "mp3", voice },
+            messages: [
+              { role: "user", content: "请用自然、清晰的普通话朗读下面的内容。" },
+              { role: "assistant", content: text },
+            ],
+            audio: { format: "wav", voice },
           }),
         });
       } catch (error) {
@@ -1071,7 +1074,7 @@ export async function createBackend(options = {}) {
         targetId: "mimo_tts",
       });
       response.statusCode = 200;
-      response.setHeader("Content-Type", "audio/mpeg");
+      response.setHeader("Content-Type", "audio/wav");
       response.setHeader("Cache-Control", "no-store");
       response.end(bytes);
       return;
@@ -1145,7 +1148,7 @@ export async function createBackend(options = {}) {
               role: "user",
               content: [{ type: "input_audio", input_audio: { data: audio } }],
             }],
-            asr_options: { language: "zh" },
+            asr_options: { language: "auto" },
           }),
         });
       } catch (error) {
@@ -3352,3 +3355,4 @@ class AgentConcurrencyGate {
     };
   }
 }
+

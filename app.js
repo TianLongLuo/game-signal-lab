@@ -88,6 +88,7 @@ const storyIntake = {
   messages: [],
   controller: null,
   recognition: null,
+  previewRecognition: null,
   recording: false,
   startedAt: 0,
   remaining: 60,
@@ -100,11 +101,13 @@ const storyIntake = {
   mediaRecorder: null,
   recordingStream: null,
   audioChunks: [],
+  voiceStatus: "",
 };
 
 const contactEditor = {
   recording: false,
   recognition: null,
+  previewRecognition: null,
   voiceTimeout: null,
   voiceDraft: "",
   voiceAutoOrganize: false,
@@ -113,6 +116,7 @@ const contactEditor = {
   recordingStream: null,
   audioChunks: [],
   nextQuestion: "",
+  voiceStatus: "",
 };
 
 const STORY_SCROLL_BOTTOM_THRESHOLD = 72;
@@ -1244,10 +1248,11 @@ function renderStoryIntake() {
           <textarea id="story-answer" name="answer" maxlength="2400" placeholder="想到哪儿说到哪儿…" ${storyIntake.busy ? "disabled" : ""}>${escapeHTML(storyIntake.draftInput)}</textarea>
           <div class="story-controls">
             <button class="story-voice-button ${storyIntake.recording ? "is-recording" : ""}" type="button" data-action="story-voice" aria-label="${storyIntake.recording ? "停止语音输入" : "开始语音输入"}">
-              <span aria-hidden="true">${storyIntake.recording ? "■" : "◉"}</span>
+              <span class="voice-recording-visual ${storyIntake.recording ? "is-live" : ""}" aria-hidden="true">${storyIntake.recording ? "<i></i><i></i><i></i><i></i><i></i>" : "◉"}</span>
               ${storyIntake.recording ? "正在听…" : speechSupported ? "语音输入" : "浏览器不支持语音"}
             </button>
             <span class="story-shortcut">${isFirstIntroduction ? "首次介绍最多 60 秒" : "补充时点一下，30 秒后自动停"} · 电脑端按 R</span>
+            ${storyIntake.voiceStatus ? `<span class="story-voice-status" role="status" aria-live="polite">${escapeHTML(storyIntake.voiceStatus)}</span>` : ""}
             <button class="button button--light button--small" type="submit" ${storyIntake.busy ? "disabled" : ""}>继续说</button>
             <button class="text-button text-button--light" type="button" data-action="story-skip" ${storyIntake.busy ? "disabled" : ""}>先跳过</button>
             <button class="text-button text-button--light" type="button" data-action="story-end">归档并结束</button>
@@ -1288,6 +1293,7 @@ function startStoryIntake({ beginVoice = false } = {}) {
   storyIntake.remaining = hasUserAnswer ? null : 60;
   storyIntake.startedAt = Date.now();
   storyIntake.draftInput = "";
+  storyIntake.voiceStatus = "";
   if (!storyIntake.messages.length) {
     storyIntake.messages.push({
       role: "assistant",
@@ -1323,6 +1329,7 @@ async function endStoryIntake() {
   const pendingInput = clean(storyIntake.draftInput).slice(0, 2400);
   stopStoryVoice();
   storyIntake.voiceAutoSubmit = false;
+  storyIntake.voiceStatus = "";
   storyIntake.controller?.abort();
   if (pendingInput) {
     storyIntake.messages.push({ role: "user", content: pendingInput });
@@ -1489,6 +1496,7 @@ async function submitStoryAnswer(answer) {
   } finally {
     storyIntake.busy = false;
     storyIntake.controller = null;
+    storyIntake.voiceStatus = "";
     renderStoryViewPreservingScroll(threadScroll, { followLatest });
     requestAnimationFrame(() => document.querySelector("#story-answer")?.focus());
   }
@@ -1524,10 +1532,12 @@ async function startStoryAudioRecording() {
   recorder.onstop = async () => {
     const chunks = storyIntake.audioChunks;
     storyIntake.audioChunks = [];
+    stopStoryPreviewRecognition();
     storyIntake.mediaRecorder = null;
     storyIntake.recordingStream = null;
     storyIntake.recording = false;
     storyIntake.voiceAutoSubmit = false;
+    storyIntake.voiceStatus = "正在用 MiMo ASR 校正语音…";
     stream.getTracks().forEach((track) => track.stop());
     window.clearTimeout(storyIntake.voiceTimeout);
     renderStoryViewPreservingScroll();
@@ -1535,9 +1545,11 @@ async function startStoryAudioRecording() {
     if (!audio.size || !storyIntake.active) return;
     try {
       storyIntake.draftInput = (await transcribeRecordedAudio(audio)).slice(0, 2400);
+      storyIntake.voiceStatus = "已完成语音校正 · 正在发送";
       renderStoryViewPreservingScroll();
       await submitCorrectedStoryVoice(storyIntake.draftInput);
     } catch (error) {
+      storyIntake.voiceStatus = "";
       showToast(error instanceof PlatformError ? error.message : "语音识别未完成，请改用文字输入", 4200);
     }
   };
@@ -1545,6 +1557,8 @@ async function startStoryAudioRecording() {
     storyIntake.mediaRecorder = null;
     storyIntake.recordingStream = null;
     storyIntake.recording = false;
+    stopStoryPreviewRecognition();
+    storyIntake.voiceStatus = "";
     stream.getTracks().forEach((track) => track.stop());
     window.clearTimeout(storyIntake.voiceTimeout);
     renderStoryViewPreservingScroll();
@@ -1552,11 +1566,13 @@ async function startStoryAudioRecording() {
   };
   storyIntake.recording = true;
   storyIntake.voiceAutoSubmit = true;
+  storyIntake.voiceStatus = "实时预览中 · 停止后 MiMo ASR 校正";
   storyIntake.voiceTimeout = window.setTimeout(
     () => stopStoryVoice({ autoSubmit: true }),
     voiceLimitMs
   );
   recorder.start(250);
+  startStoryPreviewRecognition();
   renderStoryViewPreservingScroll();
   return true;
 }
@@ -1602,6 +1618,7 @@ async function toggleStoryVoice() {
     storyIntake.voiceAutoSubmit = false;
     storyIntake.recording = false;
     storyIntake.recognition = null;
+    storyIntake.voiceStatus = "";
     window.clearTimeout(storyIntake.voiceTimeout);
     renderStoryViewPreservingScroll();
     if (shouldSubmit && draft) {
@@ -1616,12 +1633,14 @@ async function toggleStoryVoice() {
     storyIntake.voiceAutoSubmit = false;
     storyIntake.recording = false;
     storyIntake.recognition = null;
+    storyIntake.voiceStatus = "";
     window.clearTimeout(storyIntake.voiceTimeout);
     renderStoryViewPreservingScroll();
     showToast("语音输入没有完成，请检查麦克风权限或改用文字", 3600);
   };
   storyIntake.recording = true;
   storyIntake.recognition = recognition;
+  storyIntake.voiceStatus = "实时识别中";
   storyIntake.voiceTimeout = window.setTimeout(
     () => stopStoryVoice({ autoSubmit: true }),
     Math.max(1000, voiceLimitMs - (Date.now() - startedAt))
@@ -1657,6 +1676,7 @@ function stopStoryVoice({ autoSubmit = false } = {}) {
   window.clearTimeout(storyIntake.voiceTimeout);
   if (autoSubmit) storyIntake.voiceAutoSubmit = true;
   if (storyIntake.mediaRecorder) {
+    stopStoryPreviewRecognition();
     if (storyIntake.mediaRecorder.state !== "inactive") {
       try { storyIntake.mediaRecorder.stop(); } catch { /* already stopped */ }
     }
@@ -1670,6 +1690,46 @@ function stopStoryVoice({ autoSubmit = false } = {}) {
   }
   storyIntake.recording = false;
   storyIntake.recognition = null;
+  storyIntake.voiceStatus = "";
+}
+
+function startStoryPreviewRecognition() {
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Recognition || storyIntake.previewRecognition) return;
+  const recognition = new Recognition();
+  recognition.lang = "zh-CN";
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  let finalText = storyIntake.draftInput;
+  recognition.onresult = (event) => {
+    let interim = "";
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const piece = event.results[index][0]?.transcript || "";
+      if (event.results[index].isFinal) finalText += piece;
+      else interim += piece;
+    }
+    storyIntake.draftInput = `${finalText}${interim}`.trim().slice(0, 2400);
+    const input = document.querySelector("#story-answer");
+    if (input) input.value = storyIntake.draftInput;
+  };
+  recognition.onerror = () => {
+    if (storyIntake.recording) storyIntake.voiceStatus = "录音中 · 停止后 MiMo ASR 校正";
+  };
+  recognition.onend = () => {
+    if (!storyIntake.recording || storyIntake.mediaRecorder?.state === "inactive") return;
+    window.setTimeout(() => {
+      if (!storyIntake.recording || storyIntake.previewRecognition !== recognition) return;
+      try { recognition.start(); } catch { /* browser is already restarting */ }
+    }, 120);
+  };
+  storyIntake.previewRecognition = recognition;
+  try { recognition.start(); } catch { storyIntake.previewRecognition = null; }
+}
+
+function stopStoryPreviewRecognition() {
+  const recognition = storyIntake.previewRecognition;
+  storyIntake.previewRecognition = null;
+  try { recognition?.stop(); } catch { /* already stopped */ }
 }
 
 async function checkMicrophonePermission() {
@@ -1925,12 +1985,12 @@ function renderContactEditor() {
           <textarea id="contact-voice-input" name="voiceDraft" maxlength="2400" placeholder="例如：她最近主动提到下周的展览，但说临时安排不太方便。">${escapeHTML(contactEditor.voiceDraft)}</textarea>
           <div class="contact-editor-actions">
             <button class="story-voice-button" id="contact-voice-button" type="button" data-action="contact-voice" ${speechSupported ? "" : "disabled"}>
-              <span aria-hidden="true">${contactEditor.recording ? "■" : "◉"}</span>${contactEditor.recording ? "正在听…" : speechSupported ? "语音输入" : "浏览器不支持语音"}
+              <span class="voice-recording-visual ${contactEditor.recording ? "is-live" : ""}" aria-hidden="true">${contactEditor.recording ? "<i></i><i></i><i></i><i></i><i></i>" : "◉"}</span>${contactEditor.recording ? "正在听…" : speechSupported ? "语音输入" : "浏览器不支持语音"}
             </button>
             <button class="button button--quiet" type="button" data-action="contact-ai-organize" ${speechSupported || contactEditor.voiceDraft ? "" : ""}>AI 整理补充</button>
             <button class="button button--primary" type="submit">保存档案</button>
           </div>
-          <p class="contact-editor-status" id="contact-editor-status" role="status" aria-live="polite">${escapeHTML(contactEditor.nextQuestion ? `建议继续确认：${contactEditor.nextQuestion}` : "")}</p>
+          <p class="contact-editor-status" id="contact-editor-status" role="status" aria-live="polite">${escapeHTML([contactEditor.voiceStatus, contactEditor.nextQuestion ? `建议继续确认：${contactEditor.nextQuestion}` : ""].filter(Boolean).join(" · ") )}</p>
         </section>
       </form>
     </dialog>
@@ -1945,6 +2005,7 @@ function openContactEditor(contactId) {
   contactEditor.busy = false;
   contactEditor.organized = false;
   contactEditor.nextQuestion = "";
+  contactEditor.voiceStatus = "";
   renderCurrentView();
   requestAnimationFrame(() => {
     const dialog = document.querySelector("#contact-editor-dialog");
@@ -1962,6 +2023,7 @@ function closeContactEditor() {
   contactEditor.busy = false;
   contactEditor.organized = false;
   contactEditor.nextQuestion = "";
+  contactEditor.voiceStatus = "";
   if (currentView === "people") renderCurrentView();
 }
 
@@ -1998,6 +2060,7 @@ async function toggleContactVoice() {
     contactEditor.voiceAutoOrganize = false;
     contactEditor.recording = false;
     contactEditor.recognition = null;
+    contactEditor.voiceStatus = "";
     window.clearTimeout(contactEditor.voiceTimeout);
     updateContactVoiceButton();
     if (shouldOrganize && editingContactId && contactEditor.voiceDraft) {
@@ -2007,12 +2070,14 @@ async function toggleContactVoice() {
   recognition.onerror = () => {
     contactEditor.recording = false;
     contactEditor.recognition = null;
+    contactEditor.voiceStatus = "";
     window.clearTimeout(contactEditor.voiceTimeout);
     updateContactVoiceButton();
     showToast("语音输入没有完成，请检查麦克风权限或改用文字", 3600);
   };
   contactEditor.recording = true;
   contactEditor.recognition = recognition;
+  contactEditor.voiceStatus = "实时识别中";
   contactEditor.voiceTimeout = window.setTimeout(() => stopContactVoice({ autoOrganize: true }), 30_000);
   updateContactVoiceButton();
   requestAnimationFrame(() => {
@@ -2048,10 +2113,12 @@ async function startContactAudioRecording() {
   recorder.onstop = async () => {
     const chunks = contactEditor.audioChunks;
     contactEditor.audioChunks = [];
+    stopContactPreviewRecognition();
     contactEditor.mediaRecorder = null;
     contactEditor.recordingStream = null;
     contactEditor.recording = false;
     contactEditor.voiceAutoOrganize = false;
+    contactEditor.voiceStatus = "正在用 MiMo ASR 校正语音…";
     stream.getTracks().forEach((track) => track.stop());
     window.clearTimeout(contactEditor.voiceTimeout);
     updateContactVoiceButton();
@@ -2059,10 +2126,12 @@ async function startContactAudioRecording() {
     if (!audio.size || !editingContactId) return;
     try {
       contactEditor.voiceDraft = (await transcribeRecordedAudio(audio)).slice(0, 2400);
+      contactEditor.voiceStatus = "已完成语音校正 · 正在整理档案";
       const input = document.querySelector("#contact-voice-input");
       if (input) input.value = contactEditor.voiceDraft;
       await organizeContactDraft();
     } catch (error) {
+      contactEditor.voiceStatus = "";
       showToast(error instanceof PlatformError ? error.message : "语音识别未完成，请改用文字输入", 4200);
     }
   };
@@ -2070,6 +2139,8 @@ async function startContactAudioRecording() {
     contactEditor.mediaRecorder = null;
     contactEditor.recordingStream = null;
     contactEditor.recording = false;
+    stopContactPreviewRecognition();
+    contactEditor.voiceStatus = "";
     stream.getTracks().forEach((track) => track.stop());
     window.clearTimeout(contactEditor.voiceTimeout);
     updateContactVoiceButton();
@@ -2077,11 +2148,13 @@ async function startContactAudioRecording() {
   };
   contactEditor.recording = true;
   contactEditor.voiceAutoOrganize = true;
+  contactEditor.voiceStatus = "实时预览中 · 停止后 MiMo ASR 校正";
   contactEditor.voiceTimeout = window.setTimeout(
     () => stopContactVoice({ autoOrganize: true }),
     30_000
   );
   recorder.start(250);
+  startContactPreviewRecognition();
   updateContactVoiceButton();
   return true;
 }
@@ -2090,6 +2163,7 @@ function stopContactVoice({ autoOrganize = false } = {}) {
   window.clearTimeout(contactEditor.voiceTimeout);
   if (autoOrganize) contactEditor.voiceAutoOrganize = true;
   if (contactEditor.mediaRecorder) {
+    stopContactPreviewRecognition();
     if (contactEditor.mediaRecorder.state !== "inactive") {
       try { contactEditor.mediaRecorder.stop(); } catch { /* already stopped */ }
     }
@@ -2098,14 +2172,54 @@ function stopContactVoice({ autoOrganize = false } = {}) {
   try { contactEditor.recognition?.stop(); } catch { /* already stopped */ }
   contactEditor.recording = false;
   contactEditor.recognition = null;
+  contactEditor.voiceStatus = "";
   updateContactVoiceButton();
+}
+
+function startContactPreviewRecognition() {
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const input = document.querySelector("#contact-voice-input");
+  if (!Recognition || !input || contactEditor.previewRecognition) return;
+  const recognition = new Recognition();
+  recognition.lang = "zh-CN";
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  let finalText = contactEditor.voiceDraft || input.value || "";
+  recognition.onresult = (event) => {
+    let interim = "";
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const piece = event.results[index][0]?.transcript || "";
+      if (event.results[index].isFinal) finalText += piece;
+      else interim += piece;
+    }
+    contactEditor.voiceDraft = `${finalText}${interim}`.trim().slice(0, 2400);
+    input.value = contactEditor.voiceDraft;
+  };
+  recognition.onerror = () => {
+    if (contactEditor.recording) contactEditor.voiceStatus = "录音中 · 停止后 MiMo ASR 校正";
+  };
+  recognition.onend = () => {
+    if (!contactEditor.recording || contactEditor.mediaRecorder?.state === "inactive") return;
+    window.setTimeout(() => {
+      if (!contactEditor.recording || contactEditor.previewRecognition !== recognition) return;
+      try { recognition.start(); } catch { /* browser is already restarting */ }
+    }, 120);
+  };
+  contactEditor.previewRecognition = recognition;
+  try { recognition.start(); } catch { contactEditor.previewRecognition = null; }
+}
+
+function stopContactPreviewRecognition() {
+  const recognition = contactEditor.previewRecognition;
+  contactEditor.previewRecognition = null;
+  try { recognition?.stop(); } catch { /* already stopped */ }
 }
 
 function updateContactVoiceButton() {
   const button = document.querySelector("#contact-voice-button");
   if (!button) return;
   button.classList.toggle("is-recording", contactEditor.recording);
-  button.innerHTML = `<span aria-hidden="true">${contactEditor.recording ? "■" : "◉"}</span>${contactEditor.recording ? "正在听…" : "语音输入"}`;
+  button.innerHTML = `<span class="voice-recording-visual ${contactEditor.recording ? "is-live" : ""}" aria-hidden="true">${contactEditor.recording ? "<i></i><i></i><i></i><i></i><i></i>" : "◉"}</span>${contactEditor.recording ? "正在听…" : "语音输入"}`;
 }
 
 async function organizeContactDraft() {
@@ -3217,3 +3331,4 @@ function cssEscape(value) {
   if (globalThis.CSS?.escape) return globalThis.CSS.escape(String(value));
   return String(value).replace(/[^A-Za-z0-9_-]/g, "\\$&");
 }
+

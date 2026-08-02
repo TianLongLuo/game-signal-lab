@@ -125,7 +125,7 @@ server {
 1. 使用一次性管理员秘密登录 `/admin/`。
 2. 在“DeepSeek 配置”中输入 Key、选择允许的模型并启用 provider。
 3. 在“Agent 访问”中打开全局总闸，再为需要的会员启用 Agent grant。
-4. 在“语音配置”中输入 MiMo V2.5 Key、选择声音并启用语音服务。
+4. 在“语音配置”中输入 Token Plan MiMo V2.5 Key、选择声音并启用语音服务。Node 默认使用 `https://token-plan-cn.xiaomimimo.com/v1/`；如需覆盖，设置运行时环境变量 `MIMO_BASE_URL`，不要把密钥写入 `.env` 示例、代码或 Git。
 5. 普通用户注册后，必须单独确认外部 AI 数据处理说明。
 
 两种 Key 都只在服务端使用 AES-256-GCM 加密保存；接口只返回是否已配置，
@@ -233,3 +233,4 @@ curl -i https://game.example.com/robots.txt
 
 若 Agent 返回“尚未配置”，检查后台 provider 开关、全局总闸、会员 grant、
 外部 AI 同意和 `CONFIG_MASTER_KEY`；不要把 Key 粘贴到 shell 历史或日志中。
+

@@ -216,7 +216,7 @@ RAG 文档、档案正文、检索片段或 Agent 对话。个人知识库接口
 
 ## MiMo V2.5 TTS + ASR 语音服务
 
-语音供应商地址固定为 `https://api.xiaomimimo.com/v1/`，同一把 MiMo Key 用于 Agent 的可选语音回应（TTS）和更准确的语音转文字（ASR）。
+语音供应商地址固定为 `https://token-plan-cn.xiaomimimo.com/v1/`，同一把 Token Plan MiMo Key 用于 Agent 的可选语音回应（TTS）和更准确的语音转文字（ASR）。密钥只在后台提交并以密文保存。
 
 ### `GET /integrations/mimo-tts`
 
@@ -271,3 +271,4 @@ AND current explicit external-AI consent
 - `422`：业务规则不满足；
 - `429`：触发限流；
 - `500/502/503`：服务异常，公共响应不得泄漏内部信息。
+

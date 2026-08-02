@@ -115,7 +115,7 @@ INVALID_MODEL`.
 
 Administrator configuration is available at
 `/api/admin/v1/integrations/mimo-tts`. The upstream base URL is fixed to
-`https://api.xiaomimimo.com/v1/`; accepted models are `mimo-v2.5-tts` and the
+`https://token-plan-cn.xiaomimimo.com/v1/`; accepted models are `mimo-v2.5-tts` and the
 legacy-compatible `mimo-v2-tts`. The GET response only exposes
 `apiKeyConfigured`, never a key or masked suffix. Keys are encrypted with the
 same AES-256-GCM service-side configuration used for DeepSeek.
@@ -167,3 +167,4 @@ Provider IDs, model names, usage, indexes, system fingerprints, log probabilitie
 and reasoning fields are removed. The stream fails closed on malformed frames,
 unexpected roles, an oversized frame, output overflow, timeout, client
 cancellation, or a missing `[DONE]`.
+

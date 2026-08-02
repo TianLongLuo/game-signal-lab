@@ -27,7 +27,9 @@ const DEEPSEEK_MODELS = new Set([
   DEEPSEEK_DEFAULT_MODEL,
   "deepseek-v4-pro",
 ]);
-const MIMO_TTS_BASE_URL = "https://api.xiaomimimo.com/v1/";
+// Token Plan uses the official MiMo OpenAI-compatible audio contract. The
+// secret remains encrypted in provider_configs and is never bundled here.
+const MIMO_TTS_BASE_URL = "https://token-plan-cn.xiaomimimo.com/v1/";
 const MIMO_BASE_URL_ENV = "MIMO_BASE_URL";
 const MIMO_TTS_DEFAULT_MODEL = "mimo-v2.5-tts";
 const MIMO_TTS_MODELS = new Set([MIMO_TTS_DEFAULT_MODEL, "mimo-v2-tts"]);
@@ -992,8 +994,11 @@ async function synthesizeVoice(request, env, ctx) {
       },
       body: JSON.stringify({
         model: config.model,
-        messages: [{ role: "assistant", content: text }],
-        audio: { format: "mp3", voice },
+        messages: [
+          { role: "user", content: "请用自然、清晰的普通话朗读下面的内容。" },
+          { role: "assistant", content: text },
+        ],
+        audio: { format: "wav", voice },
       }),
     });
   } catch (error) {
@@ -1053,7 +1058,7 @@ async function synthesizeVoice(request, env, ctx) {
   ctx.waitUntil(audit(env, request, auth.id, "voice.tts", "provider", "mimo_tts", "success"));
   return withSecurity(new Response(bytes, {
     status: 200,
-    headers: { "Content-Type": "audio/mpeg", "Cache-Control": "no-store" },
+    headers: { "Content-Type": "audio/wav", "Cache-Control": "no-store" },
   }));
 }
 
@@ -1114,7 +1119,7 @@ async function transcribeVoice(request, env, ctx) {
           role: "user",
           content: [{ type: "input_audio", input_audio: { data: audio } }],
         }],
-        asr_options: { language: "zh" },
+        asr_options: { language: "auto" },
       }),
     });
   } catch (error) {
@@ -2847,3 +2852,4 @@ function secureHeaders(initial = undefined) {
   );
   return headers;
 }
+

@@ -3901,18 +3901,18 @@ select:focus-visible {
 .button--primary::after {
   position: absolute;
   top: 0;
-  left: -80%;
+  left: 0;
   width: 45%;
   height: 100%;
   background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.28), transparent);
-  transform: skewX(-18deg);
-  transition: left 550ms var(--ease-out);
+  transform: translateX(-220%) skewX(-18deg);
+  transition: transform 550ms var(--ease-out);
   content: "";
   pointer-events: none;
 }
 
 .button--primary:hover::after {
-  left: 130%;
+  transform: translateX(480%) skewX(-18deg);
 }
 
 /* ———— 主视觉 · 暗夜 + 霓虹 rim ———— */
@@ -4987,3 +4987,304 @@ dialog::backdrop {
 .person-history-list p b {
   color: var(--ink-700);
 }
+
+/* ============================================================
+   GTA CASE FILE · 犯罪档案视觉收束
+   用更硬朗的红/黑/电青替换 INS 的柔和渐变，同时保留可读性。
+   ============================================================ */
+:root {
+  --signal: #ff453a;
+  --signal-deep: #b51f1a;
+  --signal-soft: rgba(255, 69, 58, 0.14);
+  --neon: #ff453a;
+  --cyan: #39e6d0;
+  --mint: #39e6d0;
+  --mint-deep: #00a996;
+  --mint-soft: rgba(57, 230, 208, 0.12);
+  --coral: #ff453a;
+  --coral-soft: rgba(255, 69, 58, 0.14);
+  --amber: #f4c542;
+  --amber-soft: rgba(244, 197, 66, 0.12);
+  --line: #302d2b;
+  --line-strong: #72514c;
+  --radius-xl: 4px;
+  --radius-lg: 3px;
+  --radius-md: 2px;
+  --radius-sm: 2px;
+  --font-display: "Songti SC", "STSong", "Noto Serif CJK SC", Georgia, serif;
+}
+
+body {
+  background:
+    radial-gradient(circle at 12% 0%, rgba(255, 69, 58, 0.12), transparent 26rem),
+    radial-gradient(circle at 90% 18%, rgba(57, 230, 208, 0.06), transparent 22rem),
+    linear-gradient(135deg, #080808, #141110 56%, #080808);
+}
+
+body::before {
+  opacity: 0.11;
+  background-image: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 4px);
+}
+
+.sidebar {
+  background: linear-gradient(160deg, rgba(255, 69, 58, 0.14), transparent 28%), #0a0a0a;
+  border-right-color: #4a2e2a;
+}
+
+.topbar {
+  background: rgba(8, 8, 8, 0.94);
+  border-bottom-color: #4a2e2a;
+}
+
+.panel,
+.panel--dark,
+.panel--flat,
+.person-card,
+.event-card,
+.helper-card,
+.empty-state,
+.archive-guidance,
+.analysis-panel,
+.review-card,
+.data-card {
+  border-radius: 2px !important;
+  border-color: var(--line-strong) !important;
+  background: linear-gradient(145deg, rgba(24, 20, 19, 0.98), rgba(12, 12, 12, 0.98)) !important;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.34);
+}
+
+.panel::after,
+.person-card::after,
+.story-intake::after {
+  border-top: 13px solid transparent;
+  border-right: 13px solid var(--signal);
+}
+
+.button,
+.text-button,
+.story-voice-button,
+.button--primary,
+.button--dark,
+.button--light,
+.copy-button,
+.tag {
+  border-radius: 2px !important;
+  font-family: var(--font-data);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.button--primary,
+.button--light {
+  background: var(--signal) !important;
+  color: #160b09 !important;
+  box-shadow: 4px 4px 0 rgba(255, 69, 58, 0.2);
+}
+
+.button--primary:hover,
+.button--light:hover {
+  background: #ff7067 !important;
+  color: #160b09 !important;
+}
+
+.button--quiet,
+.button--dark,
+.text-button,
+.story-voice-button {
+  background: #161312 !important;
+  color: var(--ink-800) !important;
+}
+
+input,
+textarea,
+select {
+  border-radius: 2px !important;
+  border-color: var(--line-strong) !important;
+  background: #0d0d0d !important;
+  color: var(--ink-950) !important;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--cyan) !important;
+  box-shadow: 0 0 0 2px rgba(57, 230, 208, 0.2) !important;
+}
+
+.story-intake {
+  border-color: #80504a !important;
+  background: linear-gradient(150deg, rgba(255, 69, 58, 0.09), transparent 35%), #11100f !important;
+}
+
+.story-intake.is-active {
+  border-color: var(--cyan) !important;
+}
+
+.story-intake .story-bubble {
+  border-color: #503d38;
+  border-radius: 2px;
+  background: #211a18 !important;
+}
+
+.story-intake .story-bubble--user {
+  border-color: #226d63;
+  background: #102522 !important;
+}
+
+.story-intake .story-bubble p,
+.story-intake .story-prompt-note strong,
+.story-intake .story-answer-form textarea {
+  color: #f7f0e7 !important;
+}
+
+.story-intake .story-prompt-note {
+  border-left-color: var(--signal) !important;
+  background: #281615 !important;
+}
+
+.story-intake .story-voice-button.is-recording,
+#contact-voice-button.is-recording {
+  border-color: var(--signal) !important;
+  color: #ff7067 !important;
+  animation: casefile-pulse 1.2s ease-in-out infinite;
+}
+
+.story-voice-status {
+  color: var(--amber) !important;
+  font-family: var(--font-data);
+}
+
+.person-avatar {
+  border-radius: 2px !important;
+  background: #211a18 !important;
+  color: var(--cyan) !important;
+  box-shadow: inset 0 0 0 1px #80504a;
+}
+
+.contact-editor-dialog {
+  border-radius: 2px !important;
+  border-color: #80504a !important;
+  background: #11100f !important;
+}
+
+.contact-editor-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.8);
+}
+
+@keyframes casefile-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 69, 58, 0.28); }
+  50% { box-shadow: 0 0 0 8px rgba(255, 69, 58, 0); }
+}
+
+/* 录音反馈：按钮本身、录音灯与波形同步变化，让“正在听”可被一眼识别。 */
+.voice-recording-visual {
+  display: inline-flex;
+  width: 22px;
+  min-width: 22px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--cyan);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.voice-recording-visual.is-live::before {
+  width: 6px;
+  height: 6px;
+  margin-right: 2px;
+  border-radius: 50%;
+  background: var(--signal);
+  box-shadow: 0 0 0 3px rgba(255, 69, 58, 0.14), 0 0 10px rgba(255, 69, 58, 0.72);
+  content: "";
+  animation: recording-led 900ms ease-in-out infinite;
+}
+
+.voice-recording-visual.is-live i {
+  display: block;
+  width: 2px;
+  min-height: 4px;
+  border-radius: 1px;
+  background: var(--signal);
+  box-shadow: 0 0 6px rgba(255, 69, 58, 0.45);
+  transform-origin: center;
+  animation: recording-wave 800ms ease-in-out infinite;
+}
+
+.voice-recording-visual.is-live i:nth-child(2) { animation-delay: -560ms; }
+.voice-recording-visual.is-live i:nth-child(3) { animation-delay: -390ms; }
+.voice-recording-visual.is-live i:nth-child(4) { animation-delay: -210ms; }
+.voice-recording-visual.is-live i:nth-child(5) { animation-delay: -40ms; }
+
+.story-voice-button.is-recording,
+#contact-voice-button.is-recording {
+  gap: 8px;
+  border-color: var(--signal) !important;
+  background: rgba(255, 69, 58, 0.08) !important;
+  color: #ff7067 !important;
+}
+
+.story-voice-button:not(.is-recording) .voice-recording-visual,
+#contact-voice-button:not(.is-recording) .voice-recording-visual {
+  color: var(--cyan);
+}
+
+@keyframes recording-wave {
+  0%, 100% { height: 4px; opacity: 0.55; }
+  50% { height: 16px; opacity: 1; }
+}
+
+@keyframes recording-led {
+  0%, 100% { opacity: 0.55; transform: scale(0.82); }
+  50% { opacity: 1; transform: scale(1.12); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-recording-visual.is-live i,
+  .voice-recording-visual.is-live::before {
+    animation: none;
+  }
+}
+
+/* 动效节奏：高频控件只做可打断的 transform/颜色过渡，键盘操作不追加动画。 */
+.button,
+.story-voice-button,
+.text-button,
+.copy-button {
+  transition:
+    transform 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 180ms ease,
+    background-color 180ms ease,
+    border-color 180ms ease;
+}
+
+.button:active,
+.story-voice-button:active,
+.copy-button:active {
+  transform: scale(0.975);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .button:hover,
+  .story-voice-button:hover,
+  .copy-button:hover {
+    transform: translateY(-1px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button,
+  .story-voice-button,
+  .text-button,
+  .copy-button {
+    transition: color 0.01ms, background-color 0.01ms, border-color 0.01ms;
+  }
+
+  .button:active,
+  .story-voice-button:active,
+  .copy-button:active {
+    transform: none;
+  }
+}
+
