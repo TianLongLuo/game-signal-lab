@@ -1098,6 +1098,7 @@ async function submitAgentPrompt(form, formData) {
   platform.agentMessages = platform.agentMessages.slice(-14);
   platform.agentBusy = true;
   platform.agentController = new AbortController();
+  beginStreamingStorySpeech();
   renderCurrentView();
   requestAnimationFrame(() => {
     document.querySelector("#agent-response-last")?.scrollIntoView({
@@ -1112,6 +1113,7 @@ async function submitAgentPrompt(form, formData) {
       onText(_chunk, fullText) {
         const target = platform.agentMessages.at(-1);
         if (target?.role === "assistant") target.content = fullText.slice(0, 20000);
+        queueStreamingStorySpeech(_chunk);
         const node = document.querySelector("#agent-response-last");
         if (node) node.textContent = normalizeAssistantText(target?.content || "");
       },
@@ -1120,7 +1122,9 @@ async function submitAgentPrompt(form, formData) {
     if (target?.role === "assistant" && !target.content) {
       target.content = complete || "这次没有收到可显示的文本，请稍后再试。";
     }
+    flushStreamingStorySpeech();
   } catch (error) {
+    cancelStorySpeech();
     const target = platform.agentMessages.at(-1);
     if (target?.role === "assistant") {
       target.content =
