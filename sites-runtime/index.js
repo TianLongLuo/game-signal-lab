@@ -2852,4 +2852,3 @@ function secureHeaders(initial = undefined) {
   );
   return headers;
 }
-

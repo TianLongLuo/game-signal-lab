@@ -271,4 +271,3 @@ AND current explicit external-AI consent
 - `422`：业务规则不满足；
 - `429`：触发限流；
 - `500/502/503`：服务异常，公共响应不得泄漏内部信息。
-

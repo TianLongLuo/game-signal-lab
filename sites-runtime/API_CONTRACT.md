@@ -167,4 +167,3 @@ Provider IDs, model names, usage, indexes, system fingerprints, log probabilitie
 and reasoning fields are removed. The stream fails closed on malformed frames,
 unexpected roles, an oversized frame, output overflow, timeout, client
 cancellation, or a missing `[DONE]`.
-

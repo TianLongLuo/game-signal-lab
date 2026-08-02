@@ -233,4 +233,3 @@ curl -i https://game.example.com/robots.txt
 
 若 Agent 返回“尚未配置”，检查后台 provider 开关、全局总闸、会员 grant、
 外部 AI 同意和 `CONFIG_MASTER_KEY`；不要把 Key 粘贴到 shell 历史或日志中。
-
