@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { isIP } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -86,16 +86,6 @@ const STATIC_ASSETS = new Map([
   ["/admin/app.js", ["admin/app.js", "text/javascript; charset=utf-8"]],
   ["/assets/og-image.png", ["assets/og-image.png", "image/png"]],
   ["/blog/", ["blog/index.html", "text/html; charset=utf-8"]],
-  ["/blog/1-what-are-relationship-signals.html", ["blog/1-what-are-relationship-signals.html", "text/html; charset=utf-8"]],
-  ["/blog/2-how-to-do-relationship-review.html", ["blog/2-how-to-do-relationship-review.html", "text/html; charset=utf-8"]],
-  ["/blog/3-rejection-signals-matter.html", ["blog/3-rejection-signals-matter.html", "text/html; charset=utf-8"]],
-  ["/blog/4-first-date-review.html", ["blog/4-first-date-review.html", "text/html; charset=utf-8"]],
-  ["/blog/5-boundary-awareness.html", ["blog/5-boundary-awareness.html", "text/html; charset=utf-8"]],
-  ["/blog/6-why-relationship-journal.html", ["blog/6-why-relationship-journal.html", "text/html; charset=utf-8"]],
-  ["/blog/7-interest-or-politeness.html", ["blog/7-interest-or-politeness.html", "text/html; charset=utf-8"]],
-  ["/blog/8-post-breakup-review.html", ["blog/8-post-breakup-review.html", "text/html; charset=utf-8"]],
-  ["/blog/9-from-why-to-what.html", ["blog/9-from-why-to-what.html", "text/html; charset=utf-8"]],
-  ["/blog/10-self-awareness-in-relationships.html", ["blog/10-self-awareness-in-relationships.html", "text/html; charset=utf-8"]],
 ]);
 const GAME_SAFETY_SYSTEM_PROMPT = [
   "你是 GAME 的成年人关系反思助手，只帮助用户区分可观察事实、个人解释与不确定性。",
@@ -247,19 +237,20 @@ export async function createBackend(options = {}) {
       if (!publicOrigin) {
         throw new HttpError(503, "public_origin_unavailable", "公开 Origin 尚未配置。");
       }
-      const blogPaths = [
-        "blog/",
-        "blog/1-what-are-relationship-signals.html",
-        "blog/2-how-to-do-relationship-review.html",
-        "blog/3-rejection-signals-matter.html",
-        "blog/4-first-date-review.html",
-        "blog/5-boundary-awareness.html",
-        "blog/6-why-relationship-journal.html",
-        "blog/7-interest-or-politeness.html",
-        "blog/8-post-breakup-review.html",
-        "blog/9-from-why-to-what.html",
-        "blog/10-self-awareness-in-relationships.html",
-      ];
+      let blogPaths = ["blog/"];
+      try {
+        const blogDir = join(STATIC_ROOT, "blog");
+        const files = await readdir(blogDir).catch(() => []);
+        blogPaths = [
+          "blog/",
+          ...files
+            .filter((f) => f.endsWith(".html") && f !== "index.html")
+            .sort()
+            .map((f) => `blog/${f}`),
+        ];
+      } catch {
+        blogPaths = ["blog/"];
+      }
       const blogEntries = blogPaths
         .map(
           (p) =>
@@ -1306,6 +1297,12 @@ export async function createBackend(options = {}) {
         targetId: "mimo_asr",
       });
       sendJson(response, 200, { text: transcript });
+      return;
+    }
+
+    if ((method === "GET" || method === "HEAD") && pathname.startsWith("/blog/") && pathname.endsWith(".html")) {
+      // Wildcard blog-article routing — any /blog/*.html maps to blog/*.html
+      await serveStaticAsset(response, pathname, method, publicOrigin, true);
       return;
     }
 
@@ -3136,8 +3133,10 @@ function sendText(response, status, body, contentType, cacheControl) {
   response.end(body);
 }
 
-async function serveStaticAsset(response, pathname, method, publicOrigin) {
-  const [relativePath, contentType] = STATIC_ASSETS.get(pathname);
+async function serveStaticAsset(response, pathname, method, publicOrigin, blogWildcard = false) {
+  const [relativePath, contentType] = blogWildcard
+    ? [pathname.slice(1), "text/html; charset=utf-8"]
+    : STATIC_ASSETS.get(pathname);
   let body = await readFile(join(STATIC_ROOT, relativePath));
   const isHtml = contentType.startsWith("text/html");
   if (isHtml && publicOrigin && pathname === "/") {
