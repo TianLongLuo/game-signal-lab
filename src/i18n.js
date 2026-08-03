@@ -108,6 +108,7 @@ export function t(key, locale) {
 
 export function localizePage() {
   const locale = detectLocale();
+  // data-i18n attribute-based elements
   for (const el of document.querySelectorAll("[data-i18n]")) {
     const key = el.getAttribute("data-i18n");
     if (key) el.textContent = t(key, locale);
@@ -116,7 +117,71 @@ export function localizePage() {
     const key = el.getAttribute("data-i18n-html");
     if (key) el.innerHTML = t(key, locale);
   }
-  // Update toggle button text
-  const btn = document.getElementById("lang-toggle");
-  if (btn) btn.textContent = locale === "zh" ? "🌐" : "🌐";
+  // Global DOM phrase replacement for en locale (covers hardcoded Chinese in templates)
+  if (locale !== "zh") translateDOM(document.body, locale);
+}
+
+const EN_PHRASES = {
+  "我的空间": "My Space",
+  "今日概览": "Dashboard",
+  "开始记录": "New Entry",
+  "对象档案": "People",
+  "行动复盘": "Review",
+  "信号分析": "Analysis",
+  "表达设置": "Profile",
+  "最近记录": "Recent Entries",
+  "没有记录": "No entries",
+  "添加对象": "Add Person",
+  "设置目标": "Set Goal",
+  "欢迎回来": "Welcome back",
+  "查看全部复盘 →": "All reviews →",
+  "本地日记": "Local Journal",
+  "匿名档案": "Anonymous Profile",
+  "用语音开始记录": "Start with voice",
+  "当前浏览器不支持语音输入": "Voice not supported",
+  "故事已整理并归档到对象档案": "Story organized and archived",
+  "对象档案未能进入专属知识库": "Profile sync failed",
+  "对象档案同步失败，请稍后重试。": "Profile sync failed, try again later.",
+  "对象档案 · ": "Profile · ",
+  "编辑对象档案：": "Edit profile: ",
+  "最近心里挂着什么？": "What's on your mind lately?",
+  "登出": "Logout",
+  "导出数据": "Export Data",
+  "导入数据": "Import Data",
+  "清空数据": "Clear Data",
+  "隐私政策": "Privacy Policy",
+  "登录": "Sign In",
+  "注册": "Register",
+  "保存": "Save",
+  "取消": "Cancel",
+  "删除": "Delete",
+  "确认": "Confirm",
+  "发送": "Send",
+  "停止": "Stop",
+  "复盘": "Review",
+  "分析": "Analysis",
+};
+
+function translateDOM(root, locale) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(n) {
+      // Skip script/style, inputs, and textareas
+      const tag = n.parentElement?.tagName;
+      if (tag === "SCRIPT" || tag === "STYLE" || tag === "INPUT" || tag === "TEXTAREA") return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const entries = Object.entries(EN_PHRASES).sort((a, b) => b[0].length - a[0].length);
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    let changed = false;
+    let text = node.textContent;
+    for (const [zh, en] of entries) {
+      if (text.includes(zh)) {
+        text = text.replaceAll(zh, en);
+        changed = true;
+      }
+    }
+    if (changed) node.textContent = text;
+  }
 }
