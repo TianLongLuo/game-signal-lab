@@ -96,8 +96,6 @@ const storyIntake = {
   busy: false,
   messages: [],
   controller: null,
-  recognition: null,
-  previewRecognition: null,
   recording: false,
   startedAt: 0,
   remaining: 60,
@@ -120,8 +118,6 @@ const storyIntake = {
 
 const contactEditor = {
   recording: false,
-  recognition: null,
-  previewRecognition: null,
   voiceTimeout: null,
   voiceDraft: "",
   voiceAutoOrganize: false,
@@ -1300,9 +1296,7 @@ function renderStoryIntake() {
   const hasStory = storyIntake.messages.length > 0;
   const isFirstIntroduction = userMessages.length === 0;
   const canUseAgent = Boolean(platform.user && platform.externalAiConsent?.current && platform.capabilities?.agent);
-  const speechSupported = Boolean(
-    window.SpeechRecognition || window.webkitSpeechRecognition || canRecordAudio()
-  );
+  const speechSupported = Boolean(canRecordAudio());
   const archiveTarget = storyIntake.archiveContactId || preferredContactId || "";
   return `
     <section class="story-intake panel panel--dark ${storyIntake.active ? "is-active" : ""}" aria-labelledby="story-intake-title">
@@ -1633,7 +1627,6 @@ async function startStoryAudioRecording() {
     () => stopStoryVoice({ autoSubmit: true }),
     voiceLimitMs
   );
-  startStoryPreviewRecognition();
   startStoryLiveAsr();
   renderStoryViewPreservingScroll();
   return true;
@@ -1650,71 +1643,8 @@ async function toggleStoryVoice({ fromKeyboard = false } = {}) {
   }
   storyIntake.motionSuppressed = fromKeyboard;
   if (await startStoryAudioRecording()) return;
-  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!Recognition) {
-    storyIntake.motionSuppressed = false;
-    showToast("当前浏览器不支持语音识别，请改用文字输入", 3600);
-    return;
-  }
-  if (!(await checkMicrophonePermission())) return;
-  const recognition = new Recognition();
-  recognition.lang = "zh-CN";
-  recognition.continuous = true;
-  recognition.interimResults = true;
-  const startedAt = Date.now();
-  const isFirstIntroduction = storyIntake.messages.every((message) => message.role !== "user");
-  const voiceLimitMs = isFirstIntroduction ? 60_000 : 30_000;
-  let finalText = storyIntake.draftInput;
-  recognition.onresult = (event) => {
-    let interim = "";
-    for (let index = event.resultIndex; index < event.results.length; index += 1) {
-      const piece = event.results[index][0]?.transcript || "";
-      if (event.results[index].isFinal) finalText += piece;
-      else interim += piece;
-    }
-    storyIntake.draftInput = `${finalText}${interim}`.trim().slice(0, 2400);
-    const input = document.querySelector("#story-answer");
-    if (input) input.value = storyIntake.draftInput;
-  };
-  recognition.onend = () => {
-    const draft = clean(storyIntake.draftInput).slice(0, 2400);
-    const shouldSubmit = storyIntake.active && (storyIntake.voiceAutoSubmit || draft);
-    storyIntake.voiceAutoSubmit = false;
-    storyIntake.recording = false;
-    storyIntake.recognition = null;
-    storyIntake.motionSuppressed = false;
-    storyIntake.voiceStatus = "";
-    window.clearTimeout(storyIntake.voiceTimeout);
-    renderStoryViewPreservingScroll();
-    if (shouldSubmit && draft) {
-      window.setTimeout(() => {
-        void submitCorrectedStoryVoice(draft);
-      }, 0);
-    } else if (storyIntake.active && !draft) {
-      showToast("没有听到可提交的内容，可以再试一次或改用文字", 3200);
-    }
-  };
-  recognition.onerror = () => {
-    storyIntake.voiceAutoSubmit = false;
-    storyIntake.recording = false;
-    storyIntake.recognition = null;
-    storyIntake.motionSuppressed = false;
-    storyIntake.voiceStatus = "";
-    window.clearTimeout(storyIntake.voiceTimeout);
-    renderStoryViewPreservingScroll();
-    showToast("语音输入没有完成，请检查麦克风权限或改用文字", 3600);
-  };
-  storyIntake.recording = true;
-  storyIntake.recognition = recognition;
-  storyIntake.voiceStatus = "实时识别中";
-  storyIntake.voiceTimeout = window.setTimeout(
-    () => stopStoryVoice({ autoSubmit: true }),
-    Math.max(1000, voiceLimitMs - (Date.now() - startedAt))
-  );
-  renderStoryViewPreservingScroll();
-  requestAnimationFrame(() => {
-    try { recognition.start(); } catch { stopStoryVoice(); }
-  });
+  storyIntake.motionSuppressed = false;
+  showToast("当前浏览器无法录音，请改用文字输入", 3600);
 }
 
 async function submitCorrectedStoryVoice(draft) {
@@ -1750,7 +1680,6 @@ function stopStoryVoice({ autoSubmit = false } = {}) {
     const stableText = storyIntake.recordingAsrText;
     const tail = recorder.snapshot(storyIntake.lastAsrChunkIndex || 0);
     stopStoryLiveAsr();
-    stopStoryPreviewRecognition();
     storyIntake.audioRecorder = null;
     storyIntake.recordingStream = null;
     storyIntake.recording = false;
@@ -1771,41 +1700,38 @@ function stopStoryVoice({ autoSubmit = false } = {}) {
     void finalizeStoryRecording(blob, { preview, shouldSubmit, tail, stableText });
     return;
   }
-  try { storyIntake.recognition?.stop(); } catch { /* already stopped */ }
-  if (autoSubmit && !storyIntake.recognition) {
+  if (autoSubmit) {
     const draft = storyIntake.draftInput;
     storyIntake.voiceAutoSubmit = false;
     if (draft) void submitCorrectedStoryVoice(draft);
   }
   storyIntake.recording = false;
-  storyIntake.recognition = null;
   storyIntake.voiceStatus = "";
 }
 
 async function finalizeStoryRecording(blob, { preview, shouldSubmit, tail, stableText = "" }) {
   let transcript = preview;
   try {
+    const base = storyIntake.recordingBaseText || "";
     if (tail?.size > 44) {
-      const corrected = await transcribeRecordedAudio(tail, { timeoutMs: 12_000 });
-      const stable = appendVoiceTranscript(stableText, corrected);
-      transcript = appendVoiceTranscript(storyIntake.recordingBaseText, stable).slice(0, 2400);
+      const corrected = await transcribeRecordedAudio(tail, { timeoutMs: 45_000 });
+      transcript = appendVoiceTranscript(base, appendVoiceTranscript(stableText, corrected)).slice(0, 2400);
     } else if (stableText) {
-      transcript = appendVoiceTranscript(storyIntake.recordingBaseText, stableText).slice(0, 2400);
+      transcript = appendVoiceTranscript(base, stableText).slice(0, 2400);
     } else if (blob.size) {
-      const corrected = await transcribeRecordedAudio(blob, { timeoutMs: 18_000 });
-      const stable = reconcileCumulativeAsrText(stableText, corrected);
-      transcript = appendVoiceTranscript(storyIntake.recordingBaseText, stable).slice(0, 2400);
+      const corrected = await transcribeRecordedAudio(blob, { timeoutMs: 45_000 });
+      transcript = appendVoiceTranscript(base, corrected).slice(0, 2400);
     }
     if (transcript && storyIntake.active) {
       storyIntake.draftInput = transcript;
-      storyIntake.voiceStatus = shouldSubmit ? "MiMo 校正完成 · 正在发送" : "MiMo 校正完成";
+      storyIntake.voiceStatus = shouldSubmit ? "MiMo 识别完成 · 正在发送" : "MiMo 识别完成";
       renderStoryViewPreservingScroll();
       if (shouldSubmit) await submitCorrectedStoryVoice(transcript);
     }
   } catch (error) {
     if (preview && storyIntake.active) {
       storyIntake.draftInput = preview;
-      showToast("MiMo 校正超时，已保留实时识别文字并继续", 3800);
+      showToast("MiMo 识别超时，已保留已有文字", 3800);
       if (shouldSubmit) await submitCorrectedStoryVoice(preview);
     } else if (storyIntake.active) {
       showToast(error instanceof PlatformError ? error.message : "语音识别未完成，请改用文字输入", 4200);
@@ -1818,46 +1744,6 @@ async function finalizeStoryRecording(blob, { preview, shouldSubmit, tail, stabl
     storyIntake.voiceStatus = "";
     renderStoryViewPreservingScroll();
   }
-}
-
-function startStoryPreviewRecognition() {
-  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!Recognition || storyIntake.previewRecognition) return;
-  const recognition = new Recognition();
-  recognition.lang = "zh-CN";
-  recognition.continuous = true;
-  recognition.interimResults = true;
-  let finalText = storyIntake.draftInput;
-  recognition.onresult = (event) => {
-    let interim = "";
-    for (let index = event.resultIndex; index < event.results.length; index += 1) {
-      const piece = event.results[index][0]?.transcript || "";
-      if (event.results[index].isFinal) finalText += piece;
-      else interim += piece;
-    }
-    storyIntake.draftInput = `${finalText}${interim}`.trim().slice(0, 2400);
-    const input = document.querySelector("#story-answer");
-    if (input) input.value = storyIntake.draftInput;
-  };
-  recognition.onerror = () => {
-    if (storyIntake.recording) storyIntake.voiceStatus = "录音中 · 停止后 MiMo ASR 校正";
-    renderStoryViewPreservingScroll();
-  };
-  recognition.onend = () => {
-    if (!storyIntake.recording || !storyIntake.audioRecorder) return;
-    window.setTimeout(() => {
-      if (!storyIntake.recording || storyIntake.previewRecognition !== recognition) return;
-      try { recognition.start(); } catch { /* browser is already restarting */ }
-    }, 120);
-  };
-  storyIntake.previewRecognition = recognition;
-  try { recognition.start(); } catch { storyIntake.previewRecognition = null; }
-}
-
-function stopStoryPreviewRecognition() {
-  const recognition = storyIntake.previewRecognition;
-  storyIntake.previewRecognition = null;
-  try { recognition?.stop(); } catch { /* already stopped */ }
 }
 
 function startStoryLiveAsr() {
@@ -1922,27 +1808,18 @@ async function refreshStoryLiveAsr() {
     });
     const input = document.querySelector("#story-answer");
     if (input) input.value = storyIntake.draftInput;
-    storyIntake.voiceStatus = "MiMo 已实时校正 · 继续说即可";
-    restartStoryPreviewRecognition();
+    storyIntake.voiceStatus = "MiMo 已实时识别 · 继续说即可";
     window.setTimeout(() => {
       if (!storyIntake.recording) return;
-      storyIntake.voiceStatus = "实时识别中 · MiMo 将持续校正最终文本";
+      storyIntake.voiceStatus = "实时识别中 · MiMo 将持续追加识别文本";
       renderStoryViewPreservingScroll();
     }, 1_200);
     renderStoryViewPreservingScroll();
   } catch {
-    // Browser live recognition stays visible; the final WAV pass still runs on stop.
+    // The final full-WAV pass still runs on stop.
   } finally {
     if (storyIntake.liveAsrController === controller) storyIntake.liveAsrController = null;
   }
-}
-
-function restartStoryPreviewRecognition() {
-  if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) return;
-  stopStoryPreviewRecognition();
-  window.setTimeout(() => {
-    if (storyIntake.recording && storyIntake.audioRecorder) startStoryPreviewRecognition();
-  }, 160);
 }
 
 async function createWavRecorder(stream) {
@@ -1997,7 +1874,7 @@ async function checkMicrophonePermission() {
       return false;
     }
   } catch {
-    // SpeechRecognition.start() below will request permission when supported.
+    // getUserMedia below will surface any permission problem.
   }
   return true;
 }
@@ -2219,9 +2096,7 @@ function renderPersonCard(item) {
 function renderContactEditor() {
   const contact = getContact(editingContactId);
   if (!contact) return "";
-  const speechSupported = Boolean(
-    window.SpeechRecognition || window.webkitSpeechRecognition || canRecordAudio()
-  );
+  const speechSupported = Boolean(canRecordAudio());
   return `
     <dialog class="contact-editor-dialog" id="contact-editor-dialog" aria-labelledby="contact-editor-title">
       <form class="contact-editor" id="contact-editor-form">
@@ -2314,56 +2189,7 @@ async function toggleContactVoice() {
     return;
   }
   if (await startContactAudioRecording()) return;
-  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const input = document.querySelector("#contact-voice-input");
-  if (!Recognition || !input) {
-    showToast("当前浏览器不支持语音识别，请改用文字输入", 3600);
-    return;
-  }
-  if (!(await checkMicrophonePermission())) return;
-  const recognition = new Recognition();
-  recognition.lang = "zh-CN";
-  recognition.continuous = true;
-  recognition.interimResults = true;
-  let finalText = input.value || "";
-  recognition.onresult = (event) => {
-    let interim = "";
-    for (let index = event.resultIndex; index < event.results.length; index += 1) {
-      const piece = event.results[index][0]?.transcript || "";
-      if (event.results[index].isFinal) finalText += piece;
-      else interim += piece;
-    }
-    contactEditor.voiceDraft = `${finalText}${interim}`.trim().slice(0, 2400);
-    input.value = contactEditor.voiceDraft;
-  };
-  recognition.onend = () => {
-    const shouldOrganize = contactEditor.voiceAutoOrganize;
-    contactEditor.voiceAutoOrganize = false;
-    contactEditor.recording = false;
-    contactEditor.recognition = null;
-    contactEditor.voiceStatus = "";
-    window.clearTimeout(contactEditor.voiceTimeout);
-    updateContactVoiceButton();
-    if (shouldOrganize && editingContactId && contactEditor.voiceDraft) {
-      window.setTimeout(() => void organizeContactDraft(), 0);
-    }
-  };
-  recognition.onerror = () => {
-    contactEditor.recording = false;
-    contactEditor.recognition = null;
-    contactEditor.voiceStatus = "";
-    window.clearTimeout(contactEditor.voiceTimeout);
-    updateContactVoiceButton();
-    showToast("语音输入没有完成，请检查麦克风权限或改用文字", 3600);
-  };
-  contactEditor.recording = true;
-  contactEditor.recognition = recognition;
-  contactEditor.voiceStatus = "实时识别中";
-  contactEditor.voiceTimeout = window.setTimeout(() => stopContactVoice({ autoOrganize: true }), 30_000);
-  updateContactVoiceButton();
-  requestAnimationFrame(() => {
-    try { recognition.start(); } catch { stopContactVoice(); }
-  });
+  showToast("当前浏览器无法录音，请改用文字输入", 3600);
 }
 
 async function startContactAudioRecording() {
@@ -2397,7 +2223,6 @@ async function startContactAudioRecording() {
     () => stopContactVoice({ autoOrganize: true }),
     30_000
   );
-  startContactPreviewRecognition();
   startContactLiveAsr();
   updateContactVoiceButton();
   return true;
@@ -2415,7 +2240,6 @@ function stopContactVoice({ autoOrganize = false, discard = false } = {}) {
     const stableText = contactEditor.recordingAsrText;
     const tail = recorder.snapshot(contactEditor.lastAsrChunkIndex || 0);
     stopContactLiveAsr();
-    stopContactPreviewRecognition();
     contactEditor.audioRecorder = null;
     contactEditor.recordingStream = null;
     contactEditor.recording = false;
@@ -2435,9 +2259,7 @@ function stopContactVoice({ autoOrganize = false, discard = false } = {}) {
     void finalizeContactRecording(blob, { preview, shouldOrganize, tail, stableText });
     return;
   }
-  try { contactEditor.recognition?.stop(); } catch { /* already stopped */ }
   contactEditor.recording = false;
-  contactEditor.recognition = null;
   contactEditor.voiceStatus = "";
   updateContactVoiceButton();
 }
@@ -2479,45 +2301,6 @@ async function finalizeContactRecording(blob, { preview, shouldOrganize, tail, s
     contactEditor.voiceStatus = "";
     updateContactVoiceButton();
   }
-}
-
-function startContactPreviewRecognition() {
-  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const input = document.querySelector("#contact-voice-input");
-  if (!Recognition || !input || contactEditor.previewRecognition) return;
-  const recognition = new Recognition();
-  recognition.lang = "zh-CN";
-  recognition.continuous = true;
-  recognition.interimResults = true;
-  let finalText = contactEditor.voiceDraft || input.value || "";
-  recognition.onresult = (event) => {
-    let interim = "";
-    for (let index = event.resultIndex; index < event.results.length; index += 1) {
-      const piece = event.results[index][0]?.transcript || "";
-      if (event.results[index].isFinal) finalText += piece;
-      else interim += piece;
-    }
-    contactEditor.voiceDraft = `${finalText}${interim}`.trim().slice(0, 2400);
-    input.value = contactEditor.voiceDraft;
-  };
-  recognition.onerror = () => {
-    if (contactEditor.recording) contactEditor.voiceStatus = "录音中 · 停止后 MiMo ASR 校正";
-  };
-  recognition.onend = () => {
-    if (!contactEditor.recording || !contactEditor.audioRecorder) return;
-    window.setTimeout(() => {
-      if (!contactEditor.recording || contactEditor.previewRecognition !== recognition) return;
-      try { recognition.start(); } catch { /* browser is already restarting */ }
-    }, 120);
-  };
-  contactEditor.previewRecognition = recognition;
-  try { recognition.start(); } catch { contactEditor.previewRecognition = null; }
-}
-
-function stopContactPreviewRecognition() {
-  const recognition = contactEditor.previewRecognition;
-  contactEditor.previewRecognition = null;
-  try { recognition?.stop(); } catch { /* already stopped */ }
 }
 
 function startContactLiveAsr() {
@@ -2582,27 +2365,18 @@ async function refreshContactLiveAsr() {
     });
     const input = document.querySelector("#contact-voice-input");
     if (input) input.value = contactEditor.voiceDraft;
-    contactEditor.voiceStatus = "MiMo 已实时校正 · 继续说即可";
-    restartContactPreviewRecognition();
+    contactEditor.voiceStatus = "MiMo 已实时识别 · 继续说即可";
     window.setTimeout(() => {
       if (!contactEditor.recording) return;
-      contactEditor.voiceStatus = "实时识别中 · MiMo 将校正最终文本";
+      contactEditor.voiceStatus = "实时识别中 · MiMo 将追加识别文本";
       updateContactVoiceButton();
     }, 1_200);
     updateContactVoiceButton();
   } catch {
-    // Preserve the browser preview and retry at the next interval.
+    // The final full-WAV pass still runs on stop.
   } finally {
     if (contactEditor.liveAsrController === controller) contactEditor.liveAsrController = null;
   }
-}
-
-function restartContactPreviewRecognition() {
-  if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) return;
-  stopContactPreviewRecognition();
-  window.setTimeout(() => {
-    if (contactEditor.recording && contactEditor.audioRecorder) startContactPreviewRecognition();
-  }, 160);
 }
 
 function updateContactVoiceButton() {
