@@ -3123,8 +3123,8 @@ async function serveStaticAsset(response, pathname, method, publicOrigin) {
   response.setHeader("Content-Type", contentType);
   response.setHeader(
     "Content-Security-Policy",
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-      "img-src 'self' data:; connect-src 'self'; font-src 'self' data:; object-src 'none'; " +
+    "default-src 'self'; script-src 'self' https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; " +
+      "img-src 'self' data: https://www.google-analytics.com; connect-src 'self' https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com; font-src 'self' data:; object-src 'none'; " +
       "base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
   );
   response.setHeader(
