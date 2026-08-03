@@ -5,6 +5,7 @@ import {
   appendVoiceTranscript,
   encodeMonoWav,
   extractCompletedSpeechChunks,
+  extractNewTranscript,
   mergeCumulativeVoiceTranscript,
   normalizeAssistantText,
   reconcileCumulativeAsrText,
@@ -58,6 +59,32 @@ test("a shorter live ASR response cannot erase earlier recognized speech", () =>
   assert.equal(
     reconcileCumulativeAsrText("已经识别出的完整内容", "已经识别"),
     "已经识别出的完整内容"
+  );
+});
+
+test("extractNewTranscript returns only the genuinely new tail", () => {
+  assert.equal(
+    extractNewTranscript("前面识别过的文字", "前面识别过的文字，后面新说的内容"),
+    "，后面新说的内容"
+  );
+  assert.equal(
+    extractNewTranscript("第一句，第二句", "第二句"),
+    ""
+  );
+  assert.equal(
+    extractNewTranscript("", "全新的识别结果"),
+    "全新的识别结果"
+  );
+  assert.equal(
+    extractNewTranscript("已识别内容", ""),
+    ""
+  );
+});
+
+test("extractNewTranscript handles overlapping suffix/prefix", () => {
+  assert.equal(
+    extractNewTranscript("我们在咖啡店认识", "认识以后加了微信"),
+    "以后加了微信"
   );
 });
 

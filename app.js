@@ -20,7 +20,7 @@ import {
   appendVoiceTranscript,
   encodeMonoWav,
   extractCompletedSpeechChunks,
-  mergeCumulativeVoiceTranscript,
+  extractNewTranscript,
   normalizeAssistantText,
   reconcileCumulativeAsrText,
 } from "./src/voice-utils.js";
@@ -1712,15 +1712,19 @@ function stopStoryVoice({ autoSubmit = false } = {}) {
 async function finalizeStoryRecording(blob, { preview, shouldSubmit, tail, stableText = "" }) {
   let transcript = preview;
   try {
-    const base = storyIntake.recordingBaseText || "";
+    // Append the newly recognized tail to whatever is already in the input
+    // box. Never rebuild from the recording-start snapshot, so existing or
+    // hand-edited text is preserved.
     if (tail?.size > 44) {
       const corrected = await transcribeRecordedAudio(tail, { timeoutMs: 45_000 });
-      transcript = appendVoiceTranscript(base, appendVoiceTranscript(stableText, corrected)).slice(0, 2400);
+      const newTail = extractNewTranscript(stableText, corrected);
+      transcript = appendVoiceTranscript(preview || storyIntake.draftInput, newTail).slice(0, 2400);
     } else if (stableText) {
-      transcript = appendVoiceTranscript(base, stableText).slice(0, 2400);
+      transcript = appendVoiceTranscript(preview || storyIntake.draftInput, "").slice(0, 2400) || stableText;
     } else if (blob.size) {
       const corrected = await transcribeRecordedAudio(blob, { timeoutMs: 45_000 });
-      transcript = appendVoiceTranscript(base, corrected).slice(0, 2400);
+      const newTail = extractNewTranscript(stableText, corrected);
+      transcript = appendVoiceTranscript(preview || storyIntake.draftInput, newTail).slice(0, 2400);
     }
     if (transcript && storyIntake.active) {
       storyIntake.draftInput = transcript;
@@ -1779,12 +1783,9 @@ async function refreshStoryLiveAsr() {
         timeoutMs: 12_000,
         signal: controller.signal,
         onText(partial) {
-          const live = mergeCumulativeVoiceTranscript({
-            baseText: storyIntake.recordingBaseText,
-            correctedText: appendVoiceTranscript(storyIntake.recordingAsrText, partial),
-            requestText: previewAtRequest,
-            currentText: storyIntake.draftInput,
-          });
+          const newTail = extractNewTranscript(storyIntake.recordingAsrText, partial);
+          if (!newTail) return;
+          const live = appendVoiceTranscript(storyIntake.draftInput, newTail).slice(0, 2400);
           const input = document.querySelector("#story-answer");
           if (input) input.value = live;
           storyIntake.draftInput = live;
@@ -1798,14 +1799,14 @@ async function refreshStoryLiveAsr() {
     corrected = corrected.slice(0, 2400);
     if (!corrected || !storyIntake.recording || storyIntake.liveAsrController !== controller) return;
     storyIntake.lastAsrChunkIndex = recorder.chunkCount();
-    const stableCorrection = appendVoiceTranscript(storyIntake.recordingAsrText, corrected);
-    storyIntake.recordingAsrText = stableCorrection;
-    storyIntake.draftInput = mergeCumulativeVoiceTranscript({
-      baseText: storyIntake.recordingBaseText,
-      correctedText: stableCorrection,
-      requestText: previewAtRequest,
-      currentText: storyIntake.draftInput,
-    });
+    // Only append the genuinely new tail of this ASR result. Never rebuild
+    // draftInput from the recording-start snapshot, so text the user already
+    // typed or edited is preserved.
+    const newTail = extractNewTranscript(storyIntake.recordingAsrText, corrected);
+    storyIntake.recordingAsrText = appendVoiceTranscript(storyIntake.recordingAsrText, corrected).slice(0, 2400);
+    if (newTail) {
+      storyIntake.draftInput = appendVoiceTranscript(storyIntake.draftInput, newTail).slice(0, 2400);
+    }
     const input = document.querySelector("#story-answer");
     if (input) input.value = storyIntake.draftInput;
     storyIntake.voiceStatus = "MiMo 已实时识别 · 继续说即可";
@@ -2267,16 +2268,17 @@ function stopContactVoice({ autoOrganize = false, discard = false } = {}) {
 async function finalizeContactRecording(blob, { preview, shouldOrganize, tail, stableText = "" }) {
   let transcript = preview;
   try {
+    // Append the newly recognized tail to whatever is already in the input.
     if (tail?.size > 44) {
-      const corrected = await transcribeRecordedAudio(tail, { timeoutMs: 12_000 });
-      const stable = appendVoiceTranscript(stableText, corrected);
-      transcript = appendVoiceTranscript(contactEditor.recordingBaseText, stable).slice(0, 2400);
+      const corrected = await transcribeRecordedAudio(tail, { timeoutMs: 45_000 });
+      const newTail = extractNewTranscript(stableText, corrected);
+      transcript = appendVoiceTranscript(preview || contactEditor.voiceDraft, newTail).slice(0, 2400);
     } else if (stableText) {
-      transcript = appendVoiceTranscript(contactEditor.recordingBaseText, stableText).slice(0, 2400);
+      transcript = appendVoiceTranscript(preview || contactEditor.voiceDraft, "").slice(0, 2400) || stableText;
     } else if (blob.size) {
-      const corrected = await transcribeRecordedAudio(blob, { timeoutMs: 18_000 });
-      const stable = reconcileCumulativeAsrText(stableText, corrected);
-      transcript = appendVoiceTranscript(contactEditor.recordingBaseText, stable).slice(0, 2400);
+      const corrected = await transcribeRecordedAudio(blob, { timeoutMs: 45_000 });
+      const newTail = extractNewTranscript(stableText, corrected);
+      transcript = appendVoiceTranscript(preview || contactEditor.voiceDraft, newTail).slice(0, 2400);
     }
     if (transcript && editingContactId) {
       contactEditor.voiceDraft = transcript;
@@ -2336,12 +2338,9 @@ async function refreshContactLiveAsr() {
         timeoutMs: 12_000,
         signal: controller.signal,
         onText(partial) {
-          const live = mergeCumulativeVoiceTranscript({
-            baseText: contactEditor.recordingBaseText,
-            correctedText: appendVoiceTranscript(contactEditor.recordingAsrText, partial),
-            requestText: previewAtRequest,
-            currentText: contactEditor.voiceDraft,
-          });
+          const newTail = extractNewTranscript(contactEditor.recordingAsrText, partial);
+          if (!newTail) return;
+          const live = appendVoiceTranscript(contactEditor.voiceDraft, newTail).slice(0, 2400);
           const input = document.querySelector("#contact-voice-input");
           if (input) input.value = live;
           contactEditor.voiceDraft = live;
@@ -2355,14 +2354,12 @@ async function refreshContactLiveAsr() {
     corrected = corrected.slice(0, 2400);
     if (!corrected || !contactEditor.recording || contactEditor.liveAsrController !== controller) return;
     contactEditor.lastAsrChunkIndex = recorder.chunkCount();
-    const stableCorrection = appendVoiceTranscript(contactEditor.recordingAsrText, corrected);
-    contactEditor.recordingAsrText = stableCorrection;
-    contactEditor.voiceDraft = mergeCumulativeVoiceTranscript({
-      baseText: contactEditor.recordingBaseText,
-      correctedText: stableCorrection,
-      requestText: previewAtRequest,
-      currentText: contactEditor.voiceDraft,
-    });
+    // Only append the genuinely new tail of this ASR result.
+    const newTail = extractNewTranscript(contactEditor.recordingAsrText, corrected);
+    contactEditor.recordingAsrText = appendVoiceTranscript(contactEditor.recordingAsrText, corrected).slice(0, 2400);
+    if (newTail) {
+      contactEditor.voiceDraft = appendVoiceTranscript(contactEditor.voiceDraft, newTail).slice(0, 2400);
+    }
     const input = document.querySelector("#contact-voice-input");
     if (input) input.value = contactEditor.voiceDraft;
     contactEditor.voiceStatus = "MiMo 已实时识别 · 继续说即可";

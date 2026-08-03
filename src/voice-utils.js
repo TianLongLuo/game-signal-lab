@@ -36,6 +36,29 @@ export function appendVoiceTranscript(baseText, nextText) {
   return `${base}${separator}${next}`;
 }
 
+/**
+ * Return only the portion of `correctedText` that is genuinely new compared
+ * with `previousAsrText`. Used to append incremental ASR results to the
+ * input box WITHOUT rebuilding or rewriting text the user already has.
+ * Falls back to the whole corrected text when no overlap can be found.
+ */
+export function extractNewTranscript(previousAsrText, correctedText) {
+  const previous = typeof previousAsrText === "string" ? previousAsrText.trim() : "";
+  const corrected = typeof correctedText === "string" ? correctedText.trim() : "";
+  if (!previous) return corrected;
+  if (!corrected) return "";
+  if (corrected.startsWith(previous)) return corrected.slice(previous.length).trimStart();
+  if (previous.endsWith(corrected)) return "";
+
+  const overlapLimit = Math.min(previous.length, corrected.length, 160);
+  for (let size = overlapLimit; size >= 2; size -= 1) {
+    if (previous.slice(-size) === corrected.slice(0, size)) {
+      return corrected.slice(size).trimStart();
+    }
+  }
+  return corrected;
+}
+
 export function mergeCumulativeVoiceTranscript({
   baseText = "",
   correctedText = "",
