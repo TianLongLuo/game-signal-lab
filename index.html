@@ -5,13 +5,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="GAME Signal Lab 帮助成年人记录关系事件、区分事实与猜测，并形成尊重边界、可以复盘的下一步沟通。"
+      content="GAME Signal Lab 帮助成年人记录关系事件、区分事实与猜测，并形成尊重边界、可以复盘的下一步沟通。在线关系记录与信号分析工具，数据保存在本地。"
+    />
+    <meta
+      name="keywords"
+      content="关系记录,关系信号,沟通复盘,关系分析,情绪记录,边界意识,关系日记,GAME Signal Lab"
     />
     <meta name="robots" content="index, follow, max-image-preview:large" />
+    <meta name="baidu-site-verification" content="rsdgame-online" />
     <link rel="canonical" href="/" />
+    <link rel="alternate" hreflang="zh-CN" href="/" />
     <meta property="og:type" content="website" />
     <meta property="og:locale" content="zh_CN" />
     <meta property="og:site_name" content="GAME Signal Lab" />
+    <meta property="og:url" content="/" />
+    <meta property="og:image" content="/assets/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="GAME Signal Lab 把关系信号整理成可复盘的观察" />
     <meta
       property="og:title"
       content="GAME Signal Lab｜把关系信号整理成可复盘的观察"
@@ -41,17 +52,40 @@
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
-        "@type": "WebApplication",
-        "name": "GAME Signal Lab",
-        "url": "/",
-        "description": "帮助成年人记录关系事件、区分事实与猜测，并形成尊重边界、可以复盘的下一步沟通。",
-        "applicationCategory": "LifestyleApplication",
-        "operatingSystem": "Any",
-        "inLanguage": "zh-CN",
-        "audience": {
-          "@type": "Audience",
-          "suggestedMinAge": 18
-        }
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "/#website",
+            "url": "/",
+            "name": "GAME Signal Lab",
+            "description": "帮助成年人记录关系事件、区分事实与猜测，并形成尊重边界、可以复盘的下一步沟通。",
+            "inLanguage": "zh-CN",
+            "publisher": {
+              "@type": "Organization",
+              "name": "GAME Signal Lab"
+            }
+          },
+          {
+            "@type": "WebApplication",
+            "@id": "/#app",
+            "url": "/",
+            "name": "GAME Signal Lab",
+            "description": "帮助成年人记录关系事件、区分事实与猜测，并形成尊重边界、可以复盘的下一步沟通。",
+            "applicationCategory": "LifestyleApplication",
+            "operatingSystem": "Any",
+            "inLanguage": "zh-CN",
+            "isAccessibleForFree": true,
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "CNY"
+            },
+            "audience": {
+              "@type": "Audience",
+              "suggestedMinAge": 18
+            }
+          }
+        ]
       }
     </script>
   </head>
@@ -155,8 +189,19 @@
 
     <noscript>
       <main>
-        <h1>GAME Signal Lab</h1>
+        <h1>GAME Signal Lab｜把关系信号整理成可复盘的观察</h1>
         <p>从一个故事开始，把关系里的困惑慢慢说清楚。</p>
+        <h2>这是什么工具？</h2>
+        <p>GAME Signal Lab 是面向成年人的本地优先关系记录与信号分析工具。你可以匿名记录关系事件，把「发生了什么」与「我猜测什么」分开，理解带不确定性的互动信号，并依据真实反馈复盘。</p>
+        <h2>核心功能</h2>
+        <ul>
+          <li>关系事件日记：记录事实、解释、感受与回应</li>
+          <li>信号分析：区分证据强弱与行动策略</li>
+          <li>行动复盘：用真实结果修正原来的判断</li>
+          <li>尊重边界：明确拒绝与不舒服优先于任何信号推断</li>
+        </ul>
+        <h2>隐私</h2>
+        <p>你的关系记录默认只保存在当前浏览器的本地存储中，不会被自动上传。只有在你明确同意并主动使用时，才会连接账号与 AI 服务。</p>
         <p>本应用需要 JavaScript 才能在浏览器本地完成记录和分析。</p>
       </main>
     </noscript>

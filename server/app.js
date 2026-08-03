@@ -84,6 +84,7 @@ const STATIC_ASSETS = new Map([
   ["/admin/index.html", ["admin/index.html", "text/html; charset=utf-8"]],
   ["/admin/styles.css", ["admin/styles.css", "text/css; charset=utf-8"]],
   ["/admin/app.js", ["admin/app.js", "text/javascript; charset=utf-8"]],
+  ["/assets/og-image.png", ["assets/og-image.png", "image/png"]],
 ]);
 const GAME_SAFETY_SYSTEM_PROMPT = [
   "你是 GAME 的成年人关系反思助手，只帮助用户区分可观察事实、个人解释与不确定性。",
@@ -243,6 +244,8 @@ export async function createBackend(options = {}) {
           '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
           "  <url>",
           `    <loc>${publicOrigin}/</loc>`,
+          "    <changefreq>weekly</changefreq>",
+          "    <priority>1.0</priority>",
           "  </url>",
           "</urlset>",
           "",
@@ -1272,7 +1275,7 @@ export async function createBackend(options = {}) {
     }
 
     if ((method === "GET" || method === "HEAD") && STATIC_ASSETS.has(pathname)) {
-      await serveStaticAsset(response, pathname, method);
+      await serveStaticAsset(response, pathname, method, publicOrigin);
       return;
     }
 
@@ -3098,10 +3101,24 @@ function sendText(response, status, body, contentType, cacheControl) {
   response.end(body);
 }
 
-async function serveStaticAsset(response, pathname, method) {
+async function serveStaticAsset(response, pathname, method, publicOrigin) {
   const [relativePath, contentType] = STATIC_ASSETS.get(pathname);
-  const body = await readFile(join(STATIC_ROOT, relativePath));
+  let body = await readFile(join(STATIC_ROOT, relativePath));
   const isHtml = contentType.startsWith("text/html");
+  if (isHtml && publicOrigin && pathname === "/") {
+    // Absolute canonical/og tags so search engines resolve the right origin.
+    body = Buffer.from(
+      body
+        .toString("utf8")
+        .replaceAll('rel="canonical" href="/"', `rel="canonical" href="${publicOrigin}/"`)
+        .replaceAll('property="og:url" content="/"', `property="og:url" content="${publicOrigin}/"`)
+        .replaceAll(
+          'property="og:image" content="/assets/og-image.png"',
+          `property="og:image" content="${publicOrigin}/assets/og-image.png"`
+        ),
+      "utf8"
+    );
+  }
   response.statusCode = 200;
   response.setHeader("Content-Type", contentType);
   response.setHeader(
@@ -3117,12 +3134,13 @@ async function serveStaticAsset(response, pathname, method) {
   if (pathname === "/admin" || pathname.startsWith("/admin/")) {
     response.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
   }
-  response.setHeader("Content-Length", body.byteLength);
+  const encoded = Buffer.from(body);
+  response.setHeader("Content-Length", encoded.byteLength);
   if (method === "HEAD") {
     response.end();
     return;
   }
-  response.end(body);
+  response.end(encoded);
 }
 
 function handleRequestError(response, error, options = {}) {
