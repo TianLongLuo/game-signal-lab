@@ -85,10 +85,20 @@ const translations = {
 
 export function detectLocale() {
   try {
+    const stored = localStorage.getItem("game-locale");
+    if (stored === "zh" || stored === "en") return stored;
     return window.__GAME_RUNTIME__?.locale === "zh" ? "zh" : "en";
   } catch {
     return "en";
   }
+}
+
+export function toggleLocale() {
+  const current = detectLocale();
+  const next = current === "zh" ? "en" : "zh";
+  try { localStorage.setItem("game-locale", next); } catch {}
+  localizePage();
+  return next;
 }
 
 export function t(key, locale) {
@@ -98,7 +108,6 @@ export function t(key, locale) {
 
 export function localizePage() {
   const locale = detectLocale();
-  if (locale === "zh") return;
   for (const el of document.querySelectorAll("[data-i18n]")) {
     const key = el.getAttribute("data-i18n");
     if (key) el.textContent = t(key, locale);
@@ -107,4 +116,7 @@ export function localizePage() {
     const key = el.getAttribute("data-i18n-html");
     if (key) el.innerHTML = t(key, locale);
   }
+  // Update toggle button text
+  const btn = document.getElementById("lang-toggle");
+  if (btn) btn.textContent = locale === "zh" ? "🌐" : "🌐";
 }

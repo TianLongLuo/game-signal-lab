@@ -102,7 +102,16 @@ export class PlatformClient {
       headers: this.#writeHeaders({
         Accept: "text/event-stream",
       }),
-      body: JSON.stringify({ messages: normalizedMessages }),
+      body: JSON.stringify({
+        messages: normalizedMessages,
+        locale: (() => {
+          try {
+            const stored = localStorage.getItem("game-locale");
+            if (stored === "zh" || stored === "en") return stored;
+            return window.__GAME_RUNTIME__?.locale || "en";
+          } catch { return "en"; }
+        })(),
+      }),
       signal,
     });
 

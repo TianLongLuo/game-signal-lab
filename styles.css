@@ -368,6 +368,24 @@ select:focus-visible {
   box-shadow: 0 0 0 3px var(--mint-soft);
 }
 
+.lang-toggle {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 0;
+  border-radius: 13px;
+  background: var(--ink-900);
+  color: white;
+  cursor: pointer;
+  font-size: 1.1rem;
+  margin-right: 4px;
+}
+.lang-toggle:hover {
+  background: var(--ink-700);
+  color: var(--mint-soft);
+}
+
 .avatar-button {
   display: grid;
   width: 44px;

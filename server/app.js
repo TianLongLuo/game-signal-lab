@@ -926,7 +926,8 @@ export async function createBackend(options = {}) {
       const body = await readJson(request, AGENT_BODY_LIMIT);
       const agentInput = validateAgentInput(body);
       const clientIp = resolveClientIp(request);
-      const locale = clientIp ? (geoip.lookup(clientIp)?.country === "CN" ? "zh" : "en") : "en";
+      const ipLocale = clientIp ? (geoip.lookup(clientIp)?.country === "CN" ? "zh" : "en") : "en";
+      const locale = body.locale === "zh" || body.locale === "en" ? body.locale : ipLocale;
       const langPrompt =
         locale === "zh"
           ? "请用中文回复，语气温和克制。"

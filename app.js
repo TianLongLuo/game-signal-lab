@@ -16,7 +16,7 @@ import {
   toPortableState,
 } from "./src/state-schema.js";
 import { PlatformClient, PlatformError } from "./src/platform-client.js";
-import { detectLocale, localizePage, t } from "./src/i18n.js";
+import { detectLocale, localizePage, t, toggleLocale } from "./src/i18n.js";
 import {
   appendVoiceTranscript,
   encodeMonoWav,
@@ -218,6 +218,12 @@ function bindGlobalEvents() {
 
   sidebarScrim.addEventListener("click", () => setMobileMenu(false, true));
   window.addEventListener("resize", () => setMobileMenu(false));
+
+  const langToggle = document.getElementById("lang-toggle");
+  if (langToggle) langToggle.addEventListener("click", () => {
+    toggleLocale();
+    renderCurrentView();
+  });
 
   document.addEventListener("click", async (event) => {
     const viewButton = event.target.closest("[data-view]");
