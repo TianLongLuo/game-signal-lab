@@ -152,6 +152,49 @@ const ttsState = {
 
 const STORY_SCROLL_BOTTOM_THRESHOLD = 72;
 
+// The dashboard is a local scene selector rather than a long scrolling page.
+// Keeping the catalogue here means navigation, wheel choreography, and
+// accessible labels all use the same source of truth.
+const homeSceneCatalog = [
+  {
+    view: "new-event",
+    index: "01",
+    kicker: "LIVE INTAKE",
+    title: "开始记录",
+    subtitle: "把一段关系放回现场。",
+    description: "文字或语音都可以。只说你愿意保留的部分，Agent 会一次问一个真正有帮助的问题。",
+    cue: "进入记录",
+    tone: "signal",
+  },
+  {
+    view: "people",
+    index: "02",
+    kicker: "CASE FILES",
+    title: "对象档案",
+    subtitle: "让线索有一个可以回来的地方。",
+    description: "背景、目标、边界和互动记录会在故事结束后归档成匿名卡片，随时可以修正。",
+    cue: "查看档案",
+    tone: "cyan",
+  },
+  {
+    view: "agent",
+    index: "03",
+    kicker: "THINKING ROOM",
+    title: "一起想想",
+    subtitle: "把不确定写成可以讨论的问题。",
+    description: "只检索你的个人知识库，帮你区分事实、感受与猜测，再决定下一步。",
+    cue: "进入 Agent",
+    tone: "neon",
+  },
+];
+
+let homeSceneIndex = 0;
+const homeSceneInput = {
+  wheelDelta: 0,
+  touchStartY: null,
+  transitioning: false,
+};
+
 const appShell = document.querySelector("#app-shell");
 const main = document.querySelector("#main-content");
 const ageGate = document.querySelector("#age-gate");
@@ -225,9 +268,17 @@ function bindGlobalEvents() {
     renderCurrentView();
   });
 
+  // The dashboard deliberately consumes vertical wheel input. The user is
+  // moving through local scenes, not scrolling an infinitely tall document.
+  window.addEventListener("wheel", handleHomeSceneWheel, { passive: false });
+  window.addEventListener("touchstart", handleHomeSceneTouchStart, { passive: true });
+  window.addEventListener("touchmove", handleHomeSceneTouchMove, { passive: false });
+  window.addEventListener("touchend", handleHomeSceneTouchEnd, { passive: true });
+  window.addEventListener("pointermove", handleHomeScenePointerMove, { passive: true });
+
   document.addEventListener("click", async (event) => {
     const viewButton = event.target.closest("[data-view]");
-    if (viewButton) {
+    if (viewButton && viewButton.dataset.action !== "home-scene-open") {
       preferredContactId =
         viewButton.dataset.view === "new-event" && viewButton.dataset.contactId
           ? viewButton.dataset.contactId
@@ -240,6 +291,21 @@ function bindGlobalEvents() {
     if (!action) return;
 
     const actionName = action.dataset.action;
+
+    if (actionName === "home-scene-next") {
+      setHomeSceneIndex(homeSceneIndex + 1);
+      return;
+    }
+
+    if (actionName === "home-scene-prev") {
+      setHomeSceneIndex(homeSceneIndex - 1);
+      return;
+    }
+
+    if (actionName === "home-scene-open") {
+      openHomeScene(action.dataset.view);
+      return;
+    }
 
     if (actionName === "load-sample") {
       loadSampleData();
@@ -489,6 +555,7 @@ function navigate(view) {
   if (view !== "analysis") currentEventId = null;
   if (view !== "review") reviewEventId = null;
   setMobileMenu(false);
+  homeSceneInput.transitioning = false;
   renderCurrentView();
   window.scrollTo({ top: 0, behavior: "smooth" });
   requestAnimationFrame(() => main.focus({ preventScroll: true }));
@@ -531,6 +598,7 @@ function setMobileMenu(open, restoreFocus = false) {
 
 function renderCurrentView() {
   updateNavigation();
+  document.body.classList.toggle("scene-home-active", currentView === "dashboard");
 
   switch (currentView) {
     case "new-event":
@@ -558,6 +626,132 @@ function renderCurrentView() {
       main.innerHTML = renderDashboard();
   }
   localizePage();
+
+  if (currentView === "dashboard") {
+    requestAnimationFrame(() => setHomeSceneIndex(homeSceneIndex, { announce: false }));
+  }
+}
+
+function currentHomeScene() {
+  return homeSceneCatalog[homeSceneIndex] || homeSceneCatalog[0];
+}
+
+function setHomeSceneIndex(nextIndex, { announce = true } = {}) {
+  homeSceneIndex = (nextIndex + homeSceneCatalog.length) % homeSceneCatalog.length;
+  const scene = document.querySelector(".scene-home");
+  if (!scene) return;
+
+  scene.dataset.sceneIndex = String(homeSceneIndex);
+  scene.style.setProperty("--scene-rotation", `${homeSceneIndex * -120}deg`);
+  const activeScene = currentHomeScene();
+  const status = scene.querySelector("[data-scene-current]");
+  const liveStatus = scene.querySelector("[data-scene-live]");
+  const counter = scene.querySelector("[data-scene-counter]");
+  if (status) status.textContent = activeScene.title;
+  if (counter) counter.textContent = `${activeScene.index} / 0${homeSceneCatalog.length}`;
+  if (announce && liveStatus) liveStatus.textContent = `已切换到${activeScene.title}：${activeScene.subtitle}`;
+  scene.querySelectorAll(".scene-home-dots i").forEach((dot, dotIndex) => {
+    dot.classList.toggle("is-active", dotIndex === homeSceneIndex);
+  });
+
+  scene.querySelectorAll("[data-home-scene-open]").forEach((card, cardIndex) => {
+    const slot = (cardIndex - homeSceneIndex + homeSceneCatalog.length) % homeSceneCatalog.length;
+    card.classList.toggle("is-active", slot === 0);
+    card.classList.toggle("is-next", slot === 1);
+    card.classList.toggle("is-prev", slot === homeSceneCatalog.length - 1);
+    card.setAttribute("aria-current", slot === 0 ? "true" : "false");
+    card.tabIndex = slot === 0 ? 0 : -1;
+  });
+
+  const copy = scene.querySelector("[data-scene-copy]");
+  if (copy) {
+    copy.querySelector("[data-scene-copy-kicker]").textContent = `${activeScene.index} / ${activeScene.kicker}`;
+    copy.querySelector("[data-scene-copy-title]").innerHTML = renderSceneLetters(activeScene.title);
+    copy.querySelector("[data-scene-copy-title]").setAttribute("aria-label", activeScene.title);
+    copy.querySelector("[data-scene-copy-subtitle]").textContent = activeScene.subtitle;
+    copy.querySelector("[data-scene-copy-description]").textContent = activeScene.description;
+    const cta = copy.querySelector("[data-scene-copy-cta]");
+    if (cta) {
+      cta.dataset.view = activeScene.view;
+      cta.querySelector("[data-scene-copy-cta-label]").textContent = activeScene.cue;
+    }
+  }
+}
+
+function renderSceneLetters(text) {
+  return Array.from(text)
+    .map(
+      (letter, index) =>
+        `<span class="scene-title-letter" style="--letter-index:${index}" aria-hidden="true">${escapeHTML(letter === " " ? " " : letter)}</span>`,
+    )
+    .join("");
+}
+
+function handleHomeSceneWheel(event) {
+  if (currentView !== "dashboard" || event.ctrlKey || ageGate.open) return;
+  const scene = document.querySelector(".scene-home");
+  if (!scene || homeSceneInput.transitioning) return;
+  if (Math.abs(event.deltaY) < Math.abs(event.deltaX) * 0.8) return;
+  event.preventDefault();
+  homeSceneInput.wheelDelta += event.deltaY;
+  if (Math.abs(homeSceneInput.wheelDelta) < 28) return;
+  const direction = homeSceneInput.wheelDelta > 0 ? 1 : -1;
+  homeSceneInput.wheelDelta = 0;
+  setHomeSceneIndex(homeSceneIndex + direction);
+}
+
+function handleHomeSceneTouchStart(event) {
+  if (currentView !== "dashboard" || ageGate.open) return;
+  homeSceneInput.touchStartY = event.touches[0]?.clientY ?? null;
+}
+
+function handleHomeSceneTouchMove(event) {
+  if (currentView !== "dashboard" || homeSceneInput.touchStartY === null || ageGate.open) return;
+  event.preventDefault();
+}
+
+function handleHomeSceneTouchEnd(event) {
+  if (currentView !== "dashboard" || homeSceneInput.touchStartY === null || ageGate.open) return;
+  const endY = event.changedTouches[0]?.clientY ?? homeSceneInput.touchStartY;
+  const distance = homeSceneInput.touchStartY - endY;
+  homeSceneInput.touchStartY = null;
+  if (Math.abs(distance) < 40) return;
+  setHomeSceneIndex(homeSceneIndex + (distance > 0 ? 1 : -1));
+}
+
+function handleHomeScenePointerMove(event) {
+  const scene = document.querySelector(".scene-home");
+  if (!scene) return;
+  const bounds = scene.getBoundingClientRect();
+  const x = ((event.clientX - bounds.left) / Math.max(1, bounds.width)) * 100;
+  const y = ((event.clientY - bounds.top) / Math.max(1, bounds.height)) * 100;
+  scene.style.setProperty("--pointer-x", `${Math.max(0, Math.min(100, x))}%`);
+  scene.style.setProperty("--pointer-y", `${Math.max(0, Math.min(100, y))}%`);
+}
+
+function openHomeScene(view) {
+  if (!viewTitles[view] || homeSceneInput.transitioning) return;
+  const scene = document.querySelector(".scene-home");
+  const overlay = document.querySelector("#scene-transition");
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!scene || !overlay || reducedMotion) {
+    navigate(view);
+    return;
+  }
+
+  const target = homeSceneCatalog.find((item) => item.view === view) || currentHomeScene();
+  homeSceneInput.transitioning = true;
+  overlay.querySelector("[data-transition-index]").textContent = target.index;
+  overlay.querySelector("[data-transition-title]").textContent = target.title;
+  overlay.classList.add("is-active");
+  scene.classList.add("is-exiting");
+  document.body.classList.add("scene-transitioning");
+  window.setTimeout(() => {
+    overlay.classList.remove("is-active");
+    scene.classList.remove("is-exiting");
+    document.body.classList.remove("scene-transitioning");
+    navigate(view);
+  }, 560);
 }
 
 function captureStoryThreadScroll() {
@@ -1218,66 +1412,81 @@ async function submitAgentPrompt(form, formData) {
 }
 
 function renderDashboard() {
-  const completedReviews = state.events.filter((item) => item.review?.result).length;
-  const boundaryFirstEvents = state.events.filter((item) =>
-    ["deescalate", "stop"].includes(item.analysis.actionPolicy)
-  ).length;
-  const latestEvents = [...state.events]
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-    .slice(0, 4);
-  const heroTitle = state.profile.name
-    ? `${escapeHTML(state.profile.name)}，<br />最近心里挂着什么？`
-    : "最近心里<br />挂着什么？";
-
+  const activeScene = currentHomeScene();
   return `
-    <div class="page">
+    <div class="page scene-home-page">
       ${renderStorageRecoveryNotice()}
-      <section class="hero-grid">
-        <article class="hero-card">
-          <p class="eyebrow">给自己一点时间</p>
-          <h1>${heroTitle}</h1>
-          <p>不用急着下结论。把那一刻告诉我，我们一起把发生过的事、你的感受和还没说出口的话理一理。</p>
-          <button class="button" data-view="new-event">
-            开始说说
-            <span aria-hidden="true">→</span>
-          </button>
-        </article>
-        <article class="lens-card">
-          <div class="signal-lens" aria-label="信号透镜图形">
-            <span class="lens-core">WHY?</span>
+      <section class="scene-home" data-scene-index="${homeSceneIndex}" style="--scene-rotation:${homeSceneIndex * -120}deg" aria-labelledby="scene-home-title">
+        <div class="scene-home-noise" aria-hidden="true"></div>
+        <div class="scene-home-glow scene-home-glow--one" aria-hidden="true"></div>
+        <div class="scene-home-glow scene-home-glow--two" aria-hidden="true"></div>
+
+        <header class="scene-home-header">
+          <div>
+            <p class="eyebrow">GAME / LOCAL SIGNAL LAB</p>
+            <p class="scene-home-intro">一间只属于你的关系工作室</p>
           </div>
-          <p class="lens-caption">有些感觉很真，<br />答案还是要回到对话里。</p>
-        </article>
-      </section>
+          <div class="scene-home-index">
+            <span data-scene-counter>${activeScene.index} / 0${homeSceneCatalog.length}</span>
+            <strong data-scene-current>${escapeHTML(activeScene.title)}</strong>
+          </div>
+        </header>
 
-      <section class="metric-grid" aria-label="使用数据概览">
-        <article class="metric-card">
-          <span>留下的片段</span>
-          <strong>${state.events.length.toString().padStart(2, "0")}</strong>
-          <small>故事可以慢慢补，不必一次完整</small>
-        </article>
-        <article class="metric-card">
-          <span>已经想明白</span>
-          <strong>${completedReviews.toString().padStart(2, "0")}</strong>
-          <small>真实发生的事，会帮你调整答案</small>
-        </article>
-        <article class="metric-card">
-          <span>需要慢一点</span>
-          <strong>${boundaryFirstEvents.toString().padStart(2, "0")}</strong>
-          <small>不舒服、拒绝和回避，都值得被认真听见</small>
-        </article>
-      </section>
+        <div class="scene-home-stage">
+          <div class="scene-ring-wrap" aria-label="主页场景卡片轮播">
+            <div class="scene-ring-orbit scene-ring-orbit--outer" aria-hidden="true"></div>
+            <div class="scene-ring-orbit scene-ring-orbit--inner" aria-hidden="true"></div>
+            <div class="scene-ring">
+              ${homeSceneCatalog
+                .map(
+                  (item, index) => `
+                    <button
+                      class="scene-card ${index === homeSceneIndex ? "is-active" : index === (homeSceneIndex + 1) % homeSceneCatalog.length ? "is-next" : "is-prev"}"
+                      type="button"
+                      data-action="home-scene-open"
+                      data-view="${item.view}"
+                      data-home-scene-open
+                      aria-current="${index === homeSceneIndex ? "true" : "false"}"
+                      aria-label="打开${escapeAttribute(item.title)}"
+                      tabindex="${index === homeSceneIndex ? "0" : "-1"}"
+                      style="--scene-tone:var(--${item.tone})"
+                    >
+                      <span class="scene-card-index">${item.index}</span>
+                      <span class="scene-card-kicker">${escapeHTML(item.kicker)}</span>
+                      <span class="scene-card-title">${renderSceneLetters(item.title)}</span>
+                      <span class="scene-card-subtitle">${escapeHTML(item.subtitle)}</span>
+                      <span class="scene-card-edge" aria-hidden="true">↗</span>
+                    </button>
+                  `,
+                )
+                .join("")}
+            </div>
+          </div>
 
-      <section class="section">
-        <div class="section-title">
-          <h2>最近留下的片段</h2>
-          ${state.events.length ? '<button class="text-button" data-view="review">查看全部复盘 →</button>' : ""}
+          <div class="scene-home-copy" data-scene-copy>
+            <p class="scene-home-kicker" data-scene-copy-kicker>${activeScene.index} / ${activeScene.kicker}</p>
+            <h1 id="scene-home-title" data-scene-copy-title aria-label="${escapeAttribute(activeScene.title)}">${renderSceneLetters(activeScene.title)}</h1>
+            <p class="scene-home-subtitle" data-scene-copy-subtitle>${escapeHTML(activeScene.subtitle)}</p>
+            <p class="scene-home-description" data-scene-copy-description>${escapeHTML(activeScene.description)}</p>
+            <button class="scene-home-cta" type="button" data-action="home-scene-open" data-view="${activeScene.view}" data-scene-copy-cta>
+              <span data-scene-copy-cta-label>${escapeHTML(activeScene.cue)}</span>
+              <b aria-hidden="true">↗</b>
+            </button>
+          </div>
         </div>
-        ${
-          latestEvents.length
-            ? `<div class="card-list">${latestEvents.map(renderEventCard).join("")}</div>`
-            : renderDashboardEmpty()
-        }
+
+        <footer class="scene-home-footer">
+          <div class="scene-home-controls" aria-label="场景切换">
+            <button type="button" class="scene-arrow" data-action="home-scene-prev" aria-label="上一个场景">←</button>
+            <span class="scene-home-dots" aria-hidden="true">
+              ${homeSceneCatalog.map((_, index) => `<i class="${index === homeSceneIndex ? "is-active" : ""}"></i>`).join("")}
+            </span>
+            <button type="button" class="scene-arrow" data-action="home-scene-next" aria-label="下一个场景">→</button>
+          </div>
+          <p class="scene-home-wheel-hint"><span>SCROLL</span> 滚轮切换场景 · 点击卡片进入</p>
+          <p class="scene-home-safety">本地优先 · 尊重边界 · 只保留你愿意留下的部分</p>
+        </footer>
+        <p class="visually-hidden" data-scene-live aria-live="polite">当前场景：${escapeHTML(activeScene.title)}</p>
       </section>
     </div>
   `;
