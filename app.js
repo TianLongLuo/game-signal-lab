@@ -648,7 +648,7 @@ function syncPlatformStatus() {
     }`;
     status.classList.add("is-online");
   } else if (platform.available === false) {
-    status.textContent = "本地模式";
+    status.textContent = t("localMode");
     status.classList.remove("is-online");
   } else {
     status.textContent = "登录 Agent";
