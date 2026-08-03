@@ -85,6 +85,17 @@ const STATIC_ASSETS = new Map([
   ["/admin/styles.css", ["admin/styles.css", "text/css; charset=utf-8"]],
   ["/admin/app.js", ["admin/app.js", "text/javascript; charset=utf-8"]],
   ["/assets/og-image.png", ["assets/og-image.png", "image/png"]],
+  ["/blog/", ["blog/index.html", "text/html; charset=utf-8"]],
+  ["/blog/1-what-are-relationship-signals.html", ["blog/1-what-are-relationship-signals.html", "text/html; charset=utf-8"]],
+  ["/blog/2-how-to-do-relationship-review.html", ["blog/2-how-to-do-relationship-review.html", "text/html; charset=utf-8"]],
+  ["/blog/3-rejection-signals-matter.html", ["blog/3-rejection-signals-matter.html", "text/html; charset=utf-8"]],
+  ["/blog/4-first-date-review.html", ["blog/4-first-date-review.html", "text/html; charset=utf-8"]],
+  ["/blog/5-boundary-awareness.html", ["blog/5-boundary-awareness.html", "text/html; charset=utf-8"]],
+  ["/blog/6-why-relationship-journal.html", ["blog/6-why-relationship-journal.html", "text/html; charset=utf-8"]],
+  ["/blog/7-interest-or-politeness.html", ["blog/7-interest-or-politeness.html", "text/html; charset=utf-8"]],
+  ["/blog/8-post-breakup-review.html", ["blog/8-post-breakup-review.html", "text/html; charset=utf-8"]],
+  ["/blog/9-from-why-to-what.html", ["blog/9-from-why-to-what.html", "text/html; charset=utf-8"]],
+  ["/blog/10-self-awareness-in-relationships.html", ["blog/10-self-awareness-in-relationships.html", "text/html; charset=utf-8"]],
 ]);
 const GAME_SAFETY_SYSTEM_PROMPT = [
   "你是 GAME 的成年人关系反思助手，只帮助用户区分可观察事实、个人解释与不确定性。",
@@ -236,6 +247,29 @@ export async function createBackend(options = {}) {
       if (!publicOrigin) {
         throw new HttpError(503, "public_origin_unavailable", "公开 Origin 尚未配置。");
       }
+      const blogPaths = [
+        "blog/",
+        "blog/1-what-are-relationship-signals.html",
+        "blog/2-how-to-do-relationship-review.html",
+        "blog/3-rejection-signals-matter.html",
+        "blog/4-first-date-review.html",
+        "blog/5-boundary-awareness.html",
+        "blog/6-why-relationship-journal.html",
+        "blog/7-interest-or-politeness.html",
+        "blog/8-post-breakup-review.html",
+        "blog/9-from-why-to-what.html",
+        "blog/10-self-awareness-in-relationships.html",
+      ];
+      const blogEntries = blogPaths
+        .map(
+          (p) =>
+            "  <url>\n" +
+            `    <loc>${publicOrigin}/${p}</loc>\n` +
+            "    <changefreq>monthly</changefreq>\n" +
+            "    <priority>0.7</priority>\n" +
+            "  </url>"
+        )
+        .join("\n");
       sendText(
         response,
         200,
@@ -247,6 +281,7 @@ export async function createBackend(options = {}) {
           "    <changefreq>weekly</changefreq>",
           "    <priority>1.0</priority>",
           "  </url>",
+          blogEntries,
           "</urlset>",
           "",
         ].join("\n"),
