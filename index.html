@@ -116,28 +116,28 @@
         <nav class="nav-list" aria-label="三项主导航" data-primary-nav="three">
           <button class="nav-item" data-view="new-event">
             <span class="nav-icon" aria-hidden="true">＋</span>
-            <span>开始记录</span>
+            <span data-i18n="startRecord">开始记录</span>
           </button>
           <button class="nav-item" data-view="people">
             <span class="nav-icon" aria-hidden="true">◎</span>
-            <span>对象档案</span>
+            <span data-i18n="people">对象档案</span>
           </button>
           <button class="nav-item" data-view="agent">
             <span class="nav-icon" aria-hidden="true">AI</span>
-            <span>一起想想</span>
+            <span data-i18n="thinkTogether">一起想想</span>
           </button>
         </nav>
 
         <a class="nav-item nav-item--external" href="/blog/" aria-label="阅读关系信号分析博客">
           <span class="nav-icon" aria-hidden="true">📝</span>
-          <span>博客</span>
+          <span data-i18n="blog">博客</span>
         </a>
 
         <div class="sidebar-note">
           <span class="privacy-dot" aria-hidden="true"></span>
           <div>
-            <strong>你的故事，由你决定放在哪里</strong>
-            <p>默认留在本机；使用 Agent 前需明确同意。</p>
+            <strong data-i18n="privacyNote">你的故事，由你决定放在哪里</strong>
+            <p data-i18n="privacySub">默认留在本机；使用 Agent 前需明确同意。</p>
           </div>
         </div>
 
@@ -178,25 +178,25 @@
       <div class="age-orbit" aria-hidden="true">
         <span></span><span></span><span></span>
       </div>
-      <p class="eyebrow">使用前确认</p>
-      <h1 id="age-title">关系里的答案，<br />应该来自双方。</h1>
-      <p class="age-intro">
+      <p class="eyebrow" data-i18n="ageEyebrow">使用前确认</p>
+      <h1 id="age-title" data-i18n-html="ageTitle">关系里的答案，<br />应该来自双方。</h1>
+      <p class="age-intro" data-i18n="ageIntro">
         GAME 像一张安静的桌子，帮你把发生过的事、心里的感受和还不确定的部分放在一起看。它不会读心，也不会教你突破拒绝。
       </p>
       <div class="age-principles">
-        <div><span>01</span><p>仅面向年满 18 岁的成年人</p></div>
-        <div><span>02</span><p>明确表达始终高于信号推断</p></div>
-        <div><span>03</span><p>尊重拒绝、边界与自由退出</p></div>
+        <div><span>01</span><p data-i18n="agePrinciple1">仅面向年满 18 岁的成年人</p></div>
+        <div><span>02</span><p data-i18n="agePrinciple2">明确表达始终高于信号推断</p></div>
+        <div><span>03</span><p data-i18n="agePrinciple3">尊重拒绝、边界与自由退出</p></div>
       </div>
       <label class="check-row age-check">
         <input type="checkbox" id="adult-check" />
-        <span>我已年满 18 岁，并理解分析只作参考。</span>
+        <span data-i18n="ageCheck">我已年满 18 岁，并理解分析只作参考。</span>
       </label>
       <button class="button button--primary button--full" id="enter-app" disabled>
-        进入 Signal Lab
+        <span data-i18n="enterApp">进入 Signal Lab</span>
         <span aria-hidden="true">→</span>
       </button>
-      <p class="microcopy">如遇暴力、胁迫、跟踪或严重心理困扰，请优先寻求现实中的专业支持。</p>
+      <p class="microcopy" data-i18n="safetyNote">如遇暴力、胁迫、跟踪或严重心理困扰，请优先寻求现实中的专业支持。</p>
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>

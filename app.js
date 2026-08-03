@@ -16,6 +16,7 @@ import {
   toPortableState,
 } from "./src/state-schema.js";
 import { PlatformClient, PlatformError } from "./src/platform-client.js";
+import { detectLocale, localizePage, t } from "./src/i18n.js";
 import {
   appendVoiceTranscript,
   encodeMonoWav,
@@ -550,6 +551,7 @@ function renderCurrentView() {
     default:
       main.innerHTML = renderDashboard();
   }
+  localizePage();
 }
 
 function captureStoryThreadScroll() {

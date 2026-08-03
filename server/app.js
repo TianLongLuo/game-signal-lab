@@ -4,9 +4,13 @@ import { readFile, readdir } from "node:fs/promises";
 import { isIP } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 import { openDatabase, runTransaction } from "./database.js";
 import { QdrantVectorStore, VectorStoreError } from "./vector-store.js";
+
+const _require = createRequire(import.meta.url);
+const geoip = _require("geoip-lite");
 import {
   constantTimeEqual,
   createSignedToken,
@@ -75,6 +79,7 @@ const STATIC_ASSETS = new Map([
   ["/index.html", ["index.html", "text/html; charset=utf-8"]],
   ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
   ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
+  ["/src/i18n.js", ["src/i18n.js", "text/javascript; charset=utf-8"]],
   ["/src/platform-client.js", ["src/platform-client.js", "text/javascript; charset=utf-8"]],
   ["/src/signal-engine.js", ["src/signal-engine.js", "text/javascript; charset=utf-8"]],
   ["/src/state-schema.js", ["src/state-schema.js", "text/javascript; charset=utf-8"]],
@@ -177,6 +182,18 @@ export async function createBackend(options = {}) {
   } catch (error) {
     db.close();
     throw error;
+  }
+
+  function resolveClientIp(request) {
+    const forwarded = request.headers["x-forwarded-for"];
+    if (typeof forwarded === "string" && forwarded) {
+      const parts = forwarded.split(",").map((s) => s.trim());
+      for (let i = parts.length - 1; i >= 0; i -= 1) {
+        if (!trustedProxyAddresses.has(parts[i])) return parts[i];
+      }
+    }
+    const remote = String(request.socket.remoteAddress || "").replace(/^::ffff:/, "");
+    return remote || null;
   }
 
   const server = createServer((request, response) => {
@@ -283,9 +300,11 @@ export async function createBackend(options = {}) {
     }
 
     if (method === "GET" && pathname === "/runtime-config.js") {
+      const clientIp = resolveClientIp(request);
+      const locale = clientIp ? (geoip.lookup(clientIp)?.country === "CN" ? "zh" : "en") : "en";
       sendJavaScript(
         response,
-        "window.__GAME_RUNTIME__ = Object.freeze({ apiEnabled: true });\n"
+        `window.__GAME_RUNTIME__ = Object.freeze({ apiEnabled: true, locale: "${locale}" });\n`
       );
       return;
     }
@@ -906,6 +925,12 @@ export async function createBackend(options = {}) {
       }
       const body = await readJson(request, AGENT_BODY_LIMIT);
       const agentInput = validateAgentInput(body);
+      const clientIp = resolveClientIp(request);
+      const locale = clientIp ? (geoip.lookup(clientIp)?.country === "CN" ? "zh" : "en") : "en";
+      const langPrompt =
+        locale === "zh"
+          ? "请用中文回复，语气温和克制。"
+          : "Reply in natural, idiomatic English. Be warm and restrained in tone.";
       const privateContext = await retrieveUserKnowledge(
         db,
         auth.id,
@@ -1882,6 +1907,7 @@ export async function createBackend(options = {}) {
           model: config.model,
           messages: [
             { role: "system", content: GAME_SAFETY_SYSTEM_PROMPT },
+            { role: "system", content: langPrompt },
             ...(privateContext ? [{ role: "system", content: privateContext }] : []),
             ...agentInput.messages,
           ],
