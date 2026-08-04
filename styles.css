@@ -6158,3 +6158,80 @@ select {
     transition: opacity 0.01ms, color 0.01ms, background-color 0.01ms, border-color 0.01ms;
   }
 }
+
+/* ================================================
+   ANIMATED STARFIELD BACKGROUND
+   ================================================ */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(1px 1px at 20% 30%, rgba(168,85,247,.6), transparent),
+    radial-gradient(1px 1px at 50% 70%, rgba(255,45,149,.4), transparent),
+    radial-gradient(1.5px 1.5px at 80% 20%, rgba(168,85,247,.5), transparent),
+    radial-gradient(1px 1px at 10% 60%, rgba(62,232,197,.3), transparent),
+    radial-gradient(1px 1px at 70% 90%, rgba(255,45,149,.35), transparent),
+    radial-gradient(1.5px 1.5px at 40% 10%, rgba(168,85,247,.45), transparent),
+    radial-gradient(1px 1px at 90% 50%, rgba(62,232,197,.3), transparent),
+    radial-gradient(1px 1px at 30% 80%, rgba(255,45,149,.4), transparent),
+    radial-gradient(1px 1px at 60% 40%, rgba(168,85,247,.35), transparent);
+  background-size: 200px 200px;
+  animation: starDrift 60s linear infinite;
+}
+@keyframes starDrift {
+  0%   { background-position: 0 0, 40px 60px, 100px 20px, 150px 80px, 200px 40px, 80px 100px, 120px 140px, 60px 30px, 180px 160px; }
+  100% { background-position: 200px 0, 240px 60px, 300px 20px, 350px 80px, 400px 40px, 280px 100px, 320px 140px, 260px 30px, 380px 160px; }
+}
+
+/* ================================================
+   GLASSMORPHISM TOPBAR
+   ================================================ */
+.topbar {
+  background: rgba(12,9,16,.75);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border-bottom: 1px solid rgba(168,85,247,.1);
+}
+
+/* ================================================
+   NEON GLOW — icon hover & brand
+   ================================================ */
+.nav-item:hover .nav-icon svg,
+.nav-item--external:hover .nav-icon svg {
+  filter: drop-shadow(0 0 6px rgba(168,85,247,.6));
+  transition: filter .25s ease;
+}
+.nav-icon svg {
+  transition: filter .25s ease;
+}
+
+.brand-mark span {
+  animation: brandPulse 3s ease-in-out infinite;
+}
+.brand-mark span:nth-child(2) { animation-delay: .5s; }
+.brand-mark span:nth-child(3) { animation-delay: 1s; }
+@keyframes brandPulse {
+  0%, 100% { opacity: .5; }
+  50% { opacity: 1; }
+}
+
+.lang-toggle:hover svg {
+  filter: drop-shadow(0 0 6px rgba(62,232,197,.5));
+  transition: filter .25s ease;
+}
+.lang-toggle svg {
+  transition: filter .25s ease;
+}
+
+/* ================================================
+   SIDEBAR GLASS
+   ================================================ */
+.sidebar {
+  background: rgba(12,9,16,.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-right: 1px solid rgba(168,85,247,.08);
+}
