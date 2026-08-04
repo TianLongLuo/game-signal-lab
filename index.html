@@ -115,21 +115,21 @@
 
         <nav class="nav-list" aria-label="三项主导航" data-primary-nav="three">
           <button class="nav-item" data-view="new-event">
-            <span class="nav-icon" aria-hidden="true">＋</span>
+            <span class="nav-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>
             <span data-i18n="startRecord">开始记录</span>
           </button>
           <button class="nav-item" data-view="people">
-            <span class="nav-icon" aria-hidden="true">◎</span>
+            <span class="nav-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="3" x2="12" y2="9"/><line x1="12" y1="15" x2="12" y2="21"/><line x1="3" y1="12" x2="9" y2="12"/><line x1="15" y1="12" x2="21" y2="12"/></svg></span>
             <span data-i18n="people">对象档案</span>
           </button>
           <button class="nav-item" data-view="agent">
-            <span class="nav-icon" aria-hidden="true">AI</span>
+            <span class="nav-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
             <span data-i18n="thinkTogether">一起想想</span>
           </button>
         </nav>
 
         <a class="nav-item nav-item--external" href="/blog/" aria-label="阅读关系信号分析博客">
-          <span class="nav-icon" aria-hidden="true">📝</span>
+          <span class="nav-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></span>
           <span data-i18n="blog">博客</span>
         </a>
 
@@ -164,7 +164,13 @@
               <i aria-hidden="true"></i>
               本地模式
             </button>
-            <button class="lang-toggle" id="lang-toggle" aria-label="切换语言" title="中文 / English">🌐</button>
+            <button class="lang-toggle" id="lang-toggle" aria-label="切换语言" title="中文 / English">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="9"/>
+                <ellipse cx="12" cy="12" rx="4" ry="9"/>
+                <line x1="2" y1="12" x2="22" y2="12"/>
+              </svg>
+            </button>
             <button class="avatar-button" data-view="profile" aria-label="打开个人表达设置">
               <span id="avatar-initial">我</span>
             </button>

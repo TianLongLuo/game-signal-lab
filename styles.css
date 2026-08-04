@@ -376,14 +376,17 @@ select:focus-visible {
   border: 0;
   border-radius: 13px;
   background: var(--ink-900);
-  color: white;
+  color: var(--mint-soft);
   cursor: pointer;
-  font-size: 1.1rem;
   margin-right: 4px;
+}
+.lang-toggle svg {
+  width: 17px;
+  height: 17px;
 }
 .lang-toggle:hover {
   background: var(--ink-700);
-  color: var(--mint-soft);
+  color: var(--mint-bright);
 }
 
 .avatar-button {
