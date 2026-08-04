@@ -6168,6 +6168,15 @@ body::before {
   inset: 0;
   z-index: 0;
   pointer-events: none;
+  opacity: .45;
+  background: url('/assets/lovart/hero-bg.webp') center/cover no-repeat;
+}
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
   background-image:
     radial-gradient(1px 1px at 20% 30%, rgba(168,85,247,.6), transparent),
     radial-gradient(1px 1px at 50% 70%, rgba(255,45,149,.4), transparent),

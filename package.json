@@ -17,6 +17,7 @@
     "node": ">=22.18"
   },
   "dependencies": {
-    "geoip-lite": "^1.4.10"
+    "geoip-lite": "^1.4.10",
+    "lovart": "^1.3.0"
   }
 }

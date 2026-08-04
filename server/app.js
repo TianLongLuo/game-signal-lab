@@ -90,6 +90,8 @@ const STATIC_ASSETS = new Map([
   ["/admin/styles.css", ["admin/styles.css", "text/css; charset=utf-8"]],
   ["/admin/app.js", ["admin/app.js", "text/javascript; charset=utf-8"]],
   ["/assets/og-image.png", ["assets/og-image.png", "image/png"]],
+  ["/assets/lovart/hero-bg.webp", ["assets/lovart/hero-bg.webp", "image/webp"]],
+  ["/assets/lovart/lovart_2e014588e25e.png", ["assets/lovart/lovart_2e014588e25e.png", "image/png"]],
   ["/blog/", ["blog/index.html", "text/html; charset=utf-8"]],
 ]);
 const GAME_SAFETY_SYSTEM_PROMPT = [
