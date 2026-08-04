@@ -416,7 +416,6 @@ function bindGlobalEvents() {
     }
 
     if (actionName === "story-start") {
-      void unlockStoryAudio();
       startStoryIntake();
     }
 
@@ -425,12 +424,10 @@ function bindGlobalEvents() {
     }
 
     if (actionName === "story-skip") {
-      void unlockStoryAudio();
       submitStoryAnswer("（跳过这一题）");
     }
 
     if (actionName === "story-voice") {
-      void unlockStoryAudio();
       toggleStoryVoice();
     }
 
@@ -496,13 +493,11 @@ function bindGlobalEvents() {
 
     if (event.target.matches("#agent-form")) {
       event.preventDefault();
-      void unlockStoryAudio();
       await submitAgentPrompt(event.target, new FormData(event.target));
     }
 
     if (event.target.matches("#story-answer-form")) {
       event.preventDefault();
-      void unlockStoryAudio();
       await submitStoryAnswer(clean(new FormData(event.target).get("answer")));
     }
 
@@ -528,7 +523,6 @@ function bindGlobalEvents() {
       !isTypingTarget(event.target)
     ) {
       event.preventDefault();
-      void unlockStoryAudio();
       toggleStoryVoice({ fromKeyboard: true });
     }
 
@@ -1356,7 +1350,6 @@ async function submitAgentPrompt(form, formData) {
   platform.agentMessages = platform.agentMessages.slice(-14);
   platform.agentBusy = true;
   platform.agentController = new AbortController();
-  beginStreamingStorySpeech();
   renderCurrentView();
   requestAnimationFrame(() => {
     document.querySelector("#agent-response-last")?.scrollIntoView({
@@ -1371,7 +1364,6 @@ async function submitAgentPrompt(form, formData) {
       onText(chunk, fullText) {
         const target = platform.agentMessages.at(-1);
         if (target?.role === "assistant") target.content = fullText.slice(0, 20000);
-        queueStreamingStorySpeech(chunk);
         const node = document.querySelector("#agent-response-last");
         if (node) node.textContent = normalizeAssistantText(target?.content || "");
       },
@@ -1380,7 +1372,6 @@ async function submitAgentPrompt(form, formData) {
     if (target?.role === "assistant" && !target.content) {
       target.content = complete || "这次没有收到可显示的文本，请稍后再试。";
     }
-    flushStreamingStorySpeech();
   } catch (error) {
     cancelStorySpeech();
     const target = platform.agentMessages.at(-1);
@@ -1625,7 +1616,6 @@ function startStoryIntake({ beginVoice = false } = {}) {
       role: "assistant",
       content: "告诉我你的故事。你可以从你们在哪里认识、那天发生了什么开始，也可以从此刻最让你在意的地方说起。",
     });
-    speakCompleteStoryText(storyIntake.messages.at(-1).content);
   }
   renderCurrentView();
   requestAnimationFrame(() => {
@@ -1787,7 +1777,6 @@ async function submitStoryAnswer(answer) {
   storyIntake.messages.push({ role: "assistant", content: "" });
   const threadScroll = captureStoryThreadScroll();
   const followLatest = !threadScroll || threadScroll.distanceFromBottom <= STORY_SCROLL_BOTTOM_THRESHOLD;
-  beginStreamingStorySpeech();
   renderStoryViewPreservingScroll(threadScroll, { followLatest });
   try {
     const complete = await platformClient.streamAgent(conversation, {
@@ -1797,7 +1786,6 @@ async function submitStoryAnswer(answer) {
         if (target?.role === "assistant") {
           target.content = normalizeAssistantText(fullText).slice(0, 5000);
         }
-        queueStreamingStorySpeech(chunk);
         const node = document.querySelector(".story-thread .story-bubble--assistant:last-child p");
         if (node) node.textContent = target?.content || "";
         if (followLatest) restoreStoryThreadScroll(null, { followLatest: true });
@@ -1807,7 +1795,6 @@ async function submitStoryAnswer(answer) {
     if (target?.role === "assistant" && !target.content) {
       target.content = normalizeAssistantText(complete) || "你还想补充哪一个具体片段？";
     }
-    flushStreamingStorySpeech();
   } catch (error) {
     cancelStorySpeech();
     storyIntake.messages.push({
@@ -1885,7 +1872,17 @@ async function finalizeStoryRecording(blob, { preview, durationMs = 0 }) {
   let transcript = preview;
   try {
     if (!blob?.size) throw new Error("audio_empty");
-    const recognized = await transcribeRecordedAudio(blob, { timeoutMs: 90_000 });
+    const recognized = await streamTranscribeRecordedAudio(blob, {
+      timeoutMs: 90_000,
+      onText(partial) {
+        transcript = appendVoiceTranscript(preview, partial).slice(0, 2400);
+        storyIntake.draftInput = transcript;
+        const input = document.querySelector("#story-answer");
+        if (input) input.value = transcript;
+        const status = document.querySelector(".story-voice-status");
+        if (status) status.textContent = "MiMo ASR 正在流式转写…";
+      },
+    });
     transcript = appendVoiceTranscript(preview, recognized).slice(0, 2400);
     if (transcript && storyIntake.active) {
       storyIntake.draftInput = transcript;
@@ -1928,10 +1925,14 @@ function createMp3Recorder({ onProcess } = {}) {
   if (typeof Recorder !== "function") {
     return Promise.reject(new Error("mp3_recorder_unavailable"));
   }
+  const encodedChunks = [];
   const recorder = Recorder({
     type: "mp3",
     sampleRate: 16_000,
     bitRate: 32,
+    takeoffEncodeChunk(chunkBytes) {
+      if (chunkBytes?.byteLength) encodedChunks.push(new Uint8Array(chunkBytes));
+    },
     onProcess(_buffers, powerLevel, bufferDuration) {
       onProcess?.(powerLevel, bufferDuration);
     },
@@ -1945,8 +1946,9 @@ function createMp3Recorder({ onProcess } = {}) {
           if (stopped) return Promise.reject(new Error("recording_already_stopped"));
           stopped = true;
           return new Promise((stopResolve, stopReject) => {
-            recorder.stop((blob, duration) => {
+            recorder.stop((_emptyBlob, duration) => {
               recorder.close();
+              const blob = new Blob(encodedChunks, { type: "audio/mpeg" });
               stopResolve({ blob, durationMs: Number(duration) || 0 });
             }, (message) => {
               recorder.close();
