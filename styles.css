@@ -6170,6 +6170,11 @@ body::before {
   pointer-events: none;
   opacity: .45;
   background: url('/assets/lovart/hero-bg.webp') center/cover no-repeat;
+  animation: heroBreathe 30s ease-in-out infinite alternate;
+}
+@keyframes heroBreathe {
+  0%   { transform: scale(1); }
+  100% { transform: scale(1.06); }
 }
 body::after {
   content: "";
