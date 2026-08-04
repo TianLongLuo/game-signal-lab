@@ -103,18 +103,13 @@ const storyIntake = {
   timer: null,
   draft: "",
   draftInput: "",
-  voiceAutoSubmit: false,
   archiveContactId: "",
   audioRecorder: null,
-  recordingStream: null,
   voiceStatus: "",
   finalizingVoice: false,
   motionSuppressed: false,
-  liveAsrTimer: null,
-  liveAsrController: null,
-  lastAsrChunkIndex: 0,
-  recordingBaseText: "",
-  recordingAsrText: "",
+  recordingDurationMs: 0,
+  waveformLevels: [],
 };
 
 const contactEditor = {
@@ -1509,9 +1504,7 @@ function renderDashboardEmpty() {
 }
 
 function renderStoryIntake() {
-  const userMessages = storyIntake.messages.filter((message) => message.role === "user");
   const hasStory = storyIntake.messages.length > 0;
-  const isFirstIntroduction = userMessages.length === 0;
   const canUseAgent = Boolean(platform.user && platform.externalAiConsent?.current && platform.capabilities?.agent);
   const speechSupported = Boolean(canRecordAudio());
   const archiveTarget = storyIntake.archiveContactId || preferredContactId || "";
@@ -1526,7 +1519,6 @@ function renderStoryIntake() {
             ${state.contacts.map((contact) => `<option value="${escapeAttribute(contact.id)}" ${contact.id === archiveTarget ? "selected" : ""}>${escapeHTML(contact.alias)}</option>`).join("")}
           </select>
         </div>
-        ${storyIntake.active && storyIntake.remaining !== null ? `<span class="story-timer" aria-live="polite">首次介绍 ${storyIntake.remaining}s</span>` : ""}
       </div>
       <div class="story-intake-copy">
         <h2 id="story-intake-title">我在听，你慢慢说。</h2>
@@ -1547,17 +1539,18 @@ function renderStoryIntake() {
       ${storyIntake.active ? `
         <form class="story-answer-form" id="story-answer-form">
           <label class="visually-hidden" for="story-answer">告诉我你的故事</label>
-          <textarea id="story-answer" name="answer" maxlength="2400" placeholder="想到哪儿说到哪儿…" ${storyIntake.busy ? "disabled" : ""}>${escapeHTML(storyIntake.draftInput)}</textarea>
+          <textarea id="story-answer" name="answer" maxlength="2400" placeholder="想到哪儿说到哪儿…" ${storyIntake.busy || storyIntake.recording || storyIntake.finalizingVoice ? "disabled" : ""}>${escapeHTML(storyIntake.draftInput)}</textarea>
+          ${storyIntake.recording ? renderStoryRecordingPanel() : ""}
           <div class="story-controls">
-            <button class="story-voice-button ${storyIntake.recording ? "is-recording" : ""} ${storyIntake.finalizingVoice ? "is-processing" : ""} ${storyIntake.motionSuppressed ? "motion-suppressed" : ""}" type="button" data-action="story-voice" aria-label="${storyIntake.recording ? "停止语音输入" : storyIntake.finalizingVoice ? "正在校正语音" : "开始语音输入"}" ${storyIntake.finalizingVoice ? "disabled" : ""}>
+            <button class="story-voice-button ${storyIntake.recording ? "is-recording" : ""} ${storyIntake.finalizingVoice ? "is-processing" : ""} ${storyIntake.motionSuppressed ? "motion-suppressed" : ""}" type="button" data-action="story-voice" aria-label="${storyIntake.recording ? "结束录音" : storyIntake.finalizingVoice ? "正在转写录音" : "开始录音"}" ${storyIntake.finalizingVoice ? "disabled" : ""}>
               <span class="voice-recording-visual ${storyIntake.recording ? "is-live" : storyIntake.finalizingVoice ? "is-processing" : ""}" aria-hidden="true">${storyIntake.recording ? "<i></i><i></i><i></i><i></i><i></i>" : storyIntake.finalizingVoice ? "<b></b><b></b><b></b>" : "◉"}</span>
-              ${storyIntake.recording ? "停止并校正" : storyIntake.finalizingVoice ? "MiMo 校正中…" : speechSupported ? "语音输入" : "浏览器不支持语音"}
+              ${storyIntake.recording ? "结束录音" : storyIntake.finalizingVoice ? "MiMo 转写中…" : speechSupported ? "开始录音" : "浏览器不支持录音"}
             </button>
-            <span class="story-shortcut">${isFirstIntroduction ? "首次介绍最多 60 秒" : "补充时点一下，30 秒后自动停"} · 电脑端按 R</span>
+            <span class="story-shortcut">录音不会实时改写草稿 · 手动结束后统一转写 · 电脑端按 R</span>
             ${storyIntake.voiceStatus ? `<span class="story-voice-status" role="status" aria-live="polite">${escapeHTML(storyIntake.voiceStatus)}</span>` : ""}
-            <button class="button button--light button--small" type="submit" ${storyIntake.busy ? "disabled" : ""}>继续说</button>
-            <button class="text-button text-button--light" type="button" data-action="story-skip" ${storyIntake.busy ? "disabled" : ""}>先跳过</button>
-            <button class="text-button text-button--light" type="button" data-action="story-end">归档并结束</button>
+            <button class="button button--light button--small" type="submit" ${storyIntake.busy || storyIntake.recording || storyIntake.finalizingVoice ? "disabled" : ""}>发送</button>
+            <button class="text-button text-button--light" type="button" data-action="story-skip" ${storyIntake.busy || storyIntake.recording || storyIntake.finalizingVoice ? "disabled" : ""}>先跳过</button>
+            <button class="text-button text-button--light" type="button" data-action="story-end" ${storyIntake.recording || storyIntake.finalizingVoice ? "disabled" : ""}>归档并结束</button>
           </div>
         </form>
       ` : `
@@ -1569,9 +1562,40 @@ function renderStoryIntake() {
           ${!canUseAgent ? '<small class="story-access-note">需要登录并同意外部 AI 处理说明后开始。</small>' : ""}
         </div>
       `}
-      <small class="story-privacy">只发送你主动提交的文字或录音；本地日记不会自动上传。录音仅用于当前 MiMo ASR 转写，服务端不保存音频。</small>
+      <small class="story-privacy">录音期间只保存在当前设备；手动结束后才把 MP3 发送给 MiMo ASR。转写结果只回填草稿，你点击“发送”后才进入对话。</small>
     </section>
   `;
+}
+
+function renderStoryRecordingPanel() {
+  const levels = Array.from({ length: 44 }, (_, index) => {
+    const offset = storyIntake.waveformLevels.length - 44 + index;
+    if (offset >= 0) return storyIntake.waveformLevels[offset];
+    return storyIntake.waveformLevels.length ? 4 : 12 + ((index * 17) % 34);
+  });
+  const progress = Math.min(1, storyIntake.recordingDurationMs / 300_000);
+  return `
+    <section class="story-recording-panel" aria-label="正在录音">
+      <div class="story-recording-meta">
+        <span class="story-recording-live"><i aria-hidden="true"></i>REC · MP3</span>
+        <time id="story-recording-time" datetime="PT${Math.floor(storyIntake.recordingDurationMs / 1000)}S">${formatRecordingDuration(storyIntake.recordingDurationMs)}</time>
+      </div>
+      <div class="story-recording-waveform" id="story-recording-waveform" aria-hidden="true">
+        ${levels.map((level) => `<i style="transform:scaleY(${Math.max(0.08, Math.min(1, level / 100)).toFixed(2)})"></i>`).join("")}
+      </div>
+      <div class="story-recording-timeline" aria-hidden="true">
+        <span id="story-recording-progress" style="transform:scaleX(${progress.toFixed(4)})"></span>
+      </div>
+      <div class="story-recording-foot"><span>00:00</span><strong>点击“结束录音”后再统一转写</strong><span>05:00</span></div>
+    </section>
+  `;
+}
+
+function formatRecordingDuration(milliseconds = 0) {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
 function startStoryIntake({ beginVoice = false } = {}) {
@@ -1592,8 +1616,7 @@ function startStoryIntake({ beginVoice = false } = {}) {
     return;
   }
   storyIntake.active = true;
-  const hasUserAnswer = storyIntake.messages.some((message) => message.role === "user");
-  storyIntake.remaining = hasUserAnswer ? null : 60;
+  storyIntake.remaining = null;
   storyIntake.startedAt = Date.now();
   storyIntake.draftInput = "";
   storyIntake.voiceStatus = "";
@@ -1604,7 +1627,6 @@ function startStoryIntake({ beginVoice = false } = {}) {
     });
     speakCompleteStoryText(storyIntake.messages.at(-1).content);
   }
-  if (!hasUserAnswer) startStoryTimer();
   renderCurrentView();
   requestAnimationFrame(() => {
     if (beginVoice) toggleStoryVoice();
@@ -1612,27 +1634,16 @@ function startStoryIntake({ beginVoice = false } = {}) {
   });
 }
 
-function startStoryTimer() {
-  window.clearInterval(storyIntake.timer);
-  storyIntake.timer = window.setInterval(() => {
-    storyIntake.remaining = Math.max(0, 60 - Math.floor((Date.now() - storyIntake.startedAt) / 1000));
-    const timer = document.querySelector(".story-timer");
-    if (timer) timer.textContent = `首次介绍 ${storyIntake.remaining}s`;
-    if (!storyIntake.remaining) {
-      window.clearInterval(storyIntake.timer);
-      if (storyIntake.recording) stopStoryVoice({ autoSubmit: true });
-      showToast("首次介绍的 60 秒到了，你可以继续打字补充或结束记录", 3600);
-    }
-  }, 500);
-}
-
 async function endStoryIntake() {
+  if (storyIntake.recording || storyIntake.finalizingVoice) {
+    showToast("请先结束录音并确认转写文字，再归档故事", 3600);
+    return;
+  }
   cancelStorySpeech();
   window.clearInterval(storyIntake.timer);
   storyIntake.active = false;
   const pendingInput = clean(storyIntake.draftInput).slice(0, 2400);
   stopStoryVoice();
-  storyIntake.voiceAutoSubmit = false;
   storyIntake.voiceStatus = "";
   storyIntake.controller?.abort();
   if (pendingInput) {
@@ -1815,36 +1826,24 @@ async function submitStoryAnswer(answer) {
 async function startStoryAudioRecording() {
   if (!canRecordAudio()) return false;
   if (!(await checkMicrophonePermission())) return true;
-  const isFirstIntroduction = storyIntake.messages.every((message) => message.role !== "user");
-  const voiceLimitMs = isFirstIntroduction ? 60_000 : 30_000;
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  } catch {
-    showToast("无法取得麦克风权限，请允许录音后重试", 3600);
-    return true;
-  }
+  const input = document.querySelector("#story-answer");
+  storyIntake.draftInput = clean(input?.value || storyIntake.draftInput).slice(0, 2400);
   let recorder;
   try {
-    recorder = await createWavRecorder(stream);
-  } catch {
-    stream.getTracks().forEach((track) => track.stop());
-    showToast("当前浏览器无法建立 WAV 录音，将改用实时语音识别", 3600);
-    return false;
+    recorder = await createMp3Recorder({ onProcess: updateStoryRecordingVisual });
+  } catch (error) {
+    const message = error?.userDenied
+      ? "无法取得麦克风权限，请在浏览器地址栏允许录音后重试"
+      : "当前浏览器无法建立 MP3 录音，请改用文字输入";
+    showToast(message, 4200);
+    return true;
   }
   storyIntake.audioRecorder = recorder;
-  storyIntake.recordingStream = stream;
-  storyIntake.recordingBaseText = clean(storyIntake.draftInput).slice(0, 2400);
-  storyIntake.recordingAsrText = "";
   storyIntake.finalizingVoice = false;
   storyIntake.recording = true;
-  storyIntake.voiceAutoSubmit = true;
-  storyIntake.voiceStatus = "实时识别中 · MiMo 将持续校正最终文本";
-  storyIntake.voiceTimeout = window.setTimeout(
-    () => stopStoryVoice({ autoSubmit: true }),
-    voiceLimitMs
-  );
-  startStoryLiveAsr();
+  storyIntake.recordingDurationMs = 0;
+  storyIntake.waveformLevels = [];
+  storyIntake.voiceStatus = "录音中 · 草稿不会被实时改写";
   renderStoryViewPreservingScroll();
   return true;
 }
@@ -1855,7 +1854,7 @@ async function toggleStoryVoice({ fromKeyboard = false } = {}) {
     return;
   }
   if (storyIntake.recording) {
-    stopStoryVoice({ autoSubmit: true });
+    stopStoryVoice();
     return;
   }
   storyIntake.motionSuppressed = fromKeyboard;
@@ -1864,180 +1863,126 @@ async function toggleStoryVoice({ fromKeyboard = false } = {}) {
   showToast("当前浏览器无法录音，请改用文字输入", 3600);
 }
 
-async function submitCorrectedStoryVoice(draft) {
-  const corrected = await correctSpeechTranscript(draft);
-  await submitStoryAnswer(corrected || draft);
-}
-
-async function correctSpeechTranscript(draft) {
-  const canUseAgent = Boolean(platform.user && platform.externalAiConsent?.current && platform.capabilities?.agent);
-  if (!canUseAgent || !draft) return draft;
-  try {
-    const complete = await platformClient.streamAgent([
-      {
-        role: "user",
-        content: `请只校正下面这段中文语音识别文本中的明显错别字、同音词、断句和标点。保留原意、人物、时间、地点、数量和不确定性，不要补写事实，不要解释，只输出校正后的原文：\n\n${draft}`,
-      },
-    ]);
-    const corrected = clean(complete).slice(0, 2400);
-    return corrected && corrected.length >= draft.length * 0.7 ? corrected : draft;
-  } catch {
-    return draft;
-  }
-}
-
-function stopStoryVoice({ autoSubmit = false } = {}) {
-  window.clearTimeout(storyIntake.voiceTimeout);
-  if (autoSubmit) storyIntake.voiceAutoSubmit = true;
+function stopStoryVoice() {
   if (storyIntake.audioRecorder) {
     const recorder = storyIntake.audioRecorder;
-    const stream = storyIntake.recordingStream;
-    const shouldSubmit = storyIntake.voiceAutoSubmit;
     const preview = clean(storyIntake.draftInput).slice(0, 2400);
-    const stableText = storyIntake.recordingAsrText;
-    const tail = recorder.snapshot(storyIntake.lastAsrChunkIndex || 0);
-    stopStoryLiveAsr();
     storyIntake.audioRecorder = null;
-    storyIntake.recordingStream = null;
     storyIntake.recording = false;
-    storyIntake.voiceAutoSubmit = false;
     storyIntake.finalizingVoice = true;
-    storyIntake.voiceStatus = "正在用 MiMo ASR 校正语音…";
-    const blob = recorder.stop();
-    stream?.getTracks().forEach((track) => track.stop());
+    storyIntake.voiceStatus = "正在上传 MP3，并用 MiMo ASR 统一转写…";
     renderStoryViewPreservingScroll();
-    if (!storyIntake.active) {
-      storyIntake.recordingBaseText = "";
-      storyIntake.recordingAsrText = "";
-      storyIntake.finalizingVoice = false;
-      storyIntake.motionSuppressed = false;
-      storyIntake.voiceStatus = "";
-      return;
-    }
-    void finalizeStoryRecording(blob, { preview, shouldSubmit, tail, stableText });
+    void recorder.stop()
+      .then(({ blob, durationMs }) => finalizeStoryRecording(blob, { preview, durationMs }))
+      .catch((error) => handleStoryRecordingFailure(error, preview));
     return;
-  }
-  if (autoSubmit) {
-    const draft = storyIntake.draftInput;
-    storyIntake.voiceAutoSubmit = false;
-    if (draft) void submitCorrectedStoryVoice(draft);
   }
   storyIntake.recording = false;
   storyIntake.voiceStatus = "";
 }
 
-async function finalizeStoryRecording(blob, { preview, shouldSubmit, tail, stableText = "" }) {
+async function finalizeStoryRecording(blob, { preview, durationMs = 0 }) {
   let transcript = preview;
   try {
-    // Append the newly recognized tail to whatever is already in the input
-    // box. Never rebuild from the recording-start snapshot, so existing or
-    // hand-edited text is preserved.
-    if (tail?.size > 44) {
-      const corrected = await transcribeRecordedAudio(tail, { timeoutMs: 45_000 });
-      const newTail = extractNewTranscript(stableText, corrected);
-      transcript = appendVoiceTranscript(preview || storyIntake.draftInput, newTail).slice(0, 2400);
-    } else if (stableText) {
-      transcript = appendVoiceTranscript(preview || storyIntake.draftInput, "").slice(0, 2400) || stableText;
-    } else if (blob.size) {
-      const corrected = await transcribeRecordedAudio(blob, { timeoutMs: 45_000 });
-      const newTail = extractNewTranscript(stableText, corrected);
-      transcript = appendVoiceTranscript(preview || storyIntake.draftInput, newTail).slice(0, 2400);
-    }
+    if (!blob?.size) throw new Error("audio_empty");
+    const recognized = await transcribeRecordedAudio(blob, { timeoutMs: 90_000 });
+    transcript = appendVoiceTranscript(preview, recognized).slice(0, 2400);
     if (transcript && storyIntake.active) {
       storyIntake.draftInput = transcript;
-      storyIntake.voiceStatus = shouldSubmit ? "MiMo 识别完成 · 正在发送" : "MiMo 识别完成";
+      storyIntake.recordingDurationMs = durationMs;
+      storyIntake.voiceStatus = "MiMo 转写完成 · 请确认文字后点击发送";
       renderStoryViewPreservingScroll();
-      if (shouldSubmit) await submitCorrectedStoryVoice(transcript);
+      requestAnimationFrame(() => {
+        const input = document.querySelector("#story-answer");
+        input?.focus();
+        input?.setSelectionRange(input.value.length, input.value.length);
+      });
     }
   } catch (error) {
     if (preview && storyIntake.active) {
       storyIntake.draftInput = preview;
-      showToast("MiMo 识别超时，已保留已有文字", 3800);
-      if (shouldSubmit) await submitCorrectedStoryVoice(preview);
+      const reason = error instanceof PlatformError ? error.message : "语音识别未完成";
+      showToast(`${reason} 已保留已有文字。`, 4200);
     } else if (storyIntake.active) {
       showToast(error instanceof PlatformError ? error.message : "语音识别未完成，请改用文字输入", 4200);
     }
   } finally {
-    storyIntake.recordingBaseText = "";
-    storyIntake.recordingAsrText = "";
     storyIntake.finalizingVoice = false;
     storyIntake.motionSuppressed = false;
-    storyIntake.voiceStatus = "";
+    if (!storyIntake.draftInput) storyIntake.voiceStatus = "";
     renderStoryViewPreservingScroll();
   }
 }
 
-function startStoryLiveAsr() {
-  stopStoryLiveAsr();
-  storyIntake.liveAsrTimer = window.setInterval(() => {
-    void refreshStoryLiveAsr();
-  }, 2_200);
+async function handleStoryRecordingFailure(error, preview) {
+  storyIntake.finalizingVoice = false;
+  storyIntake.motionSuppressed = false;
+  storyIntake.voiceStatus = "";
+  storyIntake.draftInput = preview;
+  renderStoryViewPreservingScroll();
+  showToast(error?.message || "录音没有成功结束，请重试", 4200);
 }
 
-function stopStoryLiveAsr() {
-  window.clearInterval(storyIntake.liveAsrTimer);
-  storyIntake.liveAsrTimer = null;
-  storyIntake.liveAsrController?.abort();
-  storyIntake.liveAsrController = null;
-  storyIntake.lastAsrChunkIndex = 0;
-}
-
-async function refreshStoryLiveAsr() {
-  const recorder = storyIntake.audioRecorder;
-  if (!storyIntake.recording || !recorder || storyIntake.liveAsrController) return;
-  if (recorder.durationMs() < 1_200) return;
-  // Incremental snapshot: only the audio recorded since the last correction.
-  const fromIndex = storyIntake.lastAsrChunkIndex || 0;
-  const snapshot = recorder.snapshot(fromIndex);
-  if (snapshot.size <= 44) return;
-  const previewAtRequest = storyIntake.draftInput;
-  const controller = new AbortController();
-  storyIntake.liveAsrController = controller;
-  try {
-    let corrected = "";
-    try {
-      corrected = await streamTranscribeRecordedAudio(snapshot, {
-        timeoutMs: 12_000,
-        signal: controller.signal,
-        onText(partial) {
-          const newTail = extractNewTranscript(storyIntake.recordingAsrText, partial);
-          if (!newTail) return;
-          const live = appendVoiceTranscript(storyIntake.draftInput, newTail).slice(0, 2400);
-          const input = document.querySelector("#story-answer");
-          if (input) input.value = live;
-          storyIntake.draftInput = live;
+function createMp3Recorder({ onProcess } = {}) {
+  const Recorder = window.Recorder;
+  if (typeof Recorder !== "function") {
+    return Promise.reject(new Error("mp3_recorder_unavailable"));
+  }
+  const recorder = Recorder({
+    type: "mp3",
+    sampleRate: 16_000,
+    bitRate: 32,
+    onProcess(_buffers, powerLevel, bufferDuration) {
+      onProcess?.(powerLevel, bufferDuration);
+    },
+  });
+  return new Promise((resolve, reject) => {
+    recorder.open(() => {
+      recorder.start();
+      let stopped = false;
+      resolve({
+        stop() {
+          if (stopped) return Promise.reject(new Error("recording_already_stopped"));
+          stopped = true;
+          return new Promise((stopResolve, stopReject) => {
+            recorder.stop((blob, duration) => {
+              recorder.close();
+              stopResolve({ blob, durationMs: Number(duration) || 0 });
+            }, (message) => {
+              recorder.close();
+              stopReject(new Error(message || "mp3_encode_failed"));
+            });
+          });
         },
       });
-    } catch (error) {
-      if (error?.code === "asr_stream_failed" || error?.code === "asr_stream_incomplete") {
-        corrected = await transcribeRecordedAudio(snapshot, { timeoutMs: 18_000, signal: controller.signal });
-      } else throw error;
-    }
-    corrected = corrected.slice(0, 2400);
-    if (!corrected || !storyIntake.recording || storyIntake.liveAsrController !== controller) return;
-    storyIntake.lastAsrChunkIndex = recorder.chunkCount();
-    // Only append the genuinely new tail of this ASR result. Never rebuild
-    // draftInput from the recording-start snapshot, so text the user already
-    // typed or edited is preserved.
-    const newTail = extractNewTranscript(storyIntake.recordingAsrText, corrected);
-    storyIntake.recordingAsrText = appendVoiceTranscript(storyIntake.recordingAsrText, corrected).slice(0, 2400);
-    if (newTail) {
-      storyIntake.draftInput = appendVoiceTranscript(storyIntake.draftInput, newTail).slice(0, 2400);
-    }
-    const input = document.querySelector("#story-answer");
-    if (input) input.value = storyIntake.draftInput;
-    storyIntake.voiceStatus = "MiMo 已实时识别 · 继续说即可";
-    window.setTimeout(() => {
-      if (!storyIntake.recording) return;
-      storyIntake.voiceStatus = "实时识别中 · MiMo 将持续追加识别文本";
-      renderStoryViewPreservingScroll();
-    }, 1_200);
-    renderStoryViewPreservingScroll();
-  } catch {
-    // The final full-WAV pass still runs on stop.
-  } finally {
-    if (storyIntake.liveAsrController === controller) storyIntake.liveAsrController = null;
+    }, (message, userDenied) => {
+      const error = new Error(message || "microphone_open_failed");
+      error.userDenied = Boolean(userDenied);
+      reject(error);
+    });
+  });
+}
+
+function updateStoryRecordingVisual(powerLevel, durationMs) {
+  if (!storyIntake.recording) return;
+  const level = Math.max(4, Math.min(100, Number(powerLevel) || 0));
+  storyIntake.recordingDurationMs = Math.max(0, Number(durationMs) || 0);
+  storyIntake.waveformLevels = [...storyIntake.waveformLevels.slice(-43), level];
+
+  const time = document.querySelector("#story-recording-time");
+  if (time) {
+    time.textContent = formatRecordingDuration(storyIntake.recordingDurationMs);
+    time.setAttribute("datetime", `PT${Math.floor(storyIntake.recordingDurationMs / 1000)}S`);
   }
+  const bars = document.querySelectorAll("#story-recording-waveform > i");
+  const levels = storyIntake.waveformLevels;
+  bars.forEach((bar, index) => {
+    const value = levels.at(index - bars.length) || 4;
+    bar.style.transform = `scaleY(${Math.max(0.08, value / 100).toFixed(2)})`;
+  });
+  const progress = Math.min(1, storyIntake.recordingDurationMs / 300_000);
+  const progressBar = document.querySelector("#story-recording-progress");
+  if (progressBar) progressBar.style.transform = `scaleX(${progress.toFixed(4)})`;
 }
 
 async function createWavRecorder(stream) {
@@ -2100,7 +2045,7 @@ async function checkMicrophonePermission() {
 function canRecordAudio() {
   return Boolean(
     navigator.mediaDevices?.getUserMedia
-    && (window.AudioContext || window.webkitAudioContext)
+    && typeof window.Recorder === "function"
   );
 }
 
@@ -2114,7 +2059,7 @@ async function transcribeRecordedAudio(blob, { timeoutMs = 25_000, signal } = {}
     return await platformClient.transcribeVoice(blob, { signal: controller.signal });
   } catch (error) {
     if (controller.signal.aborted) {
-      throw new PlatformError("MiMo ASR 响应超时，已保留实时识别结果。", {
+      throw new PlatformError("MiMo ASR 响应超时，已保留已有文字。", {
         code: "asr_timeout",
         status: 504,
       });

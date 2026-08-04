@@ -12,6 +12,7 @@ const staticEntries = [
   ["app.js", "app.js"],
   ["styles.css", "styles.css"],
   ["src", "src"],
+  ["vendor", "vendor"],
   ["admin/index.html", "admin/index.html"],
   ["admin/app.js", "admin/app.js"],
   ["admin/styles.css", "admin/styles.css"],
