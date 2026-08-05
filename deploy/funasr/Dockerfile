@@ -1,6 +1,6 @@
 FROM python:3.10-slim
 
-ARG FUNASR_VERSION=1.4.0
+ARG FUNASR_VERSION=1.4.1
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -13,6 +13,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg git libsndfile1 \
     && rm -rf /var/lib/apt/lists/* \
     && python -m pip install --upgrade pip \
+    && python -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu \
     && python -m pip install \
         "funasr==${FUNASR_VERSION}" \
         fastapi \
