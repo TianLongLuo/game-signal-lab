@@ -46,6 +46,9 @@ const MIMO_TTS_VOICES = new Set(["冰糖", "茉莉", "苏打", "白桦", "Mia", 
 const MIMO_TTS_TIMEOUT_MS = 45_000;
 const MIMO_ASR_MODEL = "mimo-v2.5-asr";
 const MIMO_ASR_TIMEOUT_MS = 60_000;
+const FUNASR_DEFAULT_MODEL = "sensevoice";
+const FUNASR_MODELS = new Set(["sensevoice", "paraformer", "paraformer-en", "fun-asr-nano"]);
+const FUNASR_DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_ASR_BODY_BYTES = 12 * 1024 * 1024;
 const MAX_ASR_AUDIO_BYTES = 8 * 1024 * 1024;
 const MEMBERSHIP_STATUSES = new Set(["active", "suspended", "expired"]);
@@ -151,9 +154,11 @@ export async function createBackend(options = {}) {
     options.deepseekBaseUrl ?? "https://api.deepseek.com/",
     options.allowInsecureDeepSeekForTests === true
   );
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const funAsr = createFunAsrConfig(env);
   const db = openDatabase(databasePath);
   const vectorStore = options.vectorStore ?? QdrantVectorStore.fromEnv(env, {
-    fetchImpl: options.fetchImpl ?? globalThis.fetch,
+    fetchImpl,
   });
   const loginIpAttempts = new BoundedWindowCounter({
     limit: LOGIN_ATTEMPT_LIMIT,
@@ -1180,11 +1185,44 @@ export async function createBackend(options = {}) {
       const encoded = match?.[2]?.replaceAll(/\s/g, "") || "";
       const supportedMime = mimeType === "audio/wav" || mimeType === "audio/mpeg" || mimeType === "audio/mp3";
       if (!match || !supportedMime || !encoded || encoded.length > 10 * 1024 * 1024) {
-        throw new HttpError(400, "invalid_audio", "MiMo ASR 只接受 WAV 或 MP3，且文件不能超过 8 MB。");
+        throw new HttpError(400, "invalid_audio", "语音识别只接受 WAV 或 MP3，且文件不能超过 8 MB。");
       }
       const bytes = Buffer.from(encoded, "base64");
       if (!bytes.length || bytes.byteLength > MAX_ASR_AUDIO_BYTES) {
         throw new HttpError(413, "audio_too_large", "语音文件不能超过 8 MB。");
+      }
+      let funAsrFailure = null;
+      if (funAsr) {
+        try {
+          const transcript = await transcribeWithFunAsr({
+            ...funAsr,
+            bytes,
+            mimeType,
+            fetchImpl,
+          });
+          writeAudit(db, request, masterKey, {
+            actorUserId: auth.id,
+            action: "voice.asr",
+            targetType: "provider",
+            targetId: "funasr",
+          });
+          if (streamRequested) {
+            await streamTranscriptAsSse(response, transcript);
+          } else {
+            sendJson(response, 200, { text: transcript, provider: "funasr" });
+          }
+          return;
+        } catch (error) {
+          funAsrFailure = error;
+          writeAudit(db, request, masterKey, {
+            actorUserId: auth.id,
+            action: "voice.asr",
+            targetType: "provider",
+            targetId: "funasr",
+            outcome: "failure",
+            reasonCode: funAsrFailureReason(error),
+          });
+        }
       }
       const config = db
         .prepare(
@@ -1193,7 +1231,13 @@ export async function createBackend(options = {}) {
         )
         .get();
       if (!config?.enabled || !config.ciphertext || !config.iv) {
-        throw new HttpError(503, "asr_not_configured", "语音识别服务尚未在后台配置。");
+        throw new HttpError(
+          503,
+          funAsrFailure ? "asr_provider_unavailable" : "asr_not_configured",
+          funAsrFailure
+            ? "本地 FunASR 暂时不可用，MiMo 回退也尚未配置。"
+            : "语音识别服务尚未配置。"
+        );
       }
       let apiKey;
       try {
@@ -3300,6 +3344,152 @@ function parseBoolean(value, fallback) {
   if (String(value).toLowerCase() === "true") return true;
   if (String(value).toLowerCase() === "false") return false;
   throw new Error("COOKIE_SECURE must be true or false");
+}
+
+export function createFunAsrConfig(env = {}) {
+  const configuredBaseUrl = String(env.FUNASR_BASE_URL ?? "").trim();
+  if (!configuredBaseUrl) return null;
+  const model = String(env.FUNASR_MODEL ?? FUNASR_DEFAULT_MODEL).trim();
+  if (!FUNASR_MODELS.has(model)) {
+    throw new Error(`FUNASR_MODEL must be one of: ${[...FUNASR_MODELS].join(", ")}`);
+  }
+  const timeoutValue = String(env.FUNASR_TIMEOUT_MS ?? "").trim();
+  const timeoutMs = timeoutValue ? Number(timeoutValue) : FUNASR_DEFAULT_TIMEOUT_MS;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 5_000 || timeoutMs > 120_000) {
+    throw new Error("FUNASR_TIMEOUT_MS must be an integer between 5000 and 120000");
+  }
+  return {
+    baseUrl: normalizeFunAsrBaseUrl(configuredBaseUrl),
+    model,
+    timeoutMs,
+    apiKey: String(env.FUNASR_API_KEY ?? "").trim(),
+  };
+}
+
+export function normalizeFunAsrBaseUrl(value) {
+  const url = new URL(value);
+  if (
+    url.protocol !== "http:" ||
+    !["127.0.0.1", "localhost", "::1"].includes(url.hostname) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    !["", "/", "/v1", "/v1/"].includes(url.pathname)
+  ) {
+    throw new Error("FUNASR_BASE_URL must be a loopback HTTP URL with an optional /v1 path");
+  }
+  url.pathname = `${url.pathname.replace(/\/+$/, "").replace(/\/v1$/, "")}/`;
+  return url;
+}
+
+export async function transcribeWithFunAsr({
+  baseUrl,
+  model,
+  timeoutMs,
+  apiKey = "",
+  bytes,
+  mimeType,
+  fetchImpl = globalThis.fetch,
+}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(new Error("upstream_timeout")),
+    timeoutMs ?? FUNASR_DEFAULT_TIMEOUT_MS
+  );
+  timeout.unref?.();
+  const form = new FormData();
+  const extension = mimeType === "audio/wav" ? "wav" : "mp3";
+  form.append("file", new Blob([bytes], { type: mimeType }), `recording.${extension}`);
+  form.append("model", model ?? FUNASR_DEFAULT_MODEL);
+  form.append("language", "zh");
+  form.append("response_format", "json");
+
+  let upstream;
+  try {
+    upstream = await fetchImpl(new URL("v1/audio/transcriptions", baseUrl), {
+      method: "POST",
+      redirect: "error",
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+      },
+      body: form,
+    });
+  } catch (error) {
+    const wrapped = new Error(controller.signal.aborted ? "FunASR timeout" : "FunASR network error");
+    wrapped.code = controller.signal.aborted ? "timeout" : "network_error";
+    wrapped.cause = error;
+    throw wrapped;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!upstream.ok) {
+    await upstream.body?.cancel();
+    const error = new Error(`FunASR rejected request with HTTP ${upstream.status}`);
+    error.code = `upstream_http_${upstream.status}`;
+    error.status = upstream.status;
+    throw error;
+  }
+  let payload;
+  try {
+    payload = await upstream.json();
+  } catch (cause) {
+    const error = new Error("FunASR returned invalid JSON");
+    error.code = "protocol_error";
+    error.cause = cause;
+    throw error;
+  }
+  const transcript = typeof payload?.text === "string" ? payload.text.trim() : "";
+  if (!transcript) {
+    const error = new Error("FunASR returned no transcript");
+    error.code = "missing_transcript";
+    throw error;
+  }
+  return transcript;
+}
+
+function funAsrFailureReason(error) {
+  const code = String(error?.code ?? "");
+  if (/^(?:timeout|network_error|protocol_error|missing_transcript|upstream_http_\d{3})$/.test(code)) {
+    return code;
+  }
+  return "provider_error";
+}
+
+async function streamTranscriptAsSse(response, transcript) {
+  response.statusCode = 200;
+  response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  response.setHeader("Cache-Control", "no-store, no-transform");
+  response.setHeader("Connection", "keep-alive");
+  response.setHeader("X-Accel-Buffering", "no");
+  response.flushHeaders?.();
+  for (const content of splitTranscriptForStreaming(transcript)) {
+    if (response.destroyed || response.writableEnded) return;
+    response.write(`data: ${JSON.stringify({
+      choices: [{ index: 0, delta: { content }, finish_reason: null }],
+    })}\n\n`);
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  if (!response.destroyed && !response.writableEnded) {
+    response.end("data: [DONE]\n\n");
+  }
+}
+
+export function splitTranscriptForStreaming(value, maximumCharacters = 18) {
+  const chunks = [];
+  let current = "";
+  for (const character of String(value ?? "")) {
+    current += character;
+    if (current.length >= maximumCharacters || /[，。！？；：,.!?;:\n]/u.test(character)) {
+      chunks.push(current);
+      current = "";
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
 }
 
 function normalizeDeepSeekBaseUrl(value, allowInsecure) {

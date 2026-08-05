@@ -1535,7 +1535,7 @@ function renderStoryIntake() {
           <div class="story-controls">
             <button class="story-voice-button ${storyIntake.recording ? "is-recording" : ""} ${storyIntake.finalizingVoice ? "is-processing" : ""} ${storyIntake.motionSuppressed ? "motion-suppressed" : ""}" type="button" data-action="story-voice" aria-label="${storyIntake.recording ? "结束录音" : storyIntake.finalizingVoice ? "正在转写录音" : "开始录音"}" ${storyIntake.finalizingVoice ? "disabled" : ""}>
               <span class="voice-recording-visual ${storyIntake.recording ? "is-live" : storyIntake.finalizingVoice ? "is-processing" : ""}" aria-hidden="true">${storyIntake.recording ? "<i></i><i></i><i></i><i></i><i></i>" : storyIntake.finalizingVoice ? "<b></b><b></b><b></b>" : "◉"}</span>
-              ${storyIntake.recording ? "结束录音" : storyIntake.finalizingVoice ? "MiMo 转写中…" : speechSupported ? "开始录音" : "浏览器不支持录音"}
+              ${storyIntake.recording ? "结束录音" : storyIntake.finalizingVoice ? "转写中…" : speechSupported ? "开始录音" : "浏览器不支持录音"}
             </button>
             <span class="story-shortcut">录音不会实时改写草稿 · 手动结束后统一转写 · 电脑端按 R</span>
             ${storyIntake.voiceStatus ? `<span class="story-voice-status" role="status" aria-live="polite">${escapeHTML(storyIntake.voiceStatus)}</span>` : ""}
@@ -1553,7 +1553,7 @@ function renderStoryIntake() {
           ${!canUseAgent ? '<small class="story-access-note">需要登录并同意外部 AI 处理说明后开始。</small>' : ""}
         </div>
       `}
-      <small class="story-privacy">录音期间只保存在当前设备；手动结束后才把 MP3 发送给 MiMo ASR。转写结果只回填草稿，你点击“发送”后才进入对话。</small>
+      <small class="story-privacy">录音期间只保存在当前设备；手动结束后才把 MP3 发送给语音识别服务。本地 FunASR 优先，失败时回退 MiMo；结果只回填草稿，你点击“发送”后才进入对话。</small>
     </section>
   `;
 }
@@ -1857,7 +1857,7 @@ function stopStoryVoice() {
     storyIntake.audioRecorder = null;
     storyIntake.recording = false;
     storyIntake.finalizingVoice = true;
-    storyIntake.voiceStatus = "正在上传 MP3，并用 MiMo ASR 统一转写…";
+    storyIntake.voiceStatus = "正在上传 MP3，并进行本地优先转写…";
     renderStoryViewPreservingScroll();
     void recorder.stop()
       .then(({ blob, durationMs }) => finalizeStoryRecording(blob, { preview, durationMs }))
@@ -1880,14 +1880,14 @@ async function finalizeStoryRecording(blob, { preview, durationMs = 0 }) {
         const input = document.querySelector("#story-answer");
         if (input) input.value = transcript;
         const status = document.querySelector(".story-voice-status");
-        if (status) status.textContent = "MiMo ASR 正在流式转写…";
+        if (status) status.textContent = "语音识别正在流式整理…";
       },
     });
     transcript = appendVoiceTranscript(preview, recognized).slice(0, 2400);
     if (transcript && storyIntake.active) {
       storyIntake.draftInput = transcript;
       storyIntake.recordingDurationMs = durationMs;
-      storyIntake.voiceStatus = "MiMo 转写完成 · 请确认文字后点击发送";
+      storyIntake.voiceStatus = "转写完成 · 请确认文字后点击发送";
       renderStoryViewPreservingScroll();
       requestAnimationFrame(() => {
         const input = document.querySelector("#story-answer");
@@ -2061,7 +2061,7 @@ async function transcribeRecordedAudio(blob, { timeoutMs = 25_000, signal } = {}
     return await platformClient.transcribeVoice(blob, { signal: controller.signal });
   } catch (error) {
     if (controller.signal.aborted) {
-      throw new PlatformError("MiMo ASR 响应超时，已保留已有文字。", {
+      throw new PlatformError("语音识别响应超时，已保留已有文字。", {
         code: "asr_timeout",
         status: 504,
       });
@@ -2088,7 +2088,7 @@ async function streamTranscribeRecordedAudio(blob, { timeoutMs = 12_000, signal,
     });
   } catch (error) {
     if (controller.signal.aborted) {
-      throw new PlatformError("MiMo ASR 响应超时，已保留实时识别结果。", {
+      throw new PlatformError("语音识别响应超时，已保留实时识别结果。", {
         code: "asr_timeout",
         status: 504,
       });
@@ -2304,7 +2304,7 @@ function renderContactEditor() {
           <textarea id="contact-voice-input" name="voiceDraft" maxlength="2400" placeholder="例如：她最近主动提到下周的展览，但说临时安排不太方便。">${escapeHTML(contactEditor.voiceDraft)}</textarea>
           <div class="contact-editor-actions">
             <button class="story-voice-button ${contactEditor.recording ? "is-recording" : ""} ${contactEditor.finalizingVoice ? "is-processing" : ""}" id="contact-voice-button" type="button" data-action="contact-voice" ${speechSupported && !contactEditor.finalizingVoice ? "" : "disabled"}>
-              <span class="voice-recording-visual ${contactEditor.recording ? "is-live" : contactEditor.finalizingVoice ? "is-processing" : ""}" aria-hidden="true">${contactEditor.recording ? "<i></i><i></i><i></i><i></i><i></i>" : contactEditor.finalizingVoice ? "<b></b><b></b><b></b>" : "◉"}</span>${contactEditor.recording ? "停止并校正" : contactEditor.finalizingVoice ? "MiMo 校正中…" : speechSupported ? "语音输入" : "浏览器不支持语音"}
+              <span class="voice-recording-visual ${contactEditor.recording ? "is-live" : contactEditor.finalizingVoice ? "is-processing" : ""}" aria-hidden="true">${contactEditor.recording ? "<i></i><i></i><i></i><i></i><i></i>" : contactEditor.finalizingVoice ? "<b></b><b></b><b></b>" : "◉"}</span>${contactEditor.recording ? "停止并校正" : contactEditor.finalizingVoice ? "语音校正中…" : speechSupported ? "语音输入" : "浏览器不支持语音"}
             </button>
             <button class="button button--quiet" type="button" data-action="contact-ai-organize" ${speechSupported || contactEditor.voiceDraft ? "" : ""}>AI 整理补充</button>
             <button class="button button--primary" type="submit">保存档案</button>
@@ -2383,7 +2383,7 @@ async function startContactAudioRecording() {
   contactEditor.finalizingVoice = false;
   contactEditor.recording = true;
   contactEditor.voiceAutoOrganize = true;
-  contactEditor.voiceStatus = "实时识别中 · MiMo 将校正最终文本";
+  contactEditor.voiceStatus = "实时识别中 · 结束后将校正最终文本";
   contactEditor.voiceTimeout = window.setTimeout(
     () => stopContactVoice({ autoOrganize: true }),
     30_000
@@ -2410,7 +2410,7 @@ function stopContactVoice({ autoOrganize = false, discard = false } = {}) {
     contactEditor.recording = false;
     contactEditor.voiceAutoOrganize = false;
     contactEditor.finalizingVoice = true;
-    contactEditor.voiceStatus = "正在用 MiMo ASR 校正语音…";
+    contactEditor.voiceStatus = "正在校正语音…";
     const blob = recorder.stop();
     stream?.getTracks().forEach((track) => track.stop());
     updateContactVoiceButton();
@@ -2446,7 +2446,7 @@ async function finalizeContactRecording(blob, { preview, shouldOrganize, tail, s
     }
     if (transcript && editingContactId) {
       contactEditor.voiceDraft = transcript;
-      contactEditor.voiceStatus = shouldOrganize ? "MiMo 校正完成 · 正在整理档案" : "MiMo 校正完成";
+      contactEditor.voiceStatus = shouldOrganize ? "语音校正完成 · 正在整理档案" : "语音校正完成";
       const input = document.querySelector("#contact-voice-input");
       if (input) input.value = transcript;
       updateContactVoiceButton();
@@ -2455,7 +2455,7 @@ async function finalizeContactRecording(blob, { preview, shouldOrganize, tail, s
   } catch (error) {
     if (preview && editingContactId) {
       contactEditor.voiceDraft = preview;
-      showToast("MiMo 校正超时，已保留实时识别文字", 3800);
+      showToast("语音校正超时，已保留实时识别文字", 3800);
       if (shouldOrganize) await organizeContactDraft();
     } else if (editingContactId) {
       showToast(error instanceof PlatformError ? error.message : "语音识别未完成，请改用文字输入", 4200);
@@ -2526,10 +2526,10 @@ async function refreshContactLiveAsr() {
     }
     const input = document.querySelector("#contact-voice-input");
     if (input) input.value = contactEditor.voiceDraft;
-    contactEditor.voiceStatus = "MiMo 已实时识别 · 继续说即可";
+    contactEditor.voiceStatus = "已实时识别 · 继续说即可";
     window.setTimeout(() => {
       if (!contactEditor.recording) return;
-      contactEditor.voiceStatus = "实时识别中 · MiMo 将追加识别文本";
+      contactEditor.voiceStatus = "实时识别中 · 将追加识别文本";
       updateContactVoiceButton();
     }, 1_200);
     updateContactVoiceButton();
@@ -2546,7 +2546,7 @@ function updateContactVoiceButton() {
   button.classList.toggle("is-recording", contactEditor.recording);
   button.classList.toggle("is-processing", contactEditor.finalizingVoice);
   button.disabled = contactEditor.finalizingVoice;
-  button.innerHTML = `<span class="voice-recording-visual ${contactEditor.recording ? "is-live" : contactEditor.finalizingVoice ? "is-processing" : ""}" aria-hidden="true">${contactEditor.recording ? "<i></i><i></i><i></i><i></i><i></i>" : contactEditor.finalizingVoice ? "<b></b><b></b><b></b>" : "◉"}</span>${contactEditor.recording ? "停止并校正" : contactEditor.finalizingVoice ? "MiMo 校正中…" : "语音输入"}`;
+  button.innerHTML = `<span class="voice-recording-visual ${contactEditor.recording ? "is-live" : contactEditor.finalizingVoice ? "is-processing" : ""}" aria-hidden="true">${contactEditor.recording ? "<i></i><i></i><i></i><i></i><i></i>" : contactEditor.finalizingVoice ? "<b></b><b></b><b></b>" : "◉"}</span>${contactEditor.recording ? "停止并校正" : contactEditor.finalizingVoice ? "语音校正中…" : "语音输入"}`;
   const status = document.querySelector("#contact-editor-status");
   if (status) {
     status.textContent = [
