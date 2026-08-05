@@ -14,10 +14,12 @@ test("FunASR configuration is optional and restricted to loopback", () => {
     FUNASR_BASE_URL: "http://127.0.0.1:8000/v1",
     FUNASR_MODEL: "sensevoice",
     FUNASR_TIMEOUT_MS: "15000",
+    FUNASR_MAX_CONCURRENCY: "1",
   });
   assert.equal(config.baseUrl.href, "http://127.0.0.1:8000/");
   assert.equal(config.model, "sensevoice");
   assert.equal(config.timeoutMs, 15000);
+  assert.equal(config.maxConcurrency, 1);
   assert.throws(
     () => normalizeFunAsrBaseUrl("https://speech.example.com/v1"),
     /loopback HTTP URL/

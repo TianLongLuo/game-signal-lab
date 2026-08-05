@@ -49,6 +49,7 @@ EMBEDDING_MODEL=<embedding-model-name>
 FUNASR_BASE_URL=http://127.0.0.1:8000
 FUNASR_MODEL=sensevoice
 FUNASR_TIMEOUT_MS=30000
+FUNASR_MAX_CONCURRENCY=1
 ```
 
 `CONFIG_MASTER_KEY` 用于加密 DeepSeek/MiMo Key，必须长期保管并单独备份；
@@ -77,6 +78,12 @@ Docker volume `funasr-cache`，更新 GAME release 不会重复下载。FunASR �
 应用只在配置 `FUNASR_BASE_URL` 时启用本地识别，并且只接受 loopback HTTP URL。
 FunASR 不可用、超时或拒绝音频时，应用会自动回退到后台配置的 MiMo ASR；两者
 都不可用时才向用户返回错误。
+
+对于 2 核 4G 轻量服务器，仓库默认把 FunASR 限制为 1.75 核、2.5G 内存、
+2 个计算线程和单并发。建议额外配置至少 2G swap，并确保 Node、Qdrant、FunASR
+合计仍有余量。这里不能使用“高并发”配置：第二路本地 ASR 会自动回退 MiMo。
+官方 ONNX WebSocket 镜像支持 `--decoder-thread-num`，但本项目当前使用的是
+OpenAI-compatible HTTP 入口，两套启动参数不能混用。
 
 ## 4. systemd 服务
 

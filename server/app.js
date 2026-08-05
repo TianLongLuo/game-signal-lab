@@ -182,6 +182,14 @@ export async function createBackend(options = {}) {
     maxKeys: MAX_RATE_LIMIT_KEYS,
   });
   const agentConcurrency = new AgentConcurrencyGate({ globalLimit: 20, perUserLimit: 2 });
+  const funAsrConcurrency = funAsr
+    ? new AgentConcurrencyGate({
+        globalLimit: funAsr.maxConcurrency,
+        perUserLimit: 1,
+        code: "funasr_concurrency_limited",
+        message: "本地语音识别正忙，将尝试备用服务。",
+      })
+    : null;
 
   let dummyPasswordHash;
   try {
@@ -1193,7 +1201,9 @@ export async function createBackend(options = {}) {
       }
       let funAsrFailure = null;
       if (funAsr) {
+        let releaseFunAsrSlot;
         try {
+          releaseFunAsrSlot = funAsrConcurrency.acquire(auth.id);
           const transcript = await transcribeWithFunAsr({
             ...funAsr,
             bytes,
@@ -1222,6 +1232,8 @@ export async function createBackend(options = {}) {
             outcome: "failure",
             reasonCode: funAsrFailureReason(error),
           });
+        } finally {
+          releaseFunAsrSlot?.();
         }
       }
       const config = db
@@ -3358,10 +3370,16 @@ export function createFunAsrConfig(env = {}) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 5_000 || timeoutMs > 120_000) {
     throw new Error("FUNASR_TIMEOUT_MS must be an integer between 5000 and 120000");
   }
+  const concurrencyValue = String(env.FUNASR_MAX_CONCURRENCY ?? "").trim();
+  const maxConcurrency = concurrencyValue ? Number(concurrencyValue) : 1;
+  if (!Number.isSafeInteger(maxConcurrency) || maxConcurrency < 1 || maxConcurrency > 4) {
+    throw new Error("FUNASR_MAX_CONCURRENCY must be an integer between 1 and 4");
+  }
   return {
     baseUrl: normalizeFunAsrBaseUrl(configuredBaseUrl),
     model,
     timeoutMs,
+    maxConcurrency,
     apiKey: String(env.FUNASR_API_KEY ?? "").trim(),
   };
 }
@@ -3453,7 +3471,7 @@ export async function transcribeWithFunAsr({
 
 function funAsrFailureReason(error) {
   const code = String(error?.code ?? "");
-  if (/^(?:timeout|network_error|protocol_error|missing_transcript|upstream_http_\d{3})$/.test(code)) {
+  if (/^(?:timeout|network_error|protocol_error|missing_transcript|funasr_concurrency_limited|upstream_http_\d{3})$/.test(code)) {
     return code;
   }
   return "provider_error";
@@ -3643,16 +3661,23 @@ class AgentConcurrencyGate {
   #globalActive = 0;
   #perUser = new Map();
 
-  constructor({ globalLimit, perUserLimit }) {
+  constructor({
+    globalLimit,
+    perUserLimit,
+    code = "agent_concurrency_limited",
+    message = "同时进行的 Agent 请求过多。",
+  }) {
     this.globalLimit = globalLimit;
     this.perUserLimit = perUserLimit;
+    this.code = code;
+    this.message = message;
   }
 
   acquire(userId) {
     const key = String(userId);
     const userActive = this.#perUser.get(key) ?? 0;
     if (this.#globalActive >= this.globalLimit || userActive >= this.perUserLimit) {
-      throw new HttpError(429, "agent_concurrency_limited", "同时进行的 Agent 请求过多。");
+      throw new HttpError(429, this.code, this.message);
     }
     this.#globalActive += 1;
     this.#perUser.set(key, userActive + 1);
