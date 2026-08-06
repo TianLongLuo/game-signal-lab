@@ -1950,16 +1950,17 @@ function createMp3Recorder({ onProcess } = {}) {
         stop() {
           if (stopped) return Promise.reject(new Error("recording_already_stopped"));
           stopped = true;
-          return new Promise((stopResolve, stopReject) => {
-            recorder.stop((_emptyBlob, duration) => {
-              recorder.close();
-              const blob = new Blob(encodedChunks, { type: "audio/mpeg" });
-              stopResolve({ blob, durationMs: Number(duration) || 0 });
-            }, (message) => {
-              recorder.close();
-              stopReject(new Error(message || "mp3_encode_failed"));
-            });
-          });
+          try { recorder.close(); } catch {}
+          // Build blob from pre-encoded chunks — bypasses recorder.stop() callback
+          const blob = new Blob(encodedChunks, { type: "audio/mpeg" });
+          const durationMs = storyIntake.recordingDurationMs || 0;
+          if (!blob.size && durationMs < 500) {
+            return Promise.reject(new Error("录音时长过短"));
+          }
+          if (!blob.size) {
+            return Promise.reject(new Error("mp3_encode_failed"));
+          }
+          return Promise.resolve({ blob, durationMs });
         },
       });
     }, (message, userDenied) => {
