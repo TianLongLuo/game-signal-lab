@@ -6010,6 +6010,40 @@ select:focus {
   color: #ff7067 !important;
 }
 
+.agent-compose-tools {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.agent-voice-button {
+  border-color: rgba(255, 255, 255, 0.28) !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+  color: #f4edf9 !important;
+}
+
+.agent-voice-button.is-recording {
+  border-color: var(--signal) !important;
+  background: rgba(255, 69, 58, 0.1) !important;
+  color: #ff9b8f !important;
+}
+
+.agent-voice-button.is-processing {
+  border-color: rgba(244, 197, 66, 0.55) !important;
+  background: rgba(244, 197, 66, 0.08) !important;
+  color: var(--amber) !important;
+}
+
+.agent-voice-status {
+  color: var(--amber);
+  font-family: var(--font-data);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
 .story-voice-button:not(.is-recording) .voice-recording-visual,
 #contact-voice-button:not(.is-recording) .voice-recording-visual {
   color: var(--cyan);

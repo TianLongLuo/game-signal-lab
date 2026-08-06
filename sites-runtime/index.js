@@ -7,6 +7,8 @@ const AUTH_RATE_LIMIT_NAMESPACE = "v2";
 const EXTERNAL_AI_POLICY_VERSION = "2026-08-02-v2";
 const MAX_JSON_BYTES = 128 * 1024;
 const MAX_ASR_BODY_BYTES = 12 * 1024 * 1024;
+const MAX_VOICE_ORGANIZE_BYTES = 16 * 1024;
+const MAX_VOICE_ORGANIZE_TEXT = 4_000;
 const MAX_AGENT_BYTES = 80 * 1024;
 const MAX_AGENT_CONTENT_BYTES = 64 * 1024;
 const MAX_KNOWLEDGE_BYTES = 256 * 1024;
@@ -21,6 +23,7 @@ const MAX_STREAM_FRAME_BYTES = 64 * 1024;
 const MAX_STREAM_OUTPUT_BYTES = 512 * 1024;
 const MAX_AUTH_RATE_LIMIT_KEYS = 10_000;
 const DEEPSEEK_TIMEOUT_MS = 120_000;
+const VOICE_ORGANIZE_TIMEOUT_MS = 30_000;
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com/";
 const DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-flash";
 const DEEPSEEK_MODELS = new Set([
@@ -62,6 +65,13 @@ const SAFETY_SYSTEM_PROMPT = [
   "不得提供操控、欺骗、施压、跟踪、绕过拒绝、制造依赖或把隐性信号描述为同意的建议。",
   "同意必须明确、当下、持续、具体且可随时撤回；不推断未表达的想法。",
   "只处理用户本次明确发送的最少必要信息，不索取真实姓名、账号、地址、定位或完整私聊记录。",
+].join("\n");
+
+const VOICE_ORGANIZE_SYSTEM_PROMPT = [
+  "你是 GAME 的语音转写整理器，只处理用户刚刚主动提交的语音识别文字。",
+  "只做最小必要的文字修正：补充句号、逗号、问号等标点，按语义自然分段，修正明显的同音或近音识别错误。",
+  "保留原文的事实、语气、中文和英文混用、专有名词与不确定表达；不要补写没有说过的人名、地点、时间、动机或结论。",
+  "无法确认的模糊词保持原样，不要把猜测改成事实。不要回答内容，不要总结，不要建议，不要使用 Markdown，只输出整理后的纯文本。",
 ].join("\n");
 
 class HttpError extends Error {
@@ -190,6 +200,9 @@ async function route(request, env, ctx) {
   }
   if (method === "POST" && path === "/api/agent/stream") {
     return streamAgent(request, env, ctx);
+  }
+  if (method === "POST" && path === "/api/voice/organize") {
+    return organizeVoice(request, env, ctx);
   }
   if (method === "POST" && path === "/api/voice/tts") {
     return synthesizeVoice(request, env, ctx);
@@ -952,6 +965,112 @@ async function fetchDeepSeekWithRetry(endpoint, options, signal) {
   throw lastError || new Error("DeepSeek request failed");
 }
 
+async function organizeVoice(request, env, ctx) {
+  const auth = await requireAuth(request, env);
+  await requireCsrf(request, auth);
+  if (!(await hasAgentAccess(env, auth))) {
+    ctx.waitUntil(
+      audit(env, request, auth.id, "voice.organize", "agent", null, "denied")
+    );
+    throw new HttpError(403, "agent_access_denied", "当前会员未获得语音整理权限。");
+  }
+  if (!publicConsent(auth).current) {
+    ctx.waitUntil(
+      audit(env, request, auth.id, "voice.organize", "agent", null, "denied")
+    );
+    throw new HttpError(
+      403,
+      "external_ai_consent_required",
+      "请先确认当前版本的外部 AI 数据处理说明。"
+    );
+  }
+  const body = await readJson(request, MAX_VOICE_ORGANIZE_BYTES);
+  rejectUnknownFields(body, ["text"]);
+  if (typeof body.text !== "string") {
+    throw new HttpError(400, "invalid_voice_text", "text 必须是字符串。");
+  }
+  const text = body.text.normalize("NFKC").trim();
+  if (!text) throw new HttpError(400, "invalid_voice_text", "语音识别文字不能为空。");
+  if (text.length > MAX_VOICE_ORGANIZE_TEXT) {
+    throw new HttpError(413, "voice_text_too_large", "语音整理文字不能超过 4000 个字符。");
+  }
+  const config = await env.DB.prepare(
+    `SELECT provider, enabled, model, ciphertext, iv
+     FROM provider_configs WHERE provider = 'deepseek'`
+  ).first();
+  if (!config?.enabled || !config.ciphertext || !config.iv || !DEEPSEEK_MODELS.has(config.model)) {
+    throw new HttpError(503, "agent_not_configured", "Agent 服务尚未配置。");
+  }
+
+  const apiKey = await decryptProviderKey(env, config);
+  const endpoint = new URL("chat/completions", DEEPSEEK_BASE_URL);
+  const abortController = new AbortController();
+  const abortFromClient = () => abortController.abort();
+  if (request.signal.aborted) abortController.abort();
+  else request.signal.addEventListener("abort", abortFromClient, { once: true });
+  const timeoutId = setTimeout(() => abortController.abort(), VOICE_ORGANIZE_TIMEOUT_MS);
+  let upstream;
+  try {
+    upstream = await fetchDeepSeekWithRetry(endpoint, {
+      method: "POST",
+      redirect: "follow",
+      signal: abortController.signal,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        model: config.model,
+        stream: false,
+        thinking: { type: "disabled" },
+        temperature: 0.1,
+        max_tokens: 1_200,
+        messages: [
+          { role: "system", content: SAFETY_SYSTEM_PROMPT },
+          { role: "system", content: VOICE_ORGANIZE_SYSTEM_PROMPT },
+          { role: "user", content: text },
+        ],
+      }),
+    }, abortController.signal);
+  } catch (error) {
+    clearTimeout(timeoutId);
+    request.signal.removeEventListener("abort", abortFromClient);
+    ctx.waitUntil(audit(env, request, auth.id, "voice.organize", "provider", "deepseek", "failure"));
+    throw new HttpError(
+      error?.name === "AbortError" ? 504 : 502,
+      error?.name === "AbortError" ? "voice_organize_timeout" : "voice_organize_network_error",
+      error?.name === "AbortError" ? "语音文字整理超时，请保留原识别文字后稍后重试。" : "暂时无法连接文字整理服务。"
+    );
+  }
+  clearTimeout(timeoutId);
+  request.signal.removeEventListener("abort", abortFromClient);
+  if (!upstream.ok) {
+    ctx.waitUntil(audit(env, request, auth.id, "voice.organize", "provider", "deepseek", "failure"));
+    const failure = providerHttpError(upstream.status);
+    console.error("voice_organize_request_rejected", {
+      providerStatus: upstream.status,
+      providerCode: failure.code,
+      model: config.model,
+    });
+    throw failure;
+  }
+  let payload;
+  try {
+    payload = await upstream.json();
+  } catch {
+    ctx.waitUntil(audit(env, request, auth.id, "voice.organize", "provider", "deepseek", "failure"));
+    throw new HttpError(502, "voice_organize_protocol_error", "文字整理服务返回了无法识别的响应。");
+  }
+  const organized = normalizeVoiceOrganizedText(payload?.choices?.[0]?.message?.content);
+  if (!organized) {
+    ctx.waitUntil(audit(env, request, auth.id, "voice.organize", "provider", "deepseek", "failure"));
+    throw new HttpError(502, "voice_organize_protocol_error", "文字整理服务没有返回文本。");
+  }
+  ctx.waitUntil(audit(env, request, auth.id, "voice.organize", "provider", "deepseek", "success"));
+  return withSecurity(json({ text: organized, provider: "deepseek" }));
+}
+
 async function synthesizeVoice(request, env, ctx) {
   const auth = await requireAuth(request, env);
   await requireCsrf(request, auth);
@@ -1137,7 +1256,7 @@ async function transcribeVoice(request, env, ctx) {
           role: "user",
           content: [{ type: "input_audio", input_audio: { data: audio } }],
         }],
-        asr_options: { language: "zh" },
+        asr_options: { language: "auto" },
         ...(streamRequested ? { stream: true } : {}),
       }),
     });
@@ -2679,6 +2798,15 @@ function validateAgentInput(body) {
     throw new HttpError(413, "agent_input_too_large", "本次对话内容过长。");
   }
   return { messages };
+}
+
+function normalizeVoiceOrganizedText(value) {
+  if (typeof value !== "string") return "";
+  return value
+    .replace(/^\s*```(?:text|plaintext)?\s*/i, "")
+    .replace(/\s*```\s*$/i, "")
+    .trim()
+    .slice(0, MAX_VOICE_ORGANIZE_TEXT);
 }
 
 function rejectUnknownFields(body, allowedFields) {

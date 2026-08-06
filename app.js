@@ -138,6 +138,22 @@ const contactEditor = {
   recordingAsrText: "",
 };
 
+const agentVoice = {
+  recording: false,
+  finalizingVoice: false,
+  voiceTimeout: null,
+  audioRecorder: null,
+  recordingStream: null,
+  voiceStatus: "",
+  voiceDraft: "",
+  liveAsrTimer: null,
+  liveAsrController: null,
+  liveAsrPromise: null,
+  lastAsrChunkIndex: 0,
+  recordingBaseText: "",
+  recordingAsrText: "",
+};
+
 const ttsState = {
   queue: [],
   playing: false,
@@ -443,6 +459,10 @@ function bindGlobalEvents() {
       toggleContactVoice();
     }
 
+    if (actionName === "agent-voice") {
+      await toggleAgentVoice();
+    }
+
     if (actionName === "contact-ai-organize") {
       await organizeContactDraft();
     }
@@ -465,6 +485,15 @@ function bindGlobalEvents() {
 
     if (event.target.matches("#story-archive-contact")) {
       storyIntake.archiveContactId = clean(event.target.value);
+    }
+  });
+
+  document.addEventListener("input", (event) => {
+    if (event.target.matches("#agent-prompt")) {
+      agentVoice.voiceDraft = clean(event.target.value).slice(0, 4_000);
+    }
+    if (event.target.matches("#contact-voice-input")) {
+      contactEditor.voiceDraft = clean(event.target.value).slice(0, 2_400);
     }
   });
 
@@ -548,6 +577,7 @@ function bindGlobalEvents() {
 
 function navigate(view) {
   if (!viewTitles[view]) view = "dashboard";
+  if (view !== "agent") stopAgentVoice({ discard: true });
   currentView = view;
   if (view !== "analysis") currentEventId = null;
   if (view !== "review") reviewEventId = null;
@@ -869,6 +899,7 @@ function renderAgent() {
 
   if (!platform.capabilities?.agent) return renderAgentAccessPending();
 
+  const speechSupported = Boolean(canRecordAudio());
   const messages = platform.agentMessages.length
     ? platform.agentMessages.map(renderAgentMessage).join("")
     : `
@@ -925,11 +956,24 @@ function renderAgent() {
               maxlength="4000"
               placeholder="不用组织得很漂亮。写下必要信息即可，请用代号，不要粘贴姓名、地址、账号或完整聊天记录。"
               required
-              ${platform.agentBusy ? "disabled" : ""}
-            ></textarea>
+              ${platform.agentBusy || agentVoice.recording || agentVoice.finalizingVoice ? "disabled" : ""}
+            >${escapeHTML(agentVoice.voiceDraft)}</textarea>
+            <div class="agent-compose-tools">
+              <button
+                class="story-voice-button agent-voice-button ${agentVoice.recording ? "is-recording" : ""} ${agentVoice.finalizingVoice ? "is-processing" : ""}"
+                type="button"
+                data-action="agent-voice"
+                aria-label="${agentVoice.recording ? "结束录音并整理文字" : agentVoice.finalizingVoice ? "正在整理语音文字" : "用语音输入 Agent 问题"}"
+                ${platform.agentBusy || agentVoice.finalizingVoice || !speechSupported ? "disabled" : ""}
+              >
+                <span class="voice-recording-visual ${agentVoice.recording ? "is-live" : agentVoice.finalizingVoice ? "is-processing" : ""}" aria-hidden="true">${agentVoice.recording ? "<i></i><i></i><i></i><i></i><i></i>" : agentVoice.finalizingVoice ? "<b></b><b></b><b></b>" : "◉"}</span>
+                ${agentVoice.recording ? "结束录音并整理" : agentVoice.finalizingVoice ? "语音整理中…" : speechSupported ? "语音输入" : "浏览器不支持语音"}
+              </button>
+              <span class="agent-voice-status" id="agent-voice-status" role="status" aria-live="polite">${escapeHTML(agentVoice.voiceStatus || "录音结束后会先由 DeepSeek 整理句读，再进入对话。")}</span>
+            </div>
             <p class="form-error" id="agent-error" role="alert" aria-live="assertive"></p>
             <div class="button-row">
-              <button class="button button--primary" type="submit" ${platform.agentBusy ? "disabled" : ""}>
+              <button class="button button--primary" type="submit" ${platform.agentBusy || agentVoice.recording || agentVoice.finalizingVoice ? "disabled" : ""}>
                 陪我理一理
               </button>
               ${
@@ -1139,6 +1183,7 @@ async function authenticatePlatform(form, mode) {
 }
 
 async function logoutPlatform() {
+  stopAgentVoice({ discard: true });
   try {
     await platformClient.logout();
   } catch (error) {
@@ -1353,6 +1398,8 @@ async function submitAgentPrompt(form, formData) {
     .slice(-12)
     .map(({ role, content }) => ({ role, content: content.slice(0, 12000) }));
 
+  agentVoice.voiceDraft = "";
+  agentVoice.voiceStatus = "";
   platform.agentMessages.push({ role: "user", content: prompt });
   platform.agentMessages.push({ role: "assistant", content: "" });
   platform.agentMessages = platform.agentMessages.slice(-14);
@@ -1545,7 +1592,7 @@ function renderStoryIntake() {
               <span class="voice-recording-visual ${storyIntake.recording ? "is-live" : storyIntake.finalizingVoice ? "is-processing" : ""}" aria-hidden="true">${storyIntake.recording ? "<i></i><i></i><i></i><i></i><i></i>" : storyIntake.finalizingVoice ? "<b></b><b></b><b></b>" : "◉"}</span>
               ${storyIntake.recording ? "结束录音" : storyIntake.finalizingVoice ? "转写中…" : speechSupported ? "开始录音" : "浏览器不支持录音"}
             </button>
-            <span class="story-shortcut">录音不会实时改写草稿 · 手动结束后统一转写 · 电脑端按 R</span>
+            <span class="story-shortcut">边说边识别 · 结束后整段校正并整理句读 · 电脑端按 R</span>
             ${storyIntake.voiceStatus ? `<span class="story-voice-status" role="status" aria-live="polite">${escapeHTML(storyIntake.voiceStatus)}</span>` : ""}
             <button class="button button--light button--small" type="submit" ${storyIntake.busy || storyIntake.recording || storyIntake.finalizingVoice ? "disabled" : ""}>发送</button>
             <button class="text-button text-button--light" type="button" data-action="story-skip" ${storyIntake.busy || storyIntake.recording || storyIntake.finalizingVoice ? "disabled" : ""}>先跳过</button>
@@ -1561,7 +1608,7 @@ function renderStoryIntake() {
           ${!canUseAgent ? '<small class="story-access-note">需要登录并同意外部 AI 处理说明后开始。</small>' : ""}
         </div>
       `}
-      <small class="story-privacy">录音期间只保存在当前设备；手动结束后才把 WAV 发送给语音识别服务。本地 FunASR 优先，失败时回退 MiMo；结果只回填草稿，你点击“发送”后才进入对话。</small>
+      <small class="story-privacy">录音期间只保存在当前设备；结束后 WAV 会发送给语音识别服务，并在进入对话前由 DeepSeek 整理句读。本地 FunASR 优先，失败时回退 MiMo；你点击“发送”后才进入对话。</small>
     </section>
   `;
 }
@@ -1930,11 +1977,17 @@ async function finalizeStoryRecording(blob, {
         updateStoryVoiceStatus("正在校正整段语音…");
       },
     });
-    transcript = appendVoiceTranscript(preview, recognized).slice(0, 2400);
+    const organized = await organizeRecognizedVoice(recognized, {
+      maxLength: 2_400,
+      onStatus: updateStoryVoiceStatus,
+    });
+    transcript = appendVoiceTranscript(preview, organized.text).slice(0, 2400);
     if (transcript && storyIntake.active) {
       storyIntake.draftInput = transcript;
       storyIntake.recordingDurationMs = durationMs;
-      storyIntake.voiceStatus = "转写完成 · 请确认文字后点击发送";
+      storyIntake.voiceStatus = organized.organized
+        ? "句读整理完成 · 请确认文字后点击发送"
+        : "已保留识别文字 · 请确认后点击发送";
       renderStoryViewPreservingScroll();
       requestAnimationFrame(() => {
         const input = document.querySelector("#story-answer");
@@ -1960,6 +2013,22 @@ async function finalizeStoryRecording(blob, {
     storyIntake.motionSuppressed = false;
     if (!storyIntake.draftInput) storyIntake.voiceStatus = "";
     renderStoryViewPreservingScroll();
+  }
+}
+
+async function organizeRecognizedVoice(text, { maxLength = 2_400, onStatus } = {}) {
+  const raw = clean(text).slice(0, maxLength);
+  if (!raw) return { text: "", organized: false };
+  const canUseAgent = Boolean(
+    platform.user && platform.externalAiConsent?.current && platform.capabilities?.agent
+  );
+  if (!canUseAgent) return { text: raw, organized: false };
+  onStatus?.("正在用 DeepSeek 整理句读与模糊语义…");
+  try {
+    const organized = clean(await platformClient.organizeVoiceText(raw)).slice(0, maxLength);
+    return { text: organized || raw, organized: Boolean(organized) };
+  } catch {
+    return { text: raw, organized: false };
   }
 }
 
@@ -2033,7 +2102,7 @@ async function refreshStoryLiveAsr() {
           streamed = partial;
           const current = appendVoiceTranscript(storyIntake.recordingAsrText, streamed);
           updateStoryLiveDraft(appendVoiceTranscript(storyIntake.recordingBaseText, current));
-          updateStoryVoiceStatus("实时识别中 · 正在整理当前片段…");
+          updateStoryVoiceStatus("实时识别中 · 正在校正当前片段…");
         },
       });
     } catch (error) {
@@ -2583,6 +2652,7 @@ async function startContactAudioRecording() {
   contactEditor.audioRecorder = recorder;
   contactEditor.recordingStream = stream;
   contactEditor.recordingBaseText = clean(input?.value || contactEditor.voiceDraft).slice(0, 2400);
+  contactEditor.voiceDraft = contactEditor.recordingBaseText;
   contactEditor.recordingAsrText = "";
   contactEditor.finalizingVoice = false;
   contactEditor.recording = true;
@@ -2605,9 +2675,8 @@ function stopContactVoice({ autoOrganize = false, discard = false } = {}) {
     const recorder = contactEditor.audioRecorder;
     const stream = contactEditor.recordingStream;
     const shouldOrganize = !discard && contactEditor.voiceAutoOrganize;
-    const preview = clean(contactEditor.voiceDraft).slice(0, 2400);
-    const stableText = contactEditor.recordingAsrText;
-    const tail = recorder.snapshot(contactEditor.lastAsrChunkIndex || 0);
+    const preview = clean(contactEditor.recordingBaseText).slice(0, 2400);
+    const livePreview = clean(contactEditor.voiceDraft).slice(0, 2400);
     const liveAsrPromise = contactEditor.liveAsrPromise;
     stopContactLiveAsr();
     contactEditor.audioRecorder = null;
@@ -2628,9 +2697,8 @@ function stopContactVoice({ autoOrganize = false, discard = false } = {}) {
     }
     void finalizeContactRecording(blob, {
       preview,
+      livePreview,
       shouldOrganize,
-      tail,
-      stableText,
       liveAsrPromise,
     });
     return;
@@ -2642,38 +2710,65 @@ function stopContactVoice({ autoOrganize = false, discard = false } = {}) {
 
 async function finalizeContactRecording(blob, {
   preview,
+  livePreview = "",
   shouldOrganize,
-  tail,
-  stableText = "",
   liveAsrPromise = null,
 }) {
   let transcript = preview;
   try {
     await waitForLiveAsrRequest(liveAsrPromise);
-    // Append the newly recognized tail to whatever is already in the input.
-    if (tail?.size > 44) {
-      const corrected = await transcribeRecordedAudio(tail, { timeoutMs: 45_000 });
-      const newTail = extractNewTranscript(stableText, corrected);
-      transcript = appendVoiceTranscript(preview || contactEditor.voiceDraft, newTail).slice(0, 2400);
-    } else if (stableText) {
-      transcript = appendVoiceTranscript(preview || contactEditor.voiceDraft, "").slice(0, 2400) || stableText;
-    } else if (blob.size) {
-      const corrected = await transcribeRecordedAudio(blob, { timeoutMs: 45_000 });
-      const newTail = extractNewTranscript(stableText, corrected);
-      transcript = appendVoiceTranscript(preview || contactEditor.voiceDraft, newTail).slice(0, 2400);
+    let recognized = "";
+    if (blob?.size) {
+      try {
+        recognized = await streamTranscribeRecordedAudio(blob, {
+          timeoutMs: 90_000,
+          onText(partial) {
+            const live = appendVoiceTranscript(preview, partial).slice(0, 2400);
+            contactEditor.voiceDraft = live;
+            const input = document.querySelector("#contact-voice-input");
+            if (input) input.value = live;
+            contactEditor.voiceStatus = "正在校正整段语音…";
+            updateContactVoiceButton();
+          },
+        });
+      } catch (error) {
+        if (error?.code === "asr_stream_failed" || error?.code === "asr_stream_incomplete" || error?.code === "asr_timeout") {
+          recognized = await transcribeRecordedAudio(blob, { timeoutMs: 45_000 });
+        } else {
+          throw error;
+        }
+      }
+    }
+    if (recognized) {
+      const organized = await organizeRecognizedVoice(recognized, {
+        maxLength: 2_400,
+        onStatus(message) {
+          contactEditor.voiceStatus = message;
+          updateContactVoiceButton();
+        },
+      });
+      transcript = appendVoiceTranscript(preview, organized.text).slice(0, 2400);
+      contactEditor.voiceStatus = organized.organized
+        ? "句读整理完成 · 正在整理档案"
+        : "已保留识别文字 · 正在整理档案";
+    } else {
+      transcript = livePreview || preview;
     }
     if (transcript && editingContactId) {
       contactEditor.voiceDraft = transcript;
-      contactEditor.voiceStatus = shouldOrganize ? "语音校正完成 · 正在整理档案" : "语音校正完成";
+      if (!shouldOrganize) contactEditor.voiceStatus = "语音校正完成";
       const input = document.querySelector("#contact-voice-input");
       if (input) input.value = transcript;
       updateContactVoiceButton();
       if (shouldOrganize) await organizeContactDraft();
     }
   } catch (error) {
-    if (preview && editingContactId) {
-      contactEditor.voiceDraft = preview;
-      showToast("语音校正超时，已保留实时识别文字", 3800);
+    const fallback = livePreview || preview;
+    if (fallback && editingContactId) {
+      contactEditor.voiceDraft = fallback;
+      const input = document.querySelector("#contact-voice-input");
+      if (input) input.value = fallback;
+      showToast("语音校正未完成，已保留实时识别文字", 3800);
       if (shouldOrganize) await organizeContactDraft();
     } else if (editingContactId) {
       showToast(error instanceof PlatformError ? error.message : "语音识别未完成，请改用文字输入", 4200);
@@ -2685,6 +2780,292 @@ async function finalizeContactRecording(blob, {
     contactEditor.voiceStatus = "";
     updateContactVoiceButton();
   }
+}
+
+async function toggleAgentVoice() {
+  if (!platform.user || platform.agentBusy) return;
+  if (agentVoice.recording) {
+    stopAgentVoice();
+    return;
+  }
+  if (await startAgentAudioRecording()) return;
+  showToast("当前浏览器无法录音，请改用文字输入", 3600);
+}
+
+async function startAgentAudioRecording() {
+  if (!canRecordAudio()) return false;
+  if (!(await checkMicrophonePermission())) return true;
+  const input = document.querySelector("#agent-prompt");
+  agentVoice.voiceDraft = clean(input?.value || agentVoice.voiceDraft).slice(0, 4_000);
+  agentVoice.recordingBaseText = agentVoice.voiceDraft;
+  agentVoice.recordingAsrText = "";
+  agentVoice.lastAsrChunkIndex = 0;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        sampleRate: 16_000,
+        sampleSize: 16,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+  } catch {
+    showToast("无法取得麦克风权限，请允许录音后重试", 3600);
+    return true;
+  }
+  let recorder;
+  try {
+    recorder = await createWavRecorder(stream);
+  } catch {
+    stream.getTracks().forEach((track) => track.stop());
+    showToast("当前浏览器无法建立 WAV 录音，请改用文字输入", 4200);
+    return true;
+  }
+  agentVoice.audioRecorder = recorder;
+  agentVoice.recordingStream = stream;
+  agentVoice.finalizingVoice = false;
+  agentVoice.recording = true;
+  agentVoice.voiceStatus = "实时识别中 · 结束后校正并整理句读";
+  updateAgentVoiceButton();
+  startAgentLiveAsr();
+  return true;
+}
+
+function stopAgentVoice({ discard = false } = {}) {
+  window.clearInterval(agentVoice.voiceTimeout);
+  agentVoice.voiceTimeout = null;
+  if (discard) agentVoice.generation += 1;
+  if (agentVoice.audioRecorder) {
+    const recorder = agentVoice.audioRecorder;
+    const stream = agentVoice.recordingStream;
+    const preview = clean(agentVoice.recordingBaseText).slice(0, 4_000);
+    const livePreview = clean(agentVoice.voiceDraft).slice(0, 4_000);
+    const liveAsrPromise = agentVoice.liveAsrPromise;
+    const generation = ++agentVoice.generation;
+    stopAgentLiveAsr();
+    agentVoice.audioRecorder = null;
+    agentVoice.recordingStream = null;
+    agentVoice.recording = false;
+    agentVoice.finalizingVoice = true;
+    agentVoice.voiceStatus = "正在校正整段语音…";
+    let blob;
+    try {
+      blob = recorder.stop();
+    } catch (error) {
+      stream?.getTracks().forEach((track) => track.stop());
+      agentVoice.finalizingVoice = false;
+      agentVoice.voiceStatus = livePreview ? "已保留实时识别文字" : "录音没有成功结束";
+      updateAgentVoiceButton();
+      return;
+    }
+    stream?.getTracks().forEach((track) => track.stop());
+    updateAgentVoiceButton();
+    if (discard) {
+      agentVoice.recordingBaseText = "";
+      agentVoice.recordingAsrText = "";
+      agentVoice.finalizingVoice = false;
+      agentVoice.voiceDraft = "";
+      agentVoice.voiceStatus = "";
+      updateAgentVoiceButton();
+      return;
+    }
+    void finalizeAgentRecording(blob, {
+      preview,
+      livePreview,
+      liveAsrPromise,
+      generation,
+    });
+    return;
+  }
+  agentVoice.recording = false;
+  if (discard) {
+    agentVoice.voiceDraft = "";
+    agentVoice.voiceStatus = "";
+    agentVoice.recordingBaseText = "";
+    agentVoice.recordingAsrText = "";
+    agentVoice.finalizingVoice = false;
+  }
+  updateAgentVoiceButton();
+}
+
+async function finalizeAgentRecording(blob, {
+  preview,
+  livePreview = "",
+  liveAsrPromise = null,
+  generation,
+}) {
+  let transcript = livePreview || preview;
+  try {
+    await waitForLiveAsrRequest(liveAsrPromise);
+    if (agentVoice.generation !== generation) return;
+    if (!blob?.size) throw new Error("audio_empty");
+    let recognized = "";
+    try {
+      recognized = await streamTranscribeRecordedAudio(blob, {
+        timeoutMs: 90_000,
+        onText(partial) {
+          if (agentVoice.generation !== generation) return;
+          updateAgentVoiceDraft(appendVoiceTranscript(preview, partial));
+          updateAgentVoiceStatus("正在校正整段语音…");
+        },
+      });
+    } catch (error) {
+      if (error?.code === "asr_stream_failed" || error?.code === "asr_stream_incomplete" || error?.code === "asr_timeout") {
+        recognized = await transcribeRecordedAudio(blob, { timeoutMs: 45_000 });
+      } else {
+        throw error;
+      }
+    }
+    const organized = await organizeRecognizedVoice(recognized, {
+      maxLength: 4_000,
+      onStatus: updateAgentVoiceStatus,
+    });
+    if (agentVoice.generation !== generation) return;
+    transcript = appendVoiceTranscript(preview, organized.text).slice(0, 4_000);
+    if (transcript) {
+      updateAgentVoiceDraft(transcript);
+      updateAgentVoiceStatus(
+        organized.organized
+          ? "句读整理完成 · 确认文字后再发送"
+          : "已保留识别文字 · 确认后再发送"
+      );
+      requestAnimationFrame(() => {
+        const input = document.querySelector("#agent-prompt");
+        input?.focus();
+        input?.setSelectionRange(input.value.length, input.value.length);
+      });
+    }
+  } catch (error) {
+    const fallback = livePreview || preview;
+    if (fallback && agentVoice.generation === generation) {
+      updateAgentVoiceDraft(fallback);
+      updateAgentVoiceStatus("语音校正未完成 · 已保留实时识别文字");
+    } else if (agentVoice.generation === generation) {
+      updateAgentVoiceStatus(error instanceof PlatformError ? error.message : "语音识别未完成，请改用文字输入");
+    }
+  } finally {
+    if (agentVoice.generation === generation) {
+      agentVoice.recordingBaseText = "";
+      agentVoice.recordingAsrText = "";
+      agentVoice.finalizingVoice = false;
+      updateAgentVoiceButton();
+    }
+  }
+}
+
+function updateAgentVoiceStatus(message) {
+  agentVoice.voiceStatus = message;
+  const status = document.querySelector("#agent-voice-status");
+  if (status) status.textContent = message;
+}
+
+function updateAgentVoiceDraft(text) {
+  const live = clean(text).slice(0, 4_000);
+  if (!live) return;
+  agentVoice.voiceDraft = live;
+  const input = document.querySelector("#agent-prompt");
+  if (input && input.value !== live) input.value = live;
+}
+
+function startAgentLiveAsr() {
+  stopAgentLiveAsr();
+  agentVoice.liveAsrTimer = window.setInterval(() => {
+    const pending = refreshAgentLiveAsr();
+    agentVoice.liveAsrPromise = pending;
+    void pending.then(
+      () => {
+        if (agentVoice.liveAsrPromise === pending) agentVoice.liveAsrPromise = null;
+      },
+      () => {
+        if (agentVoice.liveAsrPromise === pending) agentVoice.liveAsrPromise = null;
+      }
+    );
+  }, 2_200);
+}
+
+function stopAgentLiveAsr() {
+  window.clearInterval(agentVoice.liveAsrTimer);
+  agentVoice.liveAsrTimer = null;
+  agentVoice.liveAsrController?.abort();
+  agentVoice.liveAsrController = null;
+  agentVoice.lastAsrChunkIndex = 0;
+}
+
+async function refreshAgentLiveAsr() {
+  const recorder = agentVoice.audioRecorder;
+  if (!agentVoice.recording || !recorder || agentVoice.liveAsrController) return;
+  if (recorder.durationMs() < 1_200) return;
+  const fromIndex = agentVoice.lastAsrChunkIndex || 0;
+  const endIndex = recorder.chunkCount();
+  const snapshot = recorder.snapshot(fromIndex);
+  if (snapshot.size <= 44) return;
+  const controller = new AbortController();
+  agentVoice.liveAsrController = controller;
+  try {
+    let corrected = "";
+    let streamed = "";
+    try {
+      corrected = await streamTranscribeRecordedAudio(snapshot, {
+        timeoutMs: 12_000,
+        signal: controller.signal,
+        onText(partial) {
+          if (!agentVoice.recording || agentVoice.liveAsrController !== controller) return;
+          streamed = partial;
+          const current = appendVoiceTranscript(agentVoice.recordingAsrText, streamed);
+          updateAgentVoiceDraft(appendVoiceTranscript(agentVoice.recordingBaseText, current));
+          updateAgentVoiceStatus("实时识别中 · 正在校正当前片段…");
+        },
+      });
+    } catch (error) {
+      if (error?.code === "asr_stream_failed" || error?.code === "asr_stream_incomplete") {
+        corrected = await transcribeRecordedAudio(snapshot, {
+          timeoutMs: 18_000,
+          signal: controller.signal,
+        });
+      } else {
+        throw error;
+      }
+    }
+    corrected = clean(corrected).slice(0, 4_000);
+    if (!corrected || !agentVoice.recording || agentVoice.liveAsrController !== controller) return;
+    agentVoice.lastAsrChunkIndex = endIndex;
+    const newTail = extractNewTranscript(agentVoice.recordingAsrText, corrected);
+    if (newTail) {
+      agentVoice.recordingAsrText = appendVoiceTranscript(
+        agentVoice.recordingAsrText,
+        newTail
+      ).slice(0, 4_000);
+      updateAgentVoiceDraft(
+        appendVoiceTranscript(agentVoice.recordingBaseText, agentVoice.recordingAsrText)
+      );
+    }
+    updateAgentVoiceStatus("已实时识别 · 继续说即可");
+    window.setTimeout(() => {
+      if (agentVoice.recording) updateAgentVoiceStatus("实时识别中 · 结束后校正并整理句读");
+    }, 1_200);
+  } catch {
+    // The final full-WAV pass still runs on stop.
+  } finally {
+    if (agentVoice.liveAsrController === controller) agentVoice.liveAsrController = null;
+  }
+}
+
+function updateAgentVoiceButton() {
+  const button = document.querySelector('[data-action="agent-voice"]');
+  if (!button) return;
+  button.classList.toggle("is-recording", agentVoice.recording);
+  button.classList.toggle("is-processing", agentVoice.finalizingVoice);
+  button.disabled = platform.agentBusy || agentVoice.finalizingVoice || !canRecordAudio();
+  button.innerHTML = `<span class="voice-recording-visual ${agentVoice.recording ? "is-live" : agentVoice.finalizingVoice ? "is-processing" : ""}" aria-hidden="true">${agentVoice.recording ? "<i></i><i></i><i></i><i></i><i></i>" : agentVoice.finalizingVoice ? "<b></b><b></b><b></b>" : "◉"}</span>${agentVoice.recording ? "结束录音并整理" : agentVoice.finalizingVoice ? "语音整理中…" : "语音输入"}`;
+  const input = document.querySelector("#agent-prompt");
+  if (input) input.disabled = platform.agentBusy || agentVoice.recording || agentVoice.finalizingVoice;
+  const submit = document.querySelector('#agent-form button[type="submit"]');
+  if (submit) submit.disabled = platform.agentBusy || agentVoice.recording || agentVoice.finalizingVoice;
+  const status = document.querySelector("#agent-voice-status");
+  if (status && agentVoice.voiceStatus) status.textContent = agentVoice.voiceStatus;
 }
 
 function startContactLiveAsr() {

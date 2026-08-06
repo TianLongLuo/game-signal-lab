@@ -127,3 +127,24 @@ test("streaming ASR requests short audio chunks and emits cumulative text", asyn
   assert.equal(result, "你好，继续。");
   assert.deepEqual(partials, ["你好", "你好，继续。"]);
 });
+
+test("voice organizer sends the final transcript to the same-origin DeepSeek route", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, "/api/voice/organize");
+    assert.equal(options.method, "POST");
+    assert.equal(options.headers.Accept, "application/json");
+    assert.deepEqual(JSON.parse(options.body), { text: "我想说你好然后停一下" });
+    return new Response(JSON.stringify({ text: "我想说：你好，然后停一下。" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const client = new PlatformClient();
+  client.setCsrfToken("csrf-test");
+  assert.equal(
+    await client.organizeVoiceText("我想说你好然后停一下"),
+    "我想说：你好，然后停一下。"
+  );
+});

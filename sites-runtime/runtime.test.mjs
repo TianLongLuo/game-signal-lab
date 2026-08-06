@@ -836,6 +836,21 @@ test("Agent requires current explicit consent and filters provider SSE", async (
     (await noConsent.json()).error.code,
     "external_ai_consent_required"
   );
+  const noVoiceConsent = await api(
+    harness.env,
+    harness.ctx,
+    "/api/voice/organize",
+    admin,
+    {
+      method: "POST",
+      body: { text: "VOICE_ORGANIZE_TEST" },
+    }
+  );
+  assert.equal(noVoiceConsent.status, 403);
+  assert.equal(
+    (await noVoiceConsent.json()).error.code,
+    "external_ai_consent_required"
+  );
   const absentConsent = await harness.DB.prepare(
     "SELECT 1 AS found FROM external_ai_consents WHERE user_id = ?"
   )
@@ -876,6 +891,17 @@ test("Agent requires current explicit consent and filters provider SSE", async (
     if (transientAttempts === 1) throw new TypeError("transient network failure");
     assert.equal(String(url), "https://api.deepseek.com/chat/completions");
     const upstreamBody = JSON.parse(options.body);
+    if (upstreamBody.stream === false) {
+      assert.equal(upstreamBody.temperature, 0.1);
+      assert.deepEqual(upstreamBody.thinking, { type: "disabled" });
+      assert.equal(upstreamBody.messages.at(-1).content, "VOICE_ORGANIZE_TEST");
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { role: "assistant", content: "我想说：你好，然后停一下。" } }],
+        }),
+        { headers: { "Content-Type": "application/json" } }
+      );
+    }
     assert.equal(upstreamBody.stream, true);
     assert.match(upstreamBody.messages[0].content, /拒绝/);
     assert.match(upstreamBody.messages[0].content, /可以分析当前登录用户/);
@@ -909,6 +935,23 @@ test("Agent requires current explicit consent and filters provider SSE", async (
     assert.match(text, /\[DONE\]/);
     assert.doesNotMatch(text, /reasoning|provider-id|usage|prompt_tokens|index/);
     assert.equal(transientAttempts, 2);
+
+    const organizedVoice = await api(
+      harness.env,
+      harness.ctx,
+      "/api/voice/organize",
+      admin,
+      {
+        method: "POST",
+        body: { text: "VOICE_ORGANIZE_TEST" },
+      }
+    );
+    assert.equal(organizedVoice.status, 200);
+    assert.deepEqual(await organizedVoice.json(), {
+      text: "我想说：你好，然后停一下。",
+      provider: "deepseek",
+    });
+    assert.equal(transientAttempts, 3);
 
     const providerFailures = [
       [401, 502, "provider_auth_failed"],
