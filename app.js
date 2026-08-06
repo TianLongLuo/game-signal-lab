@@ -1857,7 +1857,7 @@ function stopStoryVoice() {
     storyIntake.audioRecorder = null;
     storyIntake.recording = false;
     storyIntake.finalizingVoice = true;
-    storyIntake.voiceStatus = "正在上传 MP3，并进行本地优先转写…";
+    storyIntake.voiceStatus = "正在上传录音…";
     renderStoryViewPreservingScroll();
     void recorder.stop()
       .then(({ blob, durationMs }) => finalizeStoryRecording(blob, { preview, durationMs }))
@@ -1930,14 +1930,12 @@ function createMp3Recorder({ onProcess } = {}) {
   if (typeof Recorder !== "function") {
     return Promise.reject(new Error("mp3_recorder_unavailable"));
   }
-  const encodedChunks = [];
+  let lastBlob = null;
+  let lastDuration = 0;
   const recorder = Recorder({
-    type: "mp3",
+    type: "wav",
     sampleRate: 16_000,
-    bitRate: 32,
-    takeoffEncodeChunk(chunkBytes) {
-      if (chunkBytes?.byteLength) encodedChunks.push(new Uint8Array(chunkBytes));
-    },
+    bitRate: 16,
     onProcess(_buffers, powerLevel, bufferDuration) {
       onProcess?.(powerLevel, bufferDuration);
     },
@@ -1950,17 +1948,28 @@ function createMp3Recorder({ onProcess } = {}) {
         stop() {
           if (stopped) return Promise.reject(new Error("recording_already_stopped"));
           stopped = true;
-          try { recorder.close(); } catch {}
-          // Build blob from pre-encoded chunks — bypasses recorder.stop() callback
-          const blob = new Blob(encodedChunks, { type: "audio/mpeg" });
-          const durationMs = storyIntake.recordingDurationMs || 0;
-          if (!blob.size && durationMs < 500) {
-            return Promise.reject(new Error("录音时长过短"));
-          }
-          if (!blob.size) {
-            return Promise.reject(new Error("mp3_encode_failed"));
-          }
-          return Promise.resolve({ blob, durationMs });
+          return new Promise((stopResolve, stopReject) => {
+            const timeout = setTimeout(() => {
+              if (lastBlob?.size) {
+                recorder.close();
+                stopResolve({ blob: lastBlob, durationMs: lastDuration });
+              } else {
+                recorder.close();
+                stopReject(new Error("录音超时，请重试"));
+              }
+            }, 3000);
+            recorder.stop((blob, duration) => {
+              clearTimeout(timeout);
+              recorder.close();
+              lastBlob = blob;
+              lastDuration = Number(duration) || 0;
+              stopResolve({ blob, durationMs: lastDuration });
+            }, (msg) => {
+              clearTimeout(timeout);
+              recorder.close();
+              stopReject(new Error(msg || "录音失败"));
+            });
+          });
         },
       });
     }, (message, userDenied) => {
