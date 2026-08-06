@@ -49,6 +49,10 @@ const MIMO_ASR_TIMEOUT_MS = 60_000;
 const FUNASR_DEFAULT_MODEL = "sensevoice";
 const FUNASR_MODELS = new Set(["sensevoice", "paraformer", "paraformer-en", "fun-asr-nano"]);
 const FUNASR_DEFAULT_TIMEOUT_MS = 30_000;
+const FUNASR_DEFAULT_WS_MODE = "2pass";
+const FUNASR_WS_MODES = new Set(["online", "offline", "2pass"]);
+const FUNASR_DEFAULT_WS_CHUNK_SIZE = Object.freeze([5, 10, 5]);
+const FUNASR_DEFAULT_WS_CHUNK_INTERVAL = 10;
 const MAX_ASR_BODY_BYTES = 12 * 1024 * 1024;
 const MAX_ASR_AUDIO_BYTES = 8 * 1024 * 1024;
 const MEMBERSHIP_STATUSES = new Set(["active", "suspended", "expired"]);
@@ -3359,8 +3363,19 @@ function parseBoolean(value, fallback) {
 }
 
 export function createFunAsrConfig(env = {}) {
-  const configuredBaseUrl = String(env.FUNASR_BASE_URL ?? "").trim();
+  const configuredWsUrl = String(env.FUNASR_WS_URL ?? "").trim();
+  const configuredBaseUrl = configuredWsUrl || String(env.FUNASR_BASE_URL ?? "").trim();
   if (!configuredBaseUrl) return null;
+  const explicitTransport = String(
+    env.FUNASR_TRANSPORT ?? (configuredWsUrl ? "websocket" : "")
+  ).trim().toLowerCase();
+  const parsedUrl = new URL(configuredBaseUrl);
+  const transport = explicitTransport || (
+    parsedUrl.protocol === "ws:" || parsedUrl.protocol === "wss:" ? "websocket" : "http"
+  );
+  if (!["http", "websocket"].includes(transport)) {
+    throw new Error("FUNASR_TRANSPORT must be http or websocket");
+  }
   const model = String(env.FUNASR_MODEL ?? FUNASR_DEFAULT_MODEL).trim();
   if (!FUNASR_MODELS.has(model)) {
     throw new Error(`FUNASR_MODEL must be one of: ${[...FUNASR_MODELS].join(", ")}`);
@@ -3375,12 +3390,30 @@ export function createFunAsrConfig(env = {}) {
   if (!Number.isSafeInteger(maxConcurrency) || maxConcurrency < 1 || maxConcurrency > 4) {
     throw new Error("FUNASR_MAX_CONCURRENCY must be an integer between 1 and 4");
   }
+  const wsMode = String(env.FUNASR_WS_MODE ?? FUNASR_DEFAULT_WS_MODE).trim().toLowerCase();
+  if (!FUNASR_WS_MODES.has(wsMode)) {
+    throw new Error(`FUNASR_WS_MODE must be one of: ${[...FUNASR_WS_MODES].join(", ")}`);
+  }
+  const wsChunkSize = parseFunAsrWsChunkSize(env.FUNASR_WS_CHUNK_SIZE);
+  const wsChunkIntervalValue = String(env.FUNASR_WS_CHUNK_INTERVAL ?? "").trim();
+  const wsChunkInterval = wsChunkIntervalValue
+    ? Number(wsChunkIntervalValue)
+    : FUNASR_DEFAULT_WS_CHUNK_INTERVAL;
+  if (!Number.isSafeInteger(wsChunkInterval) || wsChunkInterval < 1 || wsChunkInterval > 100) {
+    throw new Error("FUNASR_WS_CHUNK_INTERVAL must be an integer between 1 and 100");
+  }
   return {
-    baseUrl: normalizeFunAsrBaseUrl(configuredBaseUrl),
+    transport,
+    baseUrl: transport === "websocket"
+      ? normalizeFunAsrWebSocketUrl(configuredBaseUrl)
+      : normalizeFunAsrBaseUrl(configuredBaseUrl),
     model,
     timeoutMs,
     maxConcurrency,
     apiKey: String(env.FUNASR_API_KEY ?? "").trim(),
+    wsMode,
+    wsChunkSize,
+    wsChunkInterval,
   };
 }
 
@@ -3401,7 +3434,48 @@ export function normalizeFunAsrBaseUrl(value) {
   return url;
 }
 
-export async function transcribeWithFunAsr({
+export function normalizeFunAsrWebSocketUrl(value) {
+  const url = new URL(value);
+  if (
+    !["ws:", "wss:"].includes(url.protocol) ||
+    !["127.0.0.1", "localhost", "::1"].includes(url.hostname) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    !["", "/"].includes(url.pathname)
+  ) {
+    throw new Error("FUNASR_WS_URL must be a loopback WebSocket URL");
+  }
+  url.pathname = "/";
+  return url;
+}
+
+function parseFunAsrWsChunkSize(value) {
+  if (value == null || String(value).trim() === "") {
+    return [...FUNASR_DEFAULT_WS_CHUNK_SIZE];
+  }
+  const values = String(value).split(",").map((item) => Number(item.trim()));
+  if (
+    values.length !== 3 ||
+    values.some((item) => !Number.isSafeInteger(item) || item < 1 || item > 60)
+  ) {
+    throw new Error("FUNASR_WS_CHUNK_SIZE must contain three integers between 1 and 60");
+  }
+  return values;
+}
+
+export async function transcribeWithFunAsr(options) {
+  if (
+    options?.transport === "websocket" ||
+    ["ws:", "wss:"].includes(options?.baseUrl?.protocol)
+  ) {
+    return transcribeWithFunAsrWebSocket(options);
+  }
+  return transcribeWithFunAsrHttp(options);
+}
+
+async function transcribeWithFunAsrHttp({
   baseUrl,
   model,
   timeoutMs,
@@ -3469,9 +3543,253 @@ export async function transcribeWithFunAsr({
   return transcript;
 }
 
+async function transcribeWithFunAsrWebSocket({
+  baseUrl,
+  timeoutMs,
+  wsMode = FUNASR_DEFAULT_WS_MODE,
+  wsChunkSize = FUNASR_DEFAULT_WS_CHUNK_SIZE,
+  wsChunkInterval = FUNASR_DEFAULT_WS_CHUNK_INTERVAL,
+  bytes,
+  mimeType,
+  webSocketImpl = globalThis.WebSocket,
+}) {
+  if (mimeType !== "audio/wav") {
+    const error = new Error("FunASR WebSocket runtime requires a WAV recording");
+    error.code = "unsupported_audio_format";
+    throw error;
+  }
+  const { pcm, sampleRate } = parseFunAsrWav(bytes);
+  if (typeof webSocketImpl !== "function") {
+    const error = new Error("WebSocket is unavailable in the Node runtime");
+    error.code = "websocket_unavailable";
+    throw error;
+  }
+
+  const chunkSize = Array.isArray(wsChunkSize) && wsChunkSize.length === 3
+    ? wsChunkSize
+    : FUNASR_DEFAULT_WS_CHUNK_SIZE;
+  const frameDurationMs = (60 * chunkSize[1]) / wsChunkInterval;
+  const frameBytes = Math.max(320, Math.floor((sampleRate * 2 * frameDurationMs) / 1000));
+
+  return new Promise((resolve, reject) => {
+    let socket;
+    let settled = false;
+    let finalText = "";
+    let onlineText = "";
+    const timeout = setTimeout(() => {
+      const error = new Error("FunASR WebSocket timeout");
+      error.code = "timeout";
+      finish(reject, error);
+    }, timeoutMs ?? FUNASR_DEFAULT_TIMEOUT_MS);
+    timeout.unref?.();
+
+    const cleanupSocket = () => {
+      clearTimeout(timeout);
+      if (!socket) return;
+      socket.removeEventListener?.("open", handleOpen);
+      socket.removeEventListener?.("message", handleMessage);
+      socket.removeEventListener?.("error", handleError);
+      socket.removeEventListener?.("close", handleClose);
+      try {
+        if (socket.readyState === 0 || socket.readyState === 1) socket.close();
+      } catch {
+        // The runtime may already have closed the socket.
+      }
+    };
+
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      cleanupSocket();
+      callback(value);
+    };
+
+    const fail = (message, code = "provider_error", cause = null) => {
+      const error = message instanceof Error ? message : new Error(String(message));
+      error.code = code;
+      if (cause) error.cause = cause;
+      finish(reject, error);
+    };
+
+    const succeed = () => {
+      const transcript = (finalText || onlineText).trim();
+      if (!transcript) {
+        const error = new Error("FunASR WebSocket returned no transcript");
+        error.code = "missing_transcript";
+        finish(reject, error);
+        return;
+      }
+      finish(resolve, transcript);
+    };
+
+    const handleMessage = async (event) => {
+      if (settled) return;
+      try {
+        let raw = event?.data;
+        if (typeof raw !== "string") {
+          if (typeof Blob === "function" && raw instanceof Blob) {
+            raw = await raw.text();
+          } else if (raw instanceof ArrayBuffer) {
+            raw = Buffer.from(raw).toString("utf8");
+          } else if (ArrayBuffer.isView(raw)) {
+            raw = Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength).toString("utf8");
+          }
+        }
+        if (typeof raw !== "string") {
+          fail("FunASR WebSocket returned a non-text message", "protocol_error");
+          return;
+        }
+        const payload = JSON.parse(raw);
+        if (payload?.error) {
+          fail(payload.error, "provider_error");
+          return;
+        }
+        const text = typeof payload?.text === "string" ? payload.text.trim() : "";
+        const mode = String(payload?.mode ?? "");
+        if (text) {
+          if (mode.includes("offline") || mode === "offline") {
+            finalText = appendFunAsrText(finalText, text);
+          } else {
+            onlineText = mergeFunAsrOnlineText(onlineText, text);
+          }
+        }
+        if (payload?.is_end) {
+          if (payload.is_final === false) {
+            fail(payload.error || "FunASR WebSocket did not finalize the recording", "provider_error");
+          } else {
+            succeed();
+          }
+        }
+      } catch (error) {
+        fail("FunASR WebSocket returned invalid JSON", "protocol_error", error);
+      }
+    };
+
+    const handleError = (event) => {
+      fail("FunASR WebSocket connection failed", "network_error", event?.error || event);
+    };
+
+    const handleClose = () => {
+      if (!settled) fail("FunASR WebSocket closed before final acknowledgement", "protocol_error");
+    };
+
+    const handleOpen = async () => {
+      try {
+        socket.send(JSON.stringify({
+          mode: wsMode,
+          chunk_size: chunkSize,
+          chunk_interval: wsChunkInterval,
+          encoder_chunk_look_back: 4,
+          decoder_chunk_look_back: 0,
+          audio_fs: sampleRate,
+          wav_name: "game-signal-lab",
+          is_speaking: true,
+          itn: true,
+        }));
+        for (let offset = 0; offset < pcm.length; offset += frameBytes) {
+          if (settled || socket.readyState !== 1) return;
+          socket.send(pcm.subarray(offset, Math.min(offset + frameBytes, pcm.length)));
+          if (socket.bufferedAmount > 1_048_576) {
+            await new Promise((resolveDelay) => setTimeout(resolveDelay, 5));
+          } else {
+            await new Promise((resolveImmediate) => setImmediate(resolveImmediate));
+          }
+        }
+        if (!settled && socket.readyState === 1) {
+          socket.send(JSON.stringify({ is_speaking: false, is_end: true }));
+        }
+      } catch (error) {
+        fail("FunASR WebSocket send failed", "network_error", error);
+      }
+    };
+
+    try {
+      socket = new webSocketImpl(baseUrl.href, ["binary"]);
+      socket.addEventListener("open", handleOpen);
+      socket.addEventListener("message", handleMessage);
+      socket.addEventListener("error", handleError);
+      socket.addEventListener("close", handleClose);
+    } catch (error) {
+      fail("FunASR WebSocket connection failed", "network_error", error);
+    }
+  });
+}
+
+function parseFunAsrWav(bytes) {
+  const input = Buffer.from(bytes ?? []);
+  const invalid = (message) => {
+    const error = new Error(message);
+    error.code = "unsupported_audio_format";
+    throw error;
+  };
+  if (input.length < 44 || input.toString("ascii", 0, 4) !== "RIFF" || input.toString("ascii", 8, 12) !== "WAVE") {
+    invalid("FunASR WebSocket runtime requires a RIFF/WAVE recording");
+  }
+
+  let format = null;
+  let dataStart = -1;
+  let dataEnd = -1;
+  let offset = 12;
+  while (offset + 8 <= input.length) {
+    const chunkId = input.toString("ascii", offset, offset + 4);
+    const chunkSize = input.readUInt32LE(offset + 4);
+    const chunkStart = offset + 8;
+    const chunkEnd = chunkStart + chunkSize;
+    if (chunkEnd > input.length) invalid("FunASR WebSocket WAV chunk is truncated");
+    if (chunkId === "fmt " && chunkSize >= 16) {
+      format = {
+        audioFormat: input.readUInt16LE(chunkStart),
+        channels: input.readUInt16LE(chunkStart + 2),
+        sampleRate: input.readUInt32LE(chunkStart + 4),
+        bitsPerSample: input.readUInt16LE(chunkStart + 14),
+      };
+    } else if (chunkId === "data") {
+      dataStart = chunkStart;
+      dataEnd = chunkEnd;
+      break;
+    }
+    offset = chunkEnd + (chunkSize % 2);
+  }
+
+  if (
+    !format ||
+    format.audioFormat !== 1 ||
+    format.channels !== 1 ||
+    format.bitsPerSample !== 16 ||
+    !Number.isSafeInteger(format.sampleRate) ||
+    format.sampleRate < 8_000 ||
+    dataStart < 0 ||
+    dataEnd <= dataStart
+  ) {
+    invalid("FunASR WebSocket runtime requires mono PCM16 WAV audio");
+  }
+  return { pcm: input.subarray(dataStart, dataEnd), sampleRate: format.sampleRate };
+}
+
+function appendFunAsrText(baseText, nextText) {
+  const base = String(baseText ?? "").trim();
+  const next = String(nextText ?? "").trim();
+  if (!base) return next;
+  if (!next || next.startsWith(base) || base.endsWith(next)) return base;
+  const overlapLimit = Math.min(base.length, next.length, 160);
+  for (let size = overlapLimit; size >= 2; size -= 1) {
+    if (base.slice(-size) === next.slice(0, size)) return `${base}${next.slice(size)}`;
+  }
+  return `${base}${next}`;
+}
+
+function mergeFunAsrOnlineText(baseText, nextText) {
+  const base = String(baseText ?? "").trim();
+  const next = String(nextText ?? "").trim();
+  if (!base) return next;
+  if (!next || next === base || base.startsWith(next)) return base;
+  if (next.startsWith(base)) return next;
+  return appendFunAsrText(base, next);
+}
+
 function funAsrFailureReason(error) {
   const code = String(error?.code ?? "");
-  if (/^(?:timeout|network_error|protocol_error|missing_transcript|funasr_concurrency_limited|upstream_http_\d{3})$/.test(code)) {
+  if (/^(?:timeout|network_error|protocol_error|missing_transcript|unsupported_audio_format|websocket_unavailable|funasr_concurrency_limited|upstream_http_\d{3})$/.test(code)) {
     return code;
   }
   return "provider_error";

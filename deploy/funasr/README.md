@@ -1,8 +1,15 @@
 # FunASR 本地语音服务
 
 该目录将官方 [modelscope/FunASR](https://github.com/modelscope/FunASR) 的
-OpenAI-compatible API 作为独立容器运行。服务只绑定 Linux 回环地址，浏览器
-不能直接访问；GAME Node 后端负责鉴权、大小限制、审计和 MiMo 回退。
+OpenAI-compatible HTTP API 作为独立容器运行。服务只绑定 Linux 回环地址，
+浏览器不能直接访问；GAME Node 后端负责鉴权、大小限制、审计和 MiMo 回退。
+
+GAME 同时兼容两种本地 FunASR 传输方式：
+
+- 本目录的 `funasr-server`：HTTP `http://127.0.0.1:8000`。
+- 服务器上已有的 `paraformer-online` runtime：WebSocket，通常是
+  `ws://127.0.0.1:10095`。该服务不是 HTTP 接口，不能把 10095 填进
+  `FUNASR_BASE_URL=http://...`。
 
 ## 启动
 
@@ -34,6 +41,23 @@ FUNASR_TIMEOUT_MS=30000
 FUNASR_MAX_CONCURRENCY=1
 ```
 
+如果继续使用服务器上已经运行的 `paraformer-online`，不要使用上面的 HTTP
+配置，改为：
+
+```dotenv
+FUNASR_TRANSPORT=websocket
+FUNASR_WS_URL=ws://127.0.0.1:10095
+FUNASR_WS_MODE=2pass
+FUNASR_WS_CHUNK_SIZE=5,10,5
+FUNASR_WS_CHUNK_INTERVAL=10
+FUNASR_TIMEOUT_MS=30000
+FUNASR_MAX_CONCURRENCY=1
+```
+
+浏览器录音会先生成 16 kHz、单声道、16-bit WAV；GAME 后端在 WebSocket
+模式下去掉 WAV 头并按 runtime 要求发送原始 PCM。这样不需要让浏览器直接连接
+FunASR，也不需要把 10095 暴露到公网。
+
 重启 GAME 后端后，语音请求会优先走 FunASR；FunASR 超时、离线或返回错误时，
 后端自动使用管理员后台已经配置的 MiMo ASR。不要把 FunASR 的 8000 端口绑定
 到 `0.0.0.0`，也不要通过 Nginx 将它直接暴露给公网。
@@ -46,5 +70,7 @@ FUNASR_MAX_CONCURRENCY=1
   时自动回退 MiMo，避免第二路请求把机器拖死。
 - 当前容器提供 OpenAI-compatible HTTP API。官方 ONNX WebSocket runtime 的
   `--decoder-thread-num` 不适用于这个入口，不要直接追加到 `funasr-server` 命令。
-- 不要放行 8000 或 30035 安全组端口。浏览器只访问 GAME 的 HTTPS 域名，Node
-  通过 `127.0.0.1:8000` 调用 FunASR。
+- 如果使用已有 WebSocket runtime，先用 `ss -ltnp | grep 10095` 确认真实端口，
+  再把 `FUNASR_WS_URL` 改成对应的 loopback 地址。
+- 不要放行 8000、10095 或 30035 安全组端口。浏览器只访问 GAME 的 HTTPS
+  域名，Node 通过 loopback 调用 FunASR。

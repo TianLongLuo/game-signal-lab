@@ -105,6 +105,7 @@ const storyIntake = {
   draftInput: "",
   archiveContactId: "",
   audioRecorder: null,
+  recordingStream: null,
   voiceStatus: "",
   finalizingVoice: false,
   motionSuppressed: false,
@@ -1553,7 +1554,7 @@ function renderStoryIntake() {
           ${!canUseAgent ? '<small class="story-access-note">需要登录并同意外部 AI 处理说明后开始。</small>' : ""}
         </div>
       `}
-      <small class="story-privacy">录音期间只保存在当前设备；手动结束后才把 MP3 发送给语音识别服务。本地 FunASR 优先，失败时回退 MiMo；结果只回填草稿，你点击“发送”后才进入对话。</small>
+      <small class="story-privacy">录音期间只保存在当前设备；手动结束后才把 WAV 发送给语音识别服务。本地 FunASR 优先，失败时回退 MiMo；结果只回填草稿，你点击“发送”后才进入对话。</small>
     </section>
   `;
 }
@@ -1568,7 +1569,7 @@ function renderStoryRecordingPanel() {
   return `
     <section class="story-recording-panel" aria-label="正在录音">
       <div class="story-recording-meta">
-        <span class="story-recording-live"><i aria-hidden="true"></i>REC · MP3</span>
+        <span class="story-recording-live"><i aria-hidden="true"></i>REC · WAV</span>
         <time id="story-recording-time" datetime="PT${Math.floor(storyIntake.recordingDurationMs / 1000)}S">${formatRecordingDuration(storyIntake.recordingDurationMs)}</time>
       </div>
       <div class="story-recording-waveform" id="story-recording-waveform" aria-hidden="true">
@@ -1815,17 +1816,23 @@ async function startStoryAudioRecording() {
   if (!(await checkMicrophonePermission())) return true;
   const input = document.querySelector("#story-answer");
   storyIntake.draftInput = clean(input?.value || storyIntake.draftInput).slice(0, 2400);
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    showToast("无法取得麦克风权限，请允许录音后重试", 3600);
+    return true;
+  }
   let recorder;
   try {
-    recorder = await createMp3Recorder({ onProcess: updateStoryRecordingVisual });
-  } catch (error) {
-    const message = error?.userDenied
-      ? "无法取得麦克风权限，请在浏览器地址栏允许录音后重试"
-      : "当前浏览器无法建立 MP3 录音，请改用文字输入";
-    showToast(message, 4200);
+    recorder = await createWavRecorder(stream);
+  } catch {
+    stream.getTracks().forEach((track) => track.stop());
+    showToast("当前浏览器无法建立 WAV 录音，请改用文字输入", 4200);
     return true;
   }
   storyIntake.audioRecorder = recorder;
+  storyIntake.recordingStream = stream;
   storyIntake.finalizingVoice = false;
   storyIntake.recording = true;
   storyIntake.recordingDurationMs = 0;
@@ -1853,20 +1860,25 @@ async function toggleStoryVoice({ fromKeyboard = false } = {}) {
 function stopStoryVoice() {
   if (storyIntake.audioRecorder) {
     const recorder = storyIntake.audioRecorder;
+    const stream = storyIntake.recordingStream;
     const preview = clean(storyIntake.draftInput).slice(0, 2400);
+    const durationMs = Number(recorder.durationMs?.()) || 0;
     storyIntake.audioRecorder = null;
+    storyIntake.recordingStream = null;
     storyIntake.recording = false;
     storyIntake.finalizingVoice = true;
-    storyIntake.voiceStatus = "正在上传录音…";
+    storyIntake.voiceStatus = "正在上传 WAV，并进行本地优先转写…";
+    let blob;
+    try {
+      blob = recorder.stop();
+    } catch (error) {
+      stream?.getTracks().forEach((track) => track.stop());
+      void handleStoryRecordingFailure(error, preview);
+      return;
+    }
+    stream?.getTracks().forEach((track) => track.stop());
     renderStoryViewPreservingScroll();
-    void recorder.stop()
-      .then(({ blob, durationMs }) => finalizeStoryRecording(blob, { preview, durationMs }))
-      .catch((error) => handleStoryRecordingFailure(error, preview));
-    setTimeout(() => {
-      if (storyIntake.finalizingVoice) {
-        handleStoryRecordingFailure(new Error("录音结束超时，请重试"), preview);
-      }
-    }, 10_000);
+    void finalizeStoryRecording(blob, { preview, durationMs });
     return;
   }
   storyIntake.recording = false;
@@ -2080,7 +2092,7 @@ async function checkMicrophonePermission() {
 function canRecordAudio() {
   return Boolean(
     navigator.mediaDevices?.getUserMedia
-    && typeof window.Recorder === "function"
+    && (window.AudioContext || window.webkitAudioContext)
   );
 }
 
