@@ -1,18 +1,37 @@
 #!/usr/bin/env python3
-"""Custom FunASR HTTP server for paraformer-online streaming model.
-Handles multipart file uploads from GAME Signal Lab.
+"""Optional custom FunASR HTTP server for GAME Signal Lab.
+
+Use SenseVoiceSmall with language=auto for Chinese/English audio. The
+paraformer-online model is a streaming Mandarin model and must not be used as
+the one-shot model for bilingual transcription.
 """
 import sys, os, io, json, cgi, tempfile
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import soundfile as sf
 import numpy as np
 
-MODEL = "iic/speech_paraformer_asr_nat-zh-cn-16k-common-vocab8404-online"
+MODEL_SETTING = os.environ.get("FUNASR_MODEL", "sensevoice").strip().lower()
+MODEL_ALIASES = {
+    "sensevoice": "iic/SenseVoiceSmall",
+    "paraformer": "paraformer-zh",
+    "paraformer-en": "paraformer-en",
+}
+MODEL = MODEL_ALIASES.get(MODEL_SETTING, os.environ.get("FUNASR_MODEL", "iic/SenseVoiceSmall"))
+LANGUAGE = os.environ.get("FUNASR_LANGUAGE", "auto").strip().lower() or "auto"
 PORT = int(os.environ.get("FUNASR_PORT", "8000"))
+IS_SENSEVOICE = "sensevoice" in MODEL.lower()
 
 print(f"Loading {MODEL}...", flush=True)
 from funasr import AutoModel
-model = AutoModel(model=MODEL, device="cpu", ncpu=2)
+from funasr.utils.postprocess_utils import rich_transcription_postprocess
+
+model_options = {}
+if IS_SENSEVOICE:
+    model_options.update(
+        vad_model="fsmn-vad",
+        vad_kwargs={"max_single_segment_time": 30_000},
+    )
+model = AutoModel(model=MODEL, device="cpu", ncpu=2, **model_options)
 print("Model ready.", flush=True)
 
 class Handler(BaseHTTPRequestHandler):
@@ -74,10 +93,22 @@ class Handler(BaseHTTPRequestHandler):
                 data = librosa.resample(data, orig_sr=sr, target_sr=16000)
             if data.ndim > 1:
                 data = data.mean(axis=1)
-            data = (data * 32767).astype(np.int16).tobytes()
+            # AutoModel's offline path expects normalized float samples. The
+            # old script converted them to raw int16 bytes and then invoked an
+            # online Paraformer model as if it were a batch model.
+            data = np.asarray(data, dtype=np.float32)
 
-            res = model.generate(input=data, cache={})
+            res = model.generate(
+                input=data,
+                cache={},
+                language=LANGUAGE,
+                use_itn=True,
+                batch_size_s=60,
+                fs=16000,
+            )
             text = res[0].get("text", "") if res else ""
+            if IS_SENSEVOICE:
+                text = rich_transcription_postprocess(text)
         except Exception as e:
             self._send_json(500, {"error": str(e)[:200]})
             return

@@ -21,7 +21,7 @@ docker compose -f compose.yml logs -f funasr
 ```
 
 第一次启动会下载并加载模型，耗时取决于网络与机器性能。默认使用
-`sensevoice + cpu`，并按 2 核 4G 服务器限制为 2 个计算线程、1.75 核 CPU、
+`SenseVoiceSmall + cpu`，自动识别中文和英语；并按 2 核 4G 服务器限制为 2 个计算线程、1.75 核 CPU、
 2.5G 内存上限与 512M shm，适合短语音单并发；有可用 CUDA 环境时，需要自行把
 镜像的 PyTorch 换成匹配服务器 CUDA 的版本后再设 `FUNASR_DEVICE=cuda`。
 
@@ -37,9 +37,15 @@ curl -fsS http://127.0.0.1:8000/v1/models
 ```dotenv
 FUNASR_BASE_URL=http://127.0.0.1:8000
 FUNASR_MODEL=sensevoice
+FUNASR_LANGUAGE=auto
 FUNASR_TIMEOUT_MS=30000
 FUNASR_MAX_CONCURRENCY=1
 ```
+
+如果业务确定只有中文，可以把模型切换为 `paraformer` 并设置
+`FUNASR_LANGUAGE=zh`，通常能换取更高的中文专用准确率；英语专用场景可使用
+`paraformer-en` 与 `FUNASR_LANGUAGE=en`。中英混合或语言不确定时保持
+`sensevoice + auto`。
 
 如果继续使用服务器上已经运行的 `paraformer-online`，不要使用上面的 HTTP
 配置，改为：
@@ -53,6 +59,10 @@ FUNASR_WS_CHUNK_INTERVAL=10
 FUNASR_TIMEOUT_MS=30000
 FUNASR_MAX_CONCURRENCY=1
 ```
+
+注意：`paraformer-online` 是中文流式运行时，不能靠设置 `language=auto` 变成
+英语模型。需要中英双语时，请使用上面的 HTTP `sensevoice` 配置；需要中文专用
+最高准确率时，再切换到 `paraformer`。
 
 浏览器录音会先生成 16 kHz、单声道、16-bit WAV；GAME 后端在 WebSocket
 模式下去掉 WAV 头并按 runtime 要求发送原始 PCM。这样不需要让浏览器直接连接
