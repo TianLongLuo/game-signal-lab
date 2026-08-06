@@ -1926,58 +1926,73 @@ async function handleStoryRecordingFailure(error, preview) {
 }
 
 function createMp3Recorder({ onProcess } = {}) {
-  const Recorder = window.Recorder;
-  if (typeof Recorder !== "function") {
-    return Promise.reject(new Error("mp3_recorder_unavailable"));
-  }
-  let lastBlob = null;
-  let lastDuration = 0;
-  const recorder = Recorder({
-    type: "wav",
-    sampleRate: 16_000,
-    bitRate: 16,
-    onProcess(_buffers, powerLevel, bufferDuration) {
-      onProcess?.(powerLevel, bufferDuration);
-    },
+  // Use native MediaRecorder + AudioContext for reliable WAV recording
+  const constraints = { audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true } };
+  return navigator.mediaDevices.getUserMedia(constraints).then((stream) => {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    const source = audioCtx.createMediaStreamSource(stream);
+    const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    const chunks = [];
+    let startTime = Date.now();
+
+    source.connect(processor);
+    processor.connect(audioCtx.destination);
+
+    processor.onaudioprocess = (e) => {
+      if (chunks.length === 0) startTime = Date.now();
+      const input = e.inputBuffer.getChannelData(0);
+      const pcm = new Int16Array(input.length);
+      for (let i = 0; i < input.length; i++) {
+        pcm[i] = Math.max(-32768, Math.min(32767, input[i] * 32768));
+      }
+      chunks.push(pcm);
+
+      const durationMs = Date.now() - startTime;
+      const rms = Math.sqrt(input.reduce((s,x) => s + x*x, 0) / input.length);
+      onProcess?.(Math.round(rms * 1000), durationMs);
+    };
+
+    return {
+      stop() {
+        source.disconnect();
+        processor.disconnect();
+        audioCtx.close();
+        stream.getTracks().forEach(t => t.stop());
+
+        // Build WAV blob
+        const totalSamples = chunks.reduce((s, c) => s + c.length, 0);
+        const wav = new ArrayBuffer(44 + totalSamples * 2);
+        const view = new DataView(wav);
+        writeWavHeader(view, 16000, 1, 16, totalSamples);
+        let offset = 44;
+        for (const chunk of chunks) {
+          new Int16Array(wav, offset, chunk.length).set(chunk);
+          offset += chunk.length * 2;
+        }
+        const blob = new Blob([wav], { type: "audio/wav" });
+        const durationMs = Date.now() - startTime;
+        return Promise.resolve({ blob, durationMs });
+      },
+    };
   });
-  return new Promise((resolve, reject) => {
-    recorder.open(() => {
-      recorder.start();
-      let stopped = false;
-      resolve({
-        stop() {
-          if (stopped) return Promise.reject(new Error("recording_already_stopped"));
-          stopped = true;
-          return new Promise((stopResolve, stopReject) => {
-            const timeout = setTimeout(() => {
-              if (lastBlob?.size) {
-                recorder.close();
-                stopResolve({ blob: lastBlob, durationMs: lastDuration });
-              } else {
-                recorder.close();
-                stopReject(new Error("录音超时，请重试"));
-              }
-            }, 3000);
-            recorder.stop((blob, duration) => {
-              clearTimeout(timeout);
-              recorder.close();
-              lastBlob = blob;
-              lastDuration = Number(duration) || 0;
-              stopResolve({ blob, durationMs: lastDuration });
-            }, (msg) => {
-              clearTimeout(timeout);
-              recorder.close();
-              stopReject(new Error(msg || "录音失败"));
-            });
-          });
-        },
-      });
-    }, (message, userDenied) => {
-      const error = new Error(message || "microphone_open_failed");
-      error.userDenied = Boolean(userDenied);
-      reject(error);
-    });
-  });
+}
+
+function writeWavHeader(view, sampleRate, numChannels, bitsPerSample, numSamples) {
+  const byteRate = sampleRate * numChannels * bitsPerSample / 8;
+  const blockAlign = numChannels * bitsPerSample / 8;
+  view.setUint32(0, 0x52494646, false); // "RIFF"
+  view.setUint32(4, 36 + numSamples * blockAlign, true);
+  view.setUint32(8, 0x57415645, false); // "WAVE"
+  view.setUint32(12, 0x666d7420, false); // "fmt "
+  view.setUint32(16, 16, true); // chunk size
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  view.setUint32(36, 0x64617461, false); // "data"
+  view.setUint32(40, numSamples * blockAlign, true);
 }
 
 function updateStoryRecordingVisual(powerLevel, durationMs) {
