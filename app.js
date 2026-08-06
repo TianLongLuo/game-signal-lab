@@ -1862,6 +1862,11 @@ function stopStoryVoice() {
     void recorder.stop()
       .then(({ blob, durationMs }) => finalizeStoryRecording(blob, { preview, durationMs }))
       .catch((error) => handleStoryRecordingFailure(error, preview));
+    setTimeout(() => {
+      if (storyIntake.finalizingVoice) {
+        handleStoryRecordingFailure(new Error("录音结束超时，请重试"), preview);
+      }
+    }, 10_000);
     return;
   }
   storyIntake.recording = false;
