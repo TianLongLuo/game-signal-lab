@@ -11,16 +11,39 @@ import {
 
 test("FunASR configuration is optional and restricted to loopback", () => {
   assert.equal(createFunAsrConfig({}), null);
+  const defaultConfig = createFunAsrConfig({ FUNASR_BASE_URL: "http://127.0.0.1:8000" });
+  assert.equal(defaultConfig.model, "sensevoice");
+  assert.equal(defaultConfig.language, "auto");
   const config = createFunAsrConfig({
     FUNASR_BASE_URL: "http://127.0.0.1:8000/v1",
     FUNASR_MODEL: "sensevoice",
+    FUNASR_LANGUAGE: "auto",
     FUNASR_TIMEOUT_MS: "15000",
     FUNASR_MAX_CONCURRENCY: "1",
   });
   assert.equal(config.baseUrl.href, "http://127.0.0.1:8000/");
   assert.equal(config.model, "sensevoice");
+  assert.equal(config.language, "auto");
   assert.equal(config.timeoutMs, 15000);
   assert.equal(config.maxConcurrency, 1);
+  assert.equal(
+    createFunAsrConfig({
+      FUNASR_BASE_URL: "http://127.0.0.1:8000",
+      FUNASR_MODEL: "paraformer",
+    }).language,
+    "zh"
+  );
+  assert.equal(
+    createFunAsrConfig({
+      FUNASR_BASE_URL: "http://127.0.0.1:8000",
+      FUNASR_MODEL: "paraformer-en",
+    }).language,
+    "en"
+  );
+  assert.throws(
+    () => createFunAsrConfig({ FUNASR_BASE_URL: "http://127.0.0.1:8000", FUNASR_LANGUAGE: "fr" }),
+    /FUNASR_LANGUAGE/
+  );
   assert.throws(
     () => normalizeFunAsrBaseUrl("https://speech.example.com/v1"),
     /loopback HTTP URL/
@@ -51,6 +74,7 @@ test("FunASR client sends OpenAI-compatible multipart audio", async () => {
   const transcript = await transcribeWithFunAsr({
     baseUrl: new URL("http://127.0.0.1:8000/"),
     model: "sensevoice",
+    language: "auto",
     timeoutMs: 5000,
     apiKey: "local-test-token",
     bytes: Buffer.from([1, 2, 3, 4]),
@@ -68,7 +92,7 @@ test("FunASR client sends OpenAI-compatible multipart audio", async () => {
   assert.equal(captured.url, "http://127.0.0.1:8000/v1/audio/transcriptions");
   assert.equal(captured.options.headers.Authorization, "Bearer local-test-token");
   assert.equal(captured.options.body.get("model"), "sensevoice");
-  assert.equal(captured.options.body.get("language"), "zh");
+  assert.equal(captured.options.body.get("language"), "auto");
   assert.equal(captured.options.body.get("file").name, "recording.mp3");
 });
 

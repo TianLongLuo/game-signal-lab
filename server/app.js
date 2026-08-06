@@ -45,9 +45,15 @@ const MIMO_TTS_MODELS = new Set([MIMO_TTS_DEFAULT_MODEL, "mimo-v2-tts"]);
 const MIMO_TTS_VOICES = new Set(["冰糖", "茉莉", "苏打", "白桦", "Mia", "Chloe", "Milo", "Dean"]);
 const MIMO_TTS_TIMEOUT_MS = 45_000;
 const MIMO_ASR_MODEL = "mimo-v2.5-asr";
+const MIMO_ASR_LANGUAGE = "auto";
 const MIMO_ASR_TIMEOUT_MS = 60_000;
+// SenseVoiceSmall is the balanced bilingual default for this 2-core host.
+// Use FUNASR_MODEL=paraformer with FUNASR_LANGUAGE=zh for Chinese-only final
+// accuracy, or FUNASR_MODEL=paraformer-en with FUNASR_LANGUAGE=en for English.
 const FUNASR_DEFAULT_MODEL = "sensevoice";
 const FUNASR_MODELS = new Set(["sensevoice", "paraformer", "paraformer-en", "fun-asr-nano"]);
+const FUNASR_DEFAULT_LANGUAGE = "auto";
+const FUNASR_LANGUAGES = new Set(["auto", "zh", "en", "yue", "ja", "ko"]);
 const FUNASR_DEFAULT_TIMEOUT_MS = 30_000;
 const FUNASR_DEFAULT_WS_MODE = "2pass";
 const FUNASR_WS_MODES = new Set(["online", "offline", "2pass"]);
@@ -1289,7 +1295,7 @@ export async function createBackend(options = {}) {
               role: "user",
               content: [{ type: "input_audio", input_audio: { data: audio } }],
             }],
-            asr_options: { language: "zh" },
+            asr_options: { language: MIMO_ASR_LANGUAGE },
             ...(streamRequested ? { stream: true } : {}),
           }),
         });
@@ -3380,6 +3386,13 @@ export function createFunAsrConfig(env = {}) {
   if (!FUNASR_MODELS.has(model)) {
     throw new Error(`FUNASR_MODEL must be one of: ${[...FUNASR_MODELS].join(", ")}`);
   }
+  const language = String(
+    env.FUNASR_LANGUAGE
+      ?? (model === "paraformer" ? "zh" : model === "paraformer-en" ? "en" : FUNASR_DEFAULT_LANGUAGE)
+  ).trim().toLowerCase();
+  if (!FUNASR_LANGUAGES.has(language)) {
+    throw new Error(`FUNASR_LANGUAGE must be one of: ${[...FUNASR_LANGUAGES].join(", ")}`);
+  }
   const timeoutValue = String(env.FUNASR_TIMEOUT_MS ?? "").trim();
   const timeoutMs = timeoutValue ? Number(timeoutValue) : FUNASR_DEFAULT_TIMEOUT_MS;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 5_000 || timeoutMs > 120_000) {
@@ -3408,6 +3421,7 @@ export function createFunAsrConfig(env = {}) {
       ? normalizeFunAsrWebSocketUrl(configuredBaseUrl)
       : normalizeFunAsrBaseUrl(configuredBaseUrl),
     model,
+    language,
     timeoutMs,
     maxConcurrency,
     apiKey: String(env.FUNASR_API_KEY ?? "").trim(),
@@ -3478,6 +3492,7 @@ export async function transcribeWithFunAsr(options) {
 async function transcribeWithFunAsrHttp({
   baseUrl,
   model,
+  language = FUNASR_DEFAULT_LANGUAGE,
   timeoutMs,
   apiKey = "",
   bytes,
@@ -3494,7 +3509,7 @@ async function transcribeWithFunAsrHttp({
   const extension = mimeType === "audio/wav" ? "wav" : "mp3";
   form.append("file", new Blob([bytes], { type: mimeType }), `recording.${extension}`);
   form.append("model", model ?? FUNASR_DEFAULT_MODEL);
-  form.append("language", "zh");
+  form.append("language", language || FUNASR_DEFAULT_LANGUAGE);
   form.append("response_format", "json");
 
   let upstream;

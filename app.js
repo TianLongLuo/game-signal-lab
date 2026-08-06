@@ -111,6 +111,12 @@ const storyIntake = {
   motionSuppressed: false,
   recordingDurationMs: 0,
   waveformLevels: [],
+  liveAsrTimer: null,
+  liveAsrController: null,
+  liveAsrPromise: null,
+  lastAsrChunkIndex: 0,
+  recordingBaseText: "",
+  recordingAsrText: "",
 };
 
 const contactEditor = {
@@ -126,6 +132,7 @@ const contactEditor = {
   finalizingVoice: false,
   liveAsrTimer: null,
   liveAsrController: null,
+  liveAsrPromise: null,
   lastAsrChunkIndex: 0,
   recordingBaseText: "",
   recordingAsrText: "",
@@ -1578,7 +1585,7 @@ function renderStoryRecordingPanel() {
       <div class="story-recording-timeline" aria-hidden="true">
         <span id="story-recording-progress" style="transform:scaleX(${progress.toFixed(4)})"></span>
       </div>
-      <div class="story-recording-foot"><span>00:00</span><strong>点击“结束录音”后再统一转写</strong><span>05:00</span></div>
+      <div class="story-recording-foot"><span>00:00</span><strong>录音中尝试实时识别，结束后再整段校正</strong><span>05:00</span></div>
     </section>
   `;
 }
@@ -1816,16 +1823,28 @@ async function startStoryAudioRecording() {
   if (!(await checkMicrophonePermission())) return true;
   const input = document.querySelector("#story-answer");
   storyIntake.draftInput = clean(input?.value || storyIntake.draftInput).slice(0, 2400);
+  storyIntake.recordingBaseText = storyIntake.draftInput;
+  storyIntake.recordingAsrText = "";
+  storyIntake.lastAsrChunkIndex = 0;
   let stream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        sampleRate: 16_000,
+        sampleSize: 16,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
   } catch {
     showToast("无法取得麦克风权限，请允许录音后重试", 3600);
     return true;
   }
   let recorder;
   try {
-    recorder = await createWavRecorder(stream);
+    recorder = await createWavRecorder(stream, { onProcess: updateStoryRecordingVisual });
   } catch {
     stream.getTracks().forEach((track) => track.stop());
     showToast("当前浏览器无法建立 WAV 录音，请改用文字输入", 4200);
@@ -1837,8 +1856,9 @@ async function startStoryAudioRecording() {
   storyIntake.recording = true;
   storyIntake.recordingDurationMs = 0;
   storyIntake.waveformLevels = [];
-  storyIntake.voiceStatus = "录音中 · 草稿不会被实时改写";
+  storyIntake.voiceStatus = "实时识别中 · 结束后校正最终文字";
   renderStoryViewPreservingScroll();
+  startStoryLiveAsr();
   return true;
 }
 
@@ -1861,8 +1881,11 @@ function stopStoryVoice() {
   if (storyIntake.audioRecorder) {
     const recorder = storyIntake.audioRecorder;
     const stream = storyIntake.recordingStream;
-    const preview = clean(storyIntake.draftInput).slice(0, 2400);
+    const preview = clean(storyIntake.recordingBaseText).slice(0, 2400);
+    const livePreview = clean(storyIntake.draftInput).slice(0, 2400);
     const durationMs = Number(recorder.durationMs?.()) || 0;
+    const liveAsrPromise = storyIntake.liveAsrPromise;
+    stopStoryLiveAsr();
     storyIntake.audioRecorder = null;
     storyIntake.recordingStream = null;
     storyIntake.recording = false;
@@ -1873,21 +1896,29 @@ function stopStoryVoice() {
       blob = recorder.stop();
     } catch (error) {
       stream?.getTracks().forEach((track) => track.stop());
-      void handleStoryRecordingFailure(error, preview);
+      void handleStoryRecordingFailure(error, livePreview || preview);
       return;
     }
     stream?.getTracks().forEach((track) => track.stop());
     renderStoryViewPreservingScroll();
-    void finalizeStoryRecording(blob, { preview, durationMs });
+    void finalizeStoryRecording(blob, { preview, livePreview, durationMs, liveAsrPromise });
     return;
   }
   storyIntake.recording = false;
   storyIntake.voiceStatus = "";
 }
 
-async function finalizeStoryRecording(blob, { preview, durationMs = 0 }) {
-  let transcript = preview;
+async function finalizeStoryRecording(blob, {
+  preview,
+  livePreview = "",
+  durationMs = 0,
+  liveAsrPromise = null,
+}) {
+  let transcript = livePreview || preview;
   try {
+    // Do not start the final full-WAV request while the last incremental
+    // request is still occupying the single local FunASR slot.
+    await waitForLiveAsrRequest(liveAsrPromise);
     if (!blob?.size) throw new Error("audio_empty");
     const recognized = await streamTranscribeRecordedAudio(blob, {
       timeoutMs: 90_000,
@@ -1896,8 +1927,7 @@ async function finalizeStoryRecording(blob, { preview, durationMs = 0 }) {
         storyIntake.draftInput = transcript;
         const input = document.querySelector("#story-answer");
         if (input) input.value = transcript;
-        const status = document.querySelector(".story-voice-status");
-        if (status) status.textContent = "语音识别正在流式整理…";
+        updateStoryVoiceStatus("正在校正整段语音…");
       },
     });
     transcript = appendVoiceTranscript(preview, recognized).slice(0, 2400);
@@ -1913,18 +1943,133 @@ async function finalizeStoryRecording(blob, { preview, durationMs = 0 }) {
       });
     }
   } catch (error) {
-    if (preview && storyIntake.active) {
-      storyIntake.draftInput = preview;
+    const fallback = livePreview || preview;
+    if (fallback && storyIntake.active) {
+      storyIntake.draftInput = fallback;
       const reason = error instanceof PlatformError ? error.message : "语音识别未完成";
       showToast(`${reason} 已保留已有文字。`, 4200);
     } else if (storyIntake.active) {
       showToast(error instanceof PlatformError ? error.message : "语音识别未完成，请改用文字输入", 4200);
     }
   } finally {
+    stopStoryLiveAsr();
+    storyIntake.recordingBaseText = "";
+    storyIntake.recordingAsrText = "";
+    storyIntake.lastAsrChunkIndex = 0;
     storyIntake.finalizingVoice = false;
     storyIntake.motionSuppressed = false;
     if (!storyIntake.draftInput) storyIntake.voiceStatus = "";
     renderStoryViewPreservingScroll();
+  }
+}
+
+async function waitForLiveAsrRequest(promise) {
+  if (!promise) return;
+  await Promise.race([
+    promise.catch(() => {}),
+    new Promise((resolve) => window.setTimeout(resolve, 1_500)),
+  ]);
+}
+
+function updateStoryVoiceStatus(message) {
+  storyIntake.voiceStatus = message;
+  const status = document.querySelector(".story-voice-status");
+  if (status) status.textContent = message;
+}
+
+function updateStoryLiveDraft(text) {
+  const live = clean(text).slice(0, 2400);
+  if (!live) return;
+  storyIntake.draftInput = live;
+  const input = document.querySelector("#story-answer");
+  if (input && input.value !== live) input.value = live;
+}
+
+function startStoryLiveAsr() {
+  stopStoryLiveAsr();
+  storyIntake.liveAsrTimer = window.setInterval(() => {
+    const pending = refreshStoryLiveAsr();
+    storyIntake.liveAsrPromise = pending;
+    void pending.then(
+      () => {
+        if (storyIntake.liveAsrPromise === pending) storyIntake.liveAsrPromise = null;
+      },
+      () => {
+        if (storyIntake.liveAsrPromise === pending) storyIntake.liveAsrPromise = null;
+      }
+    );
+  }, 2_200);
+}
+
+function stopStoryLiveAsr() {
+  window.clearInterval(storyIntake.liveAsrTimer);
+  storyIntake.liveAsrTimer = null;
+  storyIntake.liveAsrController?.abort();
+  storyIntake.liveAsrController = null;
+  storyIntake.lastAsrChunkIndex = 0;
+}
+
+async function refreshStoryLiveAsr() {
+  const recorder = storyIntake.audioRecorder;
+  if (!storyIntake.recording || !recorder || storyIntake.liveAsrController) return;
+  if (recorder.durationMs() < 1_200) return;
+
+  const fromIndex = storyIntake.lastAsrChunkIndex || 0;
+  const endIndex = recorder.chunkCount();
+  const snapshot = recorder.snapshot(fromIndex);
+  if (snapshot.size <= 44) return;
+
+  const controller = new AbortController();
+  storyIntake.liveAsrController = controller;
+  try {
+    let corrected = "";
+    let streamed = "";
+    try {
+      corrected = await streamTranscribeRecordedAudio(snapshot, {
+        timeoutMs: 12_000,
+        signal: controller.signal,
+        onText(partial) {
+          if (!storyIntake.recording || storyIntake.liveAsrController !== controller) return;
+          streamed = partial;
+          const current = appendVoiceTranscript(storyIntake.recordingAsrText, streamed);
+          updateStoryLiveDraft(appendVoiceTranscript(storyIntake.recordingBaseText, current));
+          updateStoryVoiceStatus("实时识别中 · 正在整理当前片段…");
+        },
+      });
+    } catch (error) {
+      if (error?.code === "asr_stream_failed" || error?.code === "asr_stream_incomplete") {
+        corrected = await transcribeRecordedAudio(snapshot, {
+          timeoutMs: 18_000,
+          signal: controller.signal,
+        });
+      } else throw error;
+    }
+
+    corrected = clean(corrected).slice(0, 2400);
+    if (!corrected || !storyIntake.recording || storyIntake.liveAsrController !== controller) return;
+
+    // Commit exactly the audio range that was captured for this request. Any
+    // chunks recorded while FunASR was working are left for the next request.
+    storyIntake.lastAsrChunkIndex = endIndex;
+    const newTail = extractNewTranscript(storyIntake.recordingAsrText, corrected);
+    if (newTail) {
+      storyIntake.recordingAsrText = appendVoiceTranscript(
+        storyIntake.recordingAsrText,
+        newTail
+      ).slice(0, 2400);
+      updateStoryLiveDraft(
+        appendVoiceTranscript(storyIntake.recordingBaseText, storyIntake.recordingAsrText)
+      );
+    }
+    updateStoryVoiceStatus("已实时识别 · 继续说即可");
+    window.setTimeout(() => {
+      if (storyIntake.recording) updateStoryVoiceStatus("实时识别中 · 结束后校正最终文字");
+    }, 1_200);
+  } catch {
+    // The final full-WAV pass still runs on stop, so a slow incremental request
+    // must never interrupt recording or erase the text already shown.
+  } finally {
+    if (storyIntake.liveAsrController === controller) storyIntake.liveAsrController = null;
   }
 }
 
@@ -2032,7 +2177,7 @@ function updateStoryRecordingVisual(powerLevel, durationMs) {
   if (progressBar) progressBar.style.transform = `scaleX(${progress.toFixed(4)})`;
 }
 
-async function createWavRecorder(stream) {
+async function createWavRecorder(stream, { onProcess } = {}) {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) throw new Error("audio_context_unavailable");
   const context = new AudioContextClass();
@@ -2047,6 +2192,11 @@ async function createWavRecorder(stream) {
     const chunk = new Float32Array(event.inputBuffer.getChannelData(0));
     chunks.push(chunk);
     sampleCount += chunk.length;
+    let sumSquares = 0;
+    for (const value of chunk) sumSquares += value * value;
+    const rms = Math.sqrt(sumSquares / Math.max(1, chunk.length));
+    const powerLevel = Math.max(4, Math.min(100, Math.round(Math.sqrt(rms) * 100)));
+    onProcess?.(powerLevel, Math.round((sampleCount / context.sampleRate) * 1000));
   };
   source.connect(processor);
   processor.connect(silentGain);
@@ -2408,7 +2558,16 @@ async function startContactAudioRecording() {
   const input = document.querySelector("#contact-voice-input");
   let stream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        sampleRate: 16_000,
+        sampleSize: 16,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
   } catch {
     showToast("无法取得麦克风权限，请允许录音后重试", 3600);
     return true;
@@ -2449,6 +2608,7 @@ function stopContactVoice({ autoOrganize = false, discard = false } = {}) {
     const preview = clean(contactEditor.voiceDraft).slice(0, 2400);
     const stableText = contactEditor.recordingAsrText;
     const tail = recorder.snapshot(contactEditor.lastAsrChunkIndex || 0);
+    const liveAsrPromise = contactEditor.liveAsrPromise;
     stopContactLiveAsr();
     contactEditor.audioRecorder = null;
     contactEditor.recordingStream = null;
@@ -2466,7 +2626,13 @@ function stopContactVoice({ autoOrganize = false, discard = false } = {}) {
       contactEditor.voiceStatus = "";
       return;
     }
-    void finalizeContactRecording(blob, { preview, shouldOrganize, tail, stableText });
+    void finalizeContactRecording(blob, {
+      preview,
+      shouldOrganize,
+      tail,
+      stableText,
+      liveAsrPromise,
+    });
     return;
   }
   contactEditor.recording = false;
@@ -2474,9 +2640,16 @@ function stopContactVoice({ autoOrganize = false, discard = false } = {}) {
   updateContactVoiceButton();
 }
 
-async function finalizeContactRecording(blob, { preview, shouldOrganize, tail, stableText = "" }) {
+async function finalizeContactRecording(blob, {
+  preview,
+  shouldOrganize,
+  tail,
+  stableText = "",
+  liveAsrPromise = null,
+}) {
   let transcript = preview;
   try {
+    await waitForLiveAsrRequest(liveAsrPromise);
     // Append the newly recognized tail to whatever is already in the input.
     if (tail?.size > 44) {
       const corrected = await transcribeRecordedAudio(tail, { timeoutMs: 45_000 });
@@ -2517,7 +2690,16 @@ async function finalizeContactRecording(blob, { preview, shouldOrganize, tail, s
 function startContactLiveAsr() {
   stopContactLiveAsr();
   contactEditor.liveAsrTimer = window.setInterval(() => {
-    void refreshContactLiveAsr();
+    const pending = refreshContactLiveAsr();
+    contactEditor.liveAsrPromise = pending;
+    void pending.then(
+      () => {
+        if (contactEditor.liveAsrPromise === pending) contactEditor.liveAsrPromise = null;
+      },
+      () => {
+        if (contactEditor.liveAsrPromise === pending) contactEditor.liveAsrPromise = null;
+      }
+    );
   }, 2_200);
 }
 
@@ -2535,21 +2717,23 @@ async function refreshContactLiveAsr() {
   if (recorder.durationMs() < 1_200) return;
   // Incremental snapshot: only the audio recorded since the last correction.
   const fromIndex = contactEditor.lastAsrChunkIndex || 0;
+  const endIndex = recorder.chunkCount();
   const snapshot = recorder.snapshot(fromIndex);
   if (snapshot.size <= 44) return;
-  const previewAtRequest = contactEditor.voiceDraft;
   const controller = new AbortController();
   contactEditor.liveAsrController = controller;
   try {
     let corrected = "";
+    let streamed = "";
     try {
       corrected = await streamTranscribeRecordedAudio(snapshot, {
         timeoutMs: 12_000,
         signal: controller.signal,
         onText(partial) {
-          const newTail = extractNewTranscript(contactEditor.recordingAsrText, partial);
-          if (!newTail) return;
-          const live = appendVoiceTranscript(contactEditor.voiceDraft, newTail).slice(0, 2400);
+          if (!contactEditor.recording || contactEditor.liveAsrController !== controller) return;
+          streamed = partial;
+          const current = appendVoiceTranscript(contactEditor.recordingAsrText, streamed);
+          const live = appendVoiceTranscript(contactEditor.recordingBaseText, current).slice(0, 2400);
           const input = document.querySelector("#contact-voice-input");
           if (input) input.value = live;
           contactEditor.voiceDraft = live;
@@ -2562,11 +2746,15 @@ async function refreshContactLiveAsr() {
     }
     corrected = corrected.slice(0, 2400);
     if (!corrected || !contactEditor.recording || contactEditor.liveAsrController !== controller) return;
-    contactEditor.lastAsrChunkIndex = recorder.chunkCount();
-    // Only append the genuinely new tail of this ASR result.
+    // Commit exactly the audio range captured for this request. Chunks recorded
+    // while FunASR was working are retained for the next request.
+    contactEditor.lastAsrChunkIndex = endIndex;
     const newTail = extractNewTranscript(contactEditor.recordingAsrText, corrected);
-    contactEditor.recordingAsrText = appendVoiceTranscript(contactEditor.recordingAsrText, corrected).slice(0, 2400);
     if (newTail) {
+      contactEditor.recordingAsrText = appendVoiceTranscript(
+        contactEditor.recordingAsrText,
+        newTail
+      ).slice(0, 2400);
       contactEditor.voiceDraft = appendVoiceTranscript(contactEditor.voiceDraft, newTail).slice(0, 2400);
     }
     const input = document.querySelector("#contact-voice-input");

@@ -50,10 +50,12 @@ EMBEDDING_MODEL=<embedding-model-name>
 FUNASR_TRANSPORT=http
 FUNASR_BASE_URL=http://127.0.0.1:8000
 FUNASR_MODEL=sensevoice
+FUNASR_LANGUAGE=auto
 FUNASR_TIMEOUT_MS=30000
 FUNASR_MAX_CONCURRENCY=1
 # If the host already runs paraformer-online instead, comment out the HTTP
-# block above and use this WebSocket block (usually port 10095):
+# block above and use this WebSocket block (usually port 10095). This path is
+# Chinese-only; keep the HTTP SenseVoice path for Chinese + English:
 # FUNASR_TRANSPORT=websocket
 # FUNASR_WS_URL=ws://127.0.0.1:10095
 # FUNASR_WS_MODE=2pass
@@ -68,8 +70,8 @@ systemd 文件、构建产物、日志或 issue。
 
 ## 3. 启动本地 FunASR（推荐）
 
-仓库包含固定版本的 FunASR 容器定义。默认的 `SenseVoiceSmall + CPU` 比把完整
-语音片段发往外部 API 少一段公网往返，并保留 MiMo 作为故障回退：
+仓库包含固定版本的 FunASR 容器定义。默认的 `SenseVoiceSmall + CPU` 支持中文和
+英语自动识别，比把完整语音片段发往外部 API 少一段公网往返，并保留 MiMo 作为故障回退：
 
 ```bash
 cd /opt/game-signal-lab/current/deploy/funasr
@@ -86,7 +88,8 @@ Docker volume `funasr-cache`，更新 GAME release 不会重复下载。FunASR �
 
 应用只在配置 `FUNASR_BASE_URL` 或 `FUNASR_WS_URL` 时启用本地识别，并且只接受
 loopback HTTP/WebSocket URL。HTTP `8000` 和旧版 WebSocket `10095` 是不同协议，
-不能混填。FunASR 不可用、超时或拒绝音频时，应用会自动回退到后台配置的 MiMo
+不能混填。需要中文和英语时使用 HTTP `sensevoice + language=auto`，不要把
+中文 `paraformer-online` 当作英语模型。FunASR 不可用、超时或拒绝音频时，应用会自动回退到后台配置的 MiMo
 ASR；两者都不可用时才向用户返回错误。
 
 对于 2 核 4G 轻量服务器，仓库默认把 FunASR 限制为 1.75 核、2.5G 内存、
