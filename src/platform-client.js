@@ -197,6 +197,30 @@ export class PlatformClient {
     return complete;
   }
 
+  async organizeVoiceText(text, { signal } = {}) {
+    const normalized = typeof text === "string" ? text.trim() : "";
+    if (!normalized) {
+      throw new PlatformError("没有可整理的语音文字。", { code: "voice_text_empty" });
+    }
+    const response = await fetch("/api/voice/organize", {
+      method: "POST",
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: this.#writeHeaders({ Accept: "application/json" }),
+      body: JSON.stringify({ text: normalized.slice(0, 4_000) }),
+      signal,
+    });
+    if (!response.ok) throw await responseError(response);
+    const payload = await response.json().catch(() => ({}));
+    const organized = typeof payload.text === "string" ? payload.text.trim() : "";
+    if (!organized) {
+      throw new PlatformError("文字整理服务没有返回内容。", {
+        code: "voice_organize_empty",
+      });
+    }
+    return organized;
+  }
+
   async synthesizeVoice(text, { voice = "茉莉", signal } = {}) {
     const response = await fetch("/api/voice/tts", {
       method: "POST",

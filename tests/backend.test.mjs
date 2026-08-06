@@ -266,6 +266,14 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
       );
       return;
     }
+    if (body.messages.some((message) => message.content === "VOICE_ORGANIZE_TEST")) {
+      response.end(
+        JSON.stringify({
+          choices: [{ message: { role: "assistant", content: "我想说：你好，然后停一下。" } }],
+        })
+      );
+      return;
+    }
     response.write(
       `data: ${JSON.stringify({
         choices: [
@@ -712,6 +720,14 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
   });
   assert.equal(deniedBeforeGrant.response.status, 403);
 
+  const deniedVoiceOrganizeBeforeGrant = await requestJson(baseUrl, "/api/voice/organize", {
+    method: "POST",
+    jar: memberJar,
+    csrf: true,
+    body: { text: "VOICE_ORGANIZE_TEST" },
+  });
+  assert.equal(deniedVoiceOrganizeBeforeGrant.response.status, 403);
+
   const apiKey = "sk-encrypted-test-key-123456";
   const configUpdate = await requestJson(baseUrl, "/api/admin/deepseek/config", {
     method: "PUT",
@@ -1032,6 +1048,24 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
   assert.deepEqual(upstreamRequests[1].body.thinking, { type: "disabled" });
   assert.equal(upstreamRequests[1].body.messages.some((item) => item.content === promptSentinel), true);
   assert.equal(upstreamRequests[1].body.messages[0].role, "system");
+
+  const organizedVoice = await requestJson(baseUrl, "/api/voice/organize", {
+    method: "POST",
+    jar: memberJar,
+    csrf: true,
+    body: { text: "VOICE_ORGANIZE_TEST" },
+  });
+  assert.equal(organizedVoice.response.status, 200);
+  assert.deepEqual(organizedVoice.body, {
+    text: "我想说：你好，然后停一下。",
+    provider: "deepseek",
+  });
+  const organizeRequest = upstreamRequests.at(-1).body;
+  assert.equal(organizeRequest.stream, false);
+  assert.deepEqual(organizeRequest.thinking, { type: "disabled" });
+  assert.equal(organizeRequest.temperature, 0.1);
+  assert.equal(organizeRequest.messages.at(-1).content, "VOICE_ORGANIZE_TEST");
+  assert.match(organizeRequest.messages[1].content, /补充句号、逗号、问号/);
 
   const incompleteStream = await requestText(baseUrl, "/api/agent/stream", {
     method: "POST",
