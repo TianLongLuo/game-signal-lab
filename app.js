@@ -2075,6 +2075,9 @@ function stopStoryLiveAsr() {
   storyIntake.liveAsrTimer = null;
   storyIntake.liveAsrController?.abort();
   storyIntake.liveAsrController = null;
+  // Do not let a promise from the previous recording be captured by the
+  // next stop cycle before its first live-ASR tick has started.
+  storyIntake.liveAsrPromise = null;
   storyIntake.lastAsrChunkIndex = 0;
 }
 
@@ -2991,6 +2994,7 @@ function stopAgentLiveAsr() {
   agentVoice.liveAsrTimer = null;
   agentVoice.liveAsrController?.abort();
   agentVoice.liveAsrController = null;
+  agentVoice.liveAsrPromise = null;
   agentVoice.lastAsrChunkIndex = 0;
 }
 
@@ -3089,6 +3093,7 @@ function stopContactLiveAsr() {
   contactEditor.liveAsrTimer = null;
   contactEditor.liveAsrController?.abort();
   contactEditor.liveAsrController = null;
+  contactEditor.liveAsrPromise = null;
   contactEditor.lastAsrChunkIndex = 0;
 }
 
@@ -4546,3 +4551,4 @@ function cssEscape(value) {
   if (globalThis.CSS?.escape) return globalThis.CSS.escape(String(value));
   return String(value).replace(/[^A-Za-z0-9_-]/g, "\\$&");
 }
+
