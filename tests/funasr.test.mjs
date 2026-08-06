@@ -96,6 +96,23 @@ test("FunASR client sends OpenAI-compatible multipart audio", async () => {
   assert.equal(captured.options.body.get("file").name, "recording.mp3");
 });
 
+test("FunASR HTTP client propagates caller cancellation while reading the response", async () => {
+  const controller = new AbortController();
+  const pending = transcribeWithFunAsr({
+    baseUrl: new URL("http://127.0.0.1:8000/"),
+    model: "sensevoice",
+    timeoutMs: 5_000,
+    bytes: Buffer.from([1, 2, 3, 4]),
+    mimeType: "audio/mpeg",
+    signal: controller.signal,
+    fetchImpl: async (_url, options) => new Promise((resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+    }),
+  });
+  controller.abort(new Error("client_disconnected"));
+  await assert.rejects(pending, (error) => error?.code === "aborted");
+});
+
 test("transcript chunks preserve all content in order", () => {
   const source = "第一句比较短。第二句会继续补充，而且不会覆盖前面的内容。";
   const chunks = splitTranscriptForStreaming(source, 8);
@@ -240,3 +257,47 @@ test("FunASR WebSocket client rejects compressed audio instead of hanging", asyn
     (error) => error?.code === "unsupported_audio_format"
   );
 });
+
+test("FunASR WebSocket client aborts the upstream socket when the browser cancels a request", async () => {
+  const wav = createMonoWav();
+  const controller = new AbortController();
+  let closeCount = 0;
+
+  class AbortableWebSocket {
+    constructor() {
+      this.readyState = 1;
+      this.listeners = new Map();
+    }
+
+    addEventListener(type, listener) {
+      const listeners = this.listeners.get(type) || new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type, listener) {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    send() {}
+
+    close() {
+      closeCount += 1;
+      this.readyState = 3;
+    }
+  }
+
+  const pending = transcribeWithFunAsr({
+    transport: "websocket",
+    baseUrl: new URL("ws://127.0.0.1:10095/"),
+    timeoutMs: 5_000,
+    bytes: wav,
+    mimeType: "audio/wav",
+    signal: controller.signal,
+    webSocketImpl: AbortableWebSocket,
+  });
+  controller.abort();
+  await assert.rejects(pending, (error) => error?.code === "aborted");
+  assert.equal(closeCount, 1);
+});
+
