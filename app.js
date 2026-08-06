@@ -1926,10 +1926,12 @@ async function handleStoryRecordingFailure(error, preview) {
 }
 
 function createMp3Recorder({ onProcess } = {}) {
-  // Use native MediaRecorder + AudioContext for reliable WAV recording
-  const constraints = { audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true } };
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return Promise.reject(new Error("浏览器不支持录音功能"));
+  }
+  const constraints = { audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } };
   return navigator.mediaDevices.getUserMedia(constraints).then((stream) => {
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const source = audioCtx.createMediaStreamSource(stream);
     const processor = audioCtx.createScriptProcessor(4096, 1, 1);
     const chunks = [];
@@ -1956,6 +1958,7 @@ function createMp3Recorder({ onProcess } = {}) {
       stop() {
         source.disconnect();
         processor.disconnect();
+        const sr = audioCtx.sampleRate;
         audioCtx.close();
         stream.getTracks().forEach(t => t.stop());
 
@@ -1963,7 +1966,7 @@ function createMp3Recorder({ onProcess } = {}) {
         const totalSamples = chunks.reduce((s, c) => s + c.length, 0);
         const wav = new ArrayBuffer(44 + totalSamples * 2);
         const view = new DataView(wav);
-        writeWavHeader(view, 16000, 1, 16, totalSamples);
+        writeWavHeader(view, sr, 1, 16, totalSamples);
         let offset = 44;
         for (const chunk of chunks) {
           new Int16Array(wav, offset, chunk.length).set(chunk);
