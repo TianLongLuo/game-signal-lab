@@ -1265,191 +1265,206 @@ export async function createBackend(options = {}) {
       if (!bytes.length || bytes.byteLength > MAX_ASR_AUDIO_BYTES) {
         throw new HttpError(413, "audio_too_large", "语音文件不能超过 8 MB。");
       }
-      let funAsrFailure = null;
-      if (funAsr) {
-        let releaseFunAsrSlot;
-        try {
-          releaseFunAsrSlot = funAsrConcurrency.acquire(auth.id);
-          const transcript = await transcribeWithFunAsr({
-            ...funAsr,
-            bytes,
-            mimeType,
-            fetchImpl,
-          });
-          writeAudit(db, request, masterKey, {
-            actorUserId: auth.id,
-            action: "voice.asr",
-            targetType: "provider",
-            targetId: "funasr",
-          });
-          if (streamRequested) {
-            await streamTranscriptAsSse(response, transcript);
-          } else {
-            sendJson(response, 200, { text: transcript, provider: "funasr" });
-          }
-          return;
-        } catch (error) {
-          funAsrFailure = error;
-          writeAudit(db, request, masterKey, {
-            actorUserId: auth.id,
-            action: "voice.asr",
-            targetType: "provider",
-            targetId: "funasr",
-            outcome: "failure",
-            reasonCode: funAsrFailureReason(error),
-          });
-        } finally {
-          releaseFunAsrSlot?.();
+      const asrController = new AbortController();
+      const abortForDisconnect = () => {
+        if (!response.writableEnded && !response.destroyed) {
+          asrController.abort(new Error("client_disconnected"));
         }
-      }
-      const config = db
-        .prepare(
-          `SELECT enabled, ciphertext, iv, auth_tag, algorithm, key_version
-           FROM provider_configs WHERE provider = 'mimo_tts'`
-        )
-        .get();
-      if (!config?.enabled || !config.ciphertext || !config.iv) {
-        throw new HttpError(
-          503,
-          funAsrFailure ? "asr_provider_unavailable" : "asr_not_configured",
-          funAsrFailure
-            ? "本地 FunASR 暂时不可用，MiMo 回退也尚未配置。"
-            : "语音识别服务尚未配置。"
-        );
-      }
-      let apiKey;
+      };
+      request.once("aborted", abortForDisconnect);
+      response.once("close", abortForDisconnect);
       try {
-        apiKey = decryptSecret(config, masterKey);
-      } catch {
-        writeAudit(db, request, masterKey, {
-          actorUserId: auth.id,
-          action: "voice.asr",
-          targetType: "provider",
-          targetId: "mimo_asr",
-          outcome: "failure",
-          reasonCode: "config_decryption_failed",
-        });
-        throw new HttpError(503, "asr_config_unavailable", "语音识别服务配置无法解密。");
-      }
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(new Error("upstream_timeout")), MIMO_ASR_TIMEOUT_MS);
-      timeout.unref?.();
-      let upstream;
-      try {
-        upstream = await fetch(new URL("chat/completions", MIMO_TTS_BASE_URL_NORMALIZED), {
-          method: "POST",
-          redirect: "error",
-          signal: controller.signal,
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify({
-            model: MIMO_ASR_MODEL,
-            messages: [{
-              role: "user",
-              content: [{ type: "input_audio", input_audio: { data: audio } }],
-            }],
-            asr_options: { language: MIMO_ASR_LANGUAGE },
-            ...(streamRequested ? { stream: true } : {}),
-          }),
-        });
-      } catch (error) {
+        let funAsrFailure = null;
+        if (funAsr) {
+          let releaseFunAsrSlot;
+          try {
+            releaseFunAsrSlot = funAsrConcurrency.acquire(auth.id);
+            const transcript = await transcribeWithFunAsr({
+              ...funAsr,
+              bytes,
+              mimeType,
+              fetchImpl,
+              signal: asrController.signal,
+            });
+            writeAudit(db, request, masterKey, {
+              actorUserId: auth.id,
+              action: "voice.asr",
+              targetType: "provider",
+              targetId: "funasr",
+            });
+            if (streamRequested) {
+              await streamTranscriptAsSse(response, transcript);
+            } else {
+              sendJson(response, 200, { text: transcript, provider: "funasr" });
+            }
+            return;
+          } catch (error) {
+            if (error?.code === "aborted" || asrController.signal.aborted) throw error;
+            funAsrFailure = error;
+            writeAudit(db, request, masterKey, {
+              actorUserId: auth.id,
+              action: "voice.asr",
+              targetType: "provider",
+              targetId: "funasr",
+              outcome: "failure",
+              reasonCode: funAsrFailureReason(error),
+            });
+          } finally {
+            releaseFunAsrSlot?.();
+          }
+        }
+        const config = db
+          .prepare(
+            `SELECT enabled, ciphertext, iv, auth_tag, algorithm, key_version
+             FROM provider_configs WHERE provider = 'mimo_tts'`
+          )
+          .get();
+        if (!config?.enabled || !config.ciphertext || !config.iv) {
+          throw new HttpError(
+            503,
+            funAsrFailure ? "asr_provider_unavailable" : "asr_not_configured",
+            funAsrFailure
+              ? "本地 FunASR 暂时不可用，MiMo 回退也尚未配置。"
+              : "语音识别服务尚未配置。"
+          );
+        }
+        let apiKey;
+        try {
+          apiKey = decryptSecret(config, masterKey);
+        } catch {
+          writeAudit(db, request, masterKey, {
+            actorUserId: auth.id,
+            action: "voice.asr",
+            targetType: "provider",
+            targetId: "mimo_asr",
+            outcome: "failure",
+            reasonCode: "config_decryption_failed",
+          });
+          throw new HttpError(503, "asr_config_unavailable", "语音识别服务配置无法解密。");
+        }
+        const controller = asrController;
+        const timeout = setTimeout(() => controller.abort(new Error("upstream_timeout")), MIMO_ASR_TIMEOUT_MS);
+        timeout.unref?.();
+        let upstream;
+        try {
+          upstream = await fetch(new URL("chat/completions", MIMO_TTS_BASE_URL_NORMALIZED), {
+            method: "POST",
+            redirect: "error",
+            signal: controller.signal,
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            body: JSON.stringify({
+              model: MIMO_ASR_MODEL,
+              messages: [{
+                role: "user",
+                content: [{ type: "input_audio", input_audio: { data: audio } }],
+              }],
+              asr_options: { language: MIMO_ASR_LANGUAGE },
+              ...(streamRequested ? { stream: true } : {}),
+            }),
+          });
+        } catch (error) {
+          clearTimeout(timeout);
+          writeAudit(db, request, masterKey, {
+            actorUserId: auth.id,
+            action: "voice.asr",
+            targetType: "provider",
+            targetId: "mimo_asr",
+            outcome: "failure",
+            reasonCode: controller.signal.aborted ? "timeout" : "network_error",
+          });
+          throw new HttpError(
+            error?.name === "AbortError" ? 504 : 502,
+            error?.name === "AbortError" ? "asr_timeout" : "asr_network_error",
+            error?.name === "AbortError" ? "语音识别超时，请稍后重试。" : "暂时无法连接语音识别服务，请稍后重试。"
+          );
+        }
         clearTimeout(timeout);
+        if (!upstream.ok) {
+          await upstream.body?.cancel();
+          writeAudit(db, request, masterKey, {
+            actorUserId: auth.id,
+            action: "voice.asr",
+            targetType: "provider",
+            targetId: "mimo_asr",
+            outcome: "failure",
+            reasonCode: `upstream_http_${upstream.status}`,
+          });
+          const status = upstream.status;
+          throw new HttpError(
+            status === 401 || status === 403 ? 502 : status === 429 ? 503 : status >= 500 ? 503 : 502,
+            status === 401 || status === 403
+              ? "asr_auth_failed"
+              : status === 429
+                ? "asr_rate_limited"
+                : status >= 500
+                  ? "asr_provider_unavailable"
+                  : "asr_provider_rejected",
+            status === 401 || status === 403
+              ? "语音识别服务 Key 无效，请在后台重新配置。"
+              : status === 429
+                ? "语音识别请求过于频繁，请稍后重试。"
+                : status >= 500
+                  ? "语音识别服务暂时繁忙，请稍后重试。"
+                  : "语音识别服务未接受本次请求。"
+          );
+        }
+        if (streamRequested) {
+          writeAudit(db, request, masterKey, {
+            actorUserId: auth.id,
+            action: "voice.asr",
+            targetType: "provider",
+            targetId: "mimo_asr",
+          });
+          response.statusCode = 200;
+          response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+          response.setHeader("Cache-Control", "no-store, no-transform");
+          response.setHeader("Connection", "keep-alive");
+          response.setHeader("X-Accel-Buffering", "no");
+          await streamBody(upstream.body, response);
+          return;
+        }
+        let payload;
+        try {
+          payload = await upstream.json();
+        } catch {
+          writeAudit(db, request, masterKey, {
+            actorUserId: auth.id,
+            action: "voice.asr",
+            targetType: "provider",
+            targetId: "mimo_asr",
+            outcome: "failure",
+            reasonCode: "protocol_error",
+          });
+          throw new HttpError(502, "asr_protocol_error", "语音识别服务返回了无法识别的响应。");
+        }
+        const transcript = payload?.choices?.[0]?.message?.content;
+        if (typeof transcript !== "string") {
+          writeAudit(db, request, masterKey, {
+            actorUserId: auth.id,
+            action: "voice.asr",
+            targetType: "provider",
+            targetId: "mimo_asr",
+            outcome: "failure",
+            reasonCode: "missing_transcript",
+          });
+          throw new HttpError(502, "asr_protocol_error", "语音识别服务没有返回文本。");
+        }
         writeAudit(db, request, masterKey, {
           actorUserId: auth.id,
           action: "voice.asr",
           targetType: "provider",
           targetId: "mimo_asr",
-          outcome: "failure",
-          reasonCode: controller.signal.aborted ? "timeout" : "network_error",
         });
-        throw new HttpError(
-          error?.name === "AbortError" ? 504 : 502,
-          error?.name === "AbortError" ? "asr_timeout" : "asr_network_error",
-          error?.name === "AbortError" ? "语音识别超时，请稍后重试。" : "暂时无法连接语音识别服务，请稍后重试。"
-        );
-      }
-      clearTimeout(timeout);
-      if (!upstream.ok) {
-        await upstream.body?.cancel();
-        writeAudit(db, request, masterKey, {
-          actorUserId: auth.id,
-          action: "voice.asr",
-          targetType: "provider",
-          targetId: "mimo_asr",
-          outcome: "failure",
-          reasonCode: `upstream_http_${upstream.status}`,
-        });
-        const status = upstream.status;
-        throw new HttpError(
-          status === 401 || status === 403 ? 502 : status === 429 ? 503 : status >= 500 ? 503 : 502,
-          status === 401 || status === 403
-            ? "asr_auth_failed"
-            : status === 429
-              ? "asr_rate_limited"
-              : status >= 500
-                ? "asr_provider_unavailable"
-                : "asr_provider_rejected",
-          status === 401 || status === 403
-            ? "语音识别服务 Key 无效，请在后台重新配置。"
-            : status === 429
-              ? "语音识别请求过于频繁，请稍后重试。"
-              : status >= 500
-                ? "语音识别服务暂时繁忙，请稍后重试。"
-                : "语音识别服务未接受本次请求。"
-        );
-      }
-      if (streamRequested) {
-        writeAudit(db, request, masterKey, {
-          actorUserId: auth.id,
-          action: "voice.asr",
-          targetType: "provider",
-          targetId: "mimo_asr",
-        });
-        response.statusCode = 200;
-        response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-        response.setHeader("Cache-Control", "no-store, no-transform");
-        response.setHeader("Connection", "keep-alive");
-        response.setHeader("X-Accel-Buffering", "no");
-        await streamBody(upstream.body, response);
+        sendJson(response, 200, { text: transcript });
         return;
+      } finally {
+        request.off("aborted", abortForDisconnect);
+        response.off("close", abortForDisconnect);
       }
-      let payload;
-      try {
-        payload = await upstream.json();
-      } catch {
-        writeAudit(db, request, masterKey, {
-          actorUserId: auth.id,
-          action: "voice.asr",
-          targetType: "provider",
-          targetId: "mimo_asr",
-          outcome: "failure",
-          reasonCode: "protocol_error",
-        });
-        throw new HttpError(502, "asr_protocol_error", "语音识别服务返回了无法识别的响应。");
-      }
-      const transcript = payload?.choices?.[0]?.message?.content;
-      if (typeof transcript !== "string") {
-        writeAudit(db, request, masterKey, {
-          actorUserId: auth.id,
-          action: "voice.asr",
-          targetType: "provider",
-          targetId: "mimo_asr",
-          outcome: "failure",
-          reasonCode: "missing_transcript",
-        });
-        throw new HttpError(502, "asr_protocol_error", "语音识别服务没有返回文本。");
-      }
-      writeAudit(db, request, masterKey, {
-        actorUserId: auth.id,
-        action: "voice.asr",
-        targetType: "provider",
-        targetId: "mimo_asr",
-      });
-      sendJson(response, 200, { text: transcript });
-      return;
     }
 
     if ((method === "GET" || method === "HEAD") && pathname.startsWith("/blog/") && pathname.endsWith(".html")) {
@@ -3713,8 +3728,12 @@ async function transcribeWithFunAsrHttp({
   bytes,
   mimeType,
   fetchImpl = globalThis.fetch,
+  signal,
 }) {
   const controller = new AbortController();
+  const abortFromCaller = () => controller.abort(signal?.reason ?? new Error("client_disconnected"));
+  if (signal?.aborted) abortFromCaller();
+  else signal?.addEventListener("abort", abortFromCaller, { once: true });
   const timeout = setTimeout(
     () => controller.abort(new Error("upstream_timeout")),
     timeoutMs ?? FUNASR_DEFAULT_TIMEOUT_MS
@@ -3740,37 +3759,49 @@ async function transcribeWithFunAsrHttp({
       body: form,
     });
   } catch (error) {
-    const wrapped = new Error(controller.signal.aborted ? "FunASR timeout" : "FunASR network error");
-    wrapped.code = controller.signal.aborted ? "timeout" : "network_error";
+    const callerAborted = Boolean(signal?.aborted);
+    const wrapped = new Error(
+      callerAborted
+        ? "FunASR request aborted"
+        : controller.signal.aborted
+          ? "FunASR timeout"
+          : "FunASR network error"
+    );
+    wrapped.code = callerAborted ? "aborted" : controller.signal.aborted ? "timeout" : "network_error";
     wrapped.cause = error;
     throw wrapped;
-  } finally {
-    clearTimeout(timeout);
   }
 
-  if (!upstream.ok) {
-    await upstream.body?.cancel();
-    const error = new Error(`FunASR rejected request with HTTP ${upstream.status}`);
-    error.code = `upstream_http_${upstream.status}`;
-    error.status = upstream.status;
-    throw error;
-  }
-  let payload;
   try {
-    payload = await upstream.json();
-  } catch (cause) {
-    const error = new Error("FunASR returned invalid JSON");
-    error.code = "protocol_error";
-    error.cause = cause;
-    throw error;
+    if (!upstream.ok) {
+      await upstream.body?.cancel();
+      const error = new Error(`FunASR rejected request with HTTP ${upstream.status}`);
+      error.code = `upstream_http_${upstream.status}`;
+      error.status = upstream.status;
+      throw error;
+    }
+    let payload;
+    try {
+      payload = await upstream.json();
+    } catch (cause) {
+      const error = new Error("FunASR returned invalid JSON");
+      error.code = "protocol_error";
+      error.cause = cause;
+      throw error;
+    }
+    const transcript = typeof payload?.text === "string" ? payload.text.trim() : "";
+    if (!transcript) {
+      const error = new Error("FunASR returned no transcript");
+      error.code = "missing_transcript";
+      throw error;
+    }
+    return transcript;
+  } finally {
+    // Keep the timeout and caller cancellation active while the response body
+    // is read as well as while the HTTP connection is established.
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", abortFromCaller);
   }
-  const transcript = typeof payload?.text === "string" ? payload.text.trim() : "";
-  if (!transcript) {
-    const error = new Error("FunASR returned no transcript");
-    error.code = "missing_transcript";
-    throw error;
-  }
-  return transcript;
 }
 
 async function transcribeWithFunAsrWebSocket({
@@ -3782,6 +3813,7 @@ async function transcribeWithFunAsrWebSocket({
   bytes,
   mimeType,
   webSocketImpl = globalThis.WebSocket,
+  signal,
 }) {
   if (mimeType !== "audio/wav") {
     const error = new Error("FunASR WebSocket runtime requires a WAV recording");
@@ -3815,6 +3847,7 @@ async function transcribeWithFunAsrWebSocket({
 
     const cleanupSocket = () => {
       clearTimeout(timeout);
+      signal?.removeEventListener("abort", abortFromCaller);
       if (!socket) return;
       socket.removeEventListener?.("open", handleOpen);
       socket.removeEventListener?.("message", handleMessage);
@@ -3839,6 +3872,10 @@ async function transcribeWithFunAsrWebSocket({
       error.code = code;
       if (cause) error.cause = cause;
       finish(reject, error);
+    };
+
+    const abortFromCaller = () => {
+      fail("FunASR request aborted", "aborted", signal?.reason);
     };
 
     const succeed = () => {
@@ -3935,6 +3972,11 @@ async function transcribeWithFunAsrWebSocket({
 
     try {
       socket = new webSocketImpl(baseUrl.href, ["binary"]);
+      if (signal?.aborted) {
+        abortFromCaller();
+        return;
+      }
+      signal?.addEventListener("abort", abortFromCaller, { once: true });
       socket.addEventListener("open", handleOpen);
       socket.addEventListener("message", handleMessage);
       socket.addEventListener("error", handleError);
@@ -4240,3 +4282,4 @@ class AgentConcurrencyGate {
     };
   }
 }
+
