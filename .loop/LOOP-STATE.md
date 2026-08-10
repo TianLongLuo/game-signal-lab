@@ -9,8 +9,8 @@
 |---------|------|------|------|------|----------|
 | blog-daily | 每日博客发布 | 内容生成 | 每天 9:00 | active | - |
 | seo-weekly | SEO 健康监控 | 监控 | 每周一 10:00 | active | 2026-08-10 |
-| ci-sweeper | CI 失败修复 | 修复 | 每 15 分钟 | active | 2026-08-10 10:15 |
-| changelog-weekly | 更新日志 | 文档 | 每周一 11:00 | active | - |
+| ci-sweeper | CI 失败修复 | 修复 | 每 15 分钟 | active | 2026-08-10 12:11 |
+| changelog-weekly | 更新日志 | 文档 | 每周一 11:00 | active | 2026-08-10 |
 
 ## 每日博客 Loop 状态
 
@@ -34,8 +34,16 @@
 - **上次测试结果**: 65 pass, 0 fail
 - **上次部署**: 成功
 - **已知不稳定测试**: 无
-- **注释**: 2026-08-10 10:15 CI sweeper 巡检，全部通过（65 pass 0 fail，本轮最新确认）
-- **⚠️ 推送受阻**: GitHub token 仍无效（API 401 Bad credentials，2026-08-10 10:15 复核确认，fetch 只读可用但 push 报 Authentication failed）。状态更新 commit 均在本地未推送（本地领先 origin 10 个 commit）。需更换 ~/.hermes/secrets/github_tianlongluo.token 及 remote URL 中的 token 后手动 push。
+- **注释**: 2026-08-10 12:11 CI sweeper 巡检，全部通过（65 pass 0 fail，本轮最新确认）
+- **⚠️ 推送受阻**: GitHub token 仍无效（API 401 Bad credentials，2026-08-10 12:11 复核确认，fetch 只读可用但 push 报 Authentication failed）。状态更新 commit 均在本地未推送（本地领先 origin 10+ 个 commit）。需更换 ~/.hermes/secrets/github_tianlongluo.token 及 remote URL 中的 token 后手动 push。
+
+## Changelog 状态
+
+- **上次运行**: 2026-08-10（首次）
+- **产出**: blog/en-changelog.html + blog/changelog.html
+- **覆盖范围**: 2026-08-03 至 2026-08-10（107 commits, 44 实质性变更）
+- **本周主题**: ASR 语音重构、视觉系统升级、国际化完成、博客上线
+- **博客文章数**: 18 中文 + 18 英文 = 36 篇
 
 ## 当前项目阶段
 
@@ -46,4 +54,4 @@
 
 ---
 
-*最后更新：2026-08-10 (blog-daily loop 执行) · Loop Engineering framework*
+*最后更新：2026-08-10 (seo-weekly loop 执行) · Loop Engineering framework*
