@@ -35,7 +35,7 @@
 - **上次部署**: 成功
 - **已知不稳定测试**: 无
 - **注释**: 2026-08-10 16:08 CI sweeper 巡检，全部通过（65 pass 0 fail，本轮最新确认）
-- **⚠️ 推送受阻**: GitHub token 仍无效（API 401 Bad credentials，2026-08-10 14:08 复核确认，fetch 只读可用但 push 报 Authentication failed）。状态更新 commit 均在本地未推送（本地领先 origin 10+ 个 commit）。需更换 ~/.hermes/secrets/github_tianlongluo.token 及 remote URL 中的 token 后手动 push。
+- **⚠️ 推送受阻**: GitHub token 仍无效（API 401 Bad credentials，2026-08-10 16:08 再次复核确认，fetch 只读可用但 push 报 Authentication failed）。状态更新 commit 均在本地未推送（本地领先 origin 10+ 个 commit）。需更换 ~/.hermes/secrets/github_tianlongluo.token 及 remote URL 中的 token 后手动 push。
 
 ## Changelog 状态
 
