@@ -175,7 +175,7 @@ test("a legacy version-1 database is upgraded without rewriting migration histor
       .prepare("SELECT version FROM schema_migrations ORDER BY version")
       .all()
       .map((row) => row.version),
-    [1, 2, 3]
+    [1, 2, 3, 4]
   );
   const auditColumns = backend.db
     .prepare("PRAGMA table_info(audit_events)")
@@ -942,7 +942,7 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
     method: "PUT",
     jar: memberJar,
     csrf: true,
-    body: { accepted: true, policyVersion: "2026-08-02-v2" },
+    body: { accepted: true, policyVersion: "2026-08-11-v3" },
   });
   assert.equal(consent.response.status, 200);
   assert.equal(consent.body.externalAiConsent.current, true);
@@ -1032,6 +1032,8 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
         { role: "assistant", content: "使用虚构数据确认上下文。" },
       ],
       temperature: 0.2,
+      channel: "agent",
+      archiveText: promptSentinel,
     },
   });
   assert.equal(stream.response.status, 200);
@@ -1230,6 +1232,23 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
   );
   assert.equal(JSON.stringify(adminV1Audit.body).includes(adminReasonSentinel), false);
 
+  const adminMessages = await requestJson(
+    baseUrl,
+    `/api/admin/v1/messages?page=1&pageSize=20&userId=${memberId}&channel=agent`,
+    { jar: adminV1Jar }
+  );
+  assert.equal(adminMessages.response.status, 200);
+  assert.equal(adminMessages.body.total, 2);
+  assert.ok(adminMessages.body.items.some((item) => item.content === promptSentinel));
+  assert.ok(adminMessages.body.items.some((item) => item.content.includes(outputSentinel)));
+  assert.ok(adminMessages.body.items.every((item) => item.userId === String(memberId)));
+  assert.equal(
+    backend.db
+      .prepare("SELECT COUNT(*) AS value FROM audit_events WHERE action = 'admin.messages.read'")
+      .get().value,
+    1
+  );
+
   backend.db.exec(`
     CREATE TRIGGER fail_global_access_audit
     BEFORE INSERT ON audit_events
@@ -1313,7 +1332,7 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
     method: "PUT",
     jar: memberJar,
     csrf: true,
-    body: { accepted: true, policyVersion: "2026-08-02-v2" },
+    body: { accepted: true, policyVersion: "2026-08-11-v3" },
   });
   assert.equal(reconsent.response.status, 200);
   const revokeGrant = await requestJson(
