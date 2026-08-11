@@ -996,6 +996,50 @@ select {
   background: rgba(255, 253, 248, 0.72);
 }
 
+.message-list {
+  margin-top: 18px;
+}
+
+.message-card {
+  padding: 18px 20px;
+  border: 1px solid var(--line-strong);
+  border-left: 4px solid var(--signal-deep);
+  background: rgba(255, 253, 248, 0.82);
+}
+
+.message-card--assistant {
+  border-left-color: #6d5f9b;
+  background: rgba(245, 242, 255, 0.78);
+}
+
+.message-card__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 14px;
+  color: var(--ink-600);
+  font-size: 12px;
+}
+
+.message-card__header strong {
+  color: var(--ink-900);
+  font-size: 14px;
+}
+
+.message-card__header time {
+  margin-left: auto;
+  font-family: var(--font-data);
+}
+
+.message-card__content {
+  margin: 14px 0 0;
+  color: var(--ink-900);
+  font-size: 15px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .audit-card time,
 .audit-card code {
   font-family: var(--font-data);
@@ -1337,7 +1381,8 @@ select {
   }
 
   .user-card,
-  .audit-card {
+  .audit-card,
+  .message-card {
     grid-template-columns: 1fr;
     padding: 17px;
   }

@@ -95,16 +95,20 @@
             <span class="nav-index" aria-hidden="true">02</span>
             <span>用户与授权</span>
           </button>
-          <button class="nav-item" type="button" data-view="audit">
+          <button class="nav-item" type="button" data-view="messages">
             <span class="nav-index" aria-hidden="true">03</span>
+            <span>消息记录</span>
+          </button>
+          <button class="nav-item" type="button" data-view="audit">
+            <span class="nav-index" aria-hidden="true">04</span>
             <span>行为审计</span>
           </button>
           <button class="nav-item" type="button" data-view="deepseek">
-            <span class="nav-index" aria-hidden="true">04</span>
+            <span class="nav-index" aria-hidden="true">05</span>
             <span>DeepSeek 配置</span>
           </button>
           <button class="nav-item" type="button" data-view="voice">
-            <span class="nav-index" aria-hidden="true">05</span>
+            <span class="nav-index" aria-hidden="true">06</span>
             <span>语音配置</span>
           </button>
         </nav>
@@ -149,7 +153,7 @@
               <div>
                 <p class="eyebrow">系统态势</p>
                 <h1 id="overview-title" tabindex="-1">管理概览</h1>
-                <p>只展示运营汇总与服务状态，不展示关系事件正文或第三方内容。</p>
+                <p>展示运营汇总与服务状态；消息正文仅在单独的加密消息记录页按权限查看。</p>
               </div>
               <button class="button button--quiet" id="refresh-overview" type="button">刷新数据</button>
             </header>
@@ -220,6 +224,49 @@
             </div>
           </section>
 
+          <section class="view" id="view-messages" data-view-panel="messages" aria-labelledby="messages-title" hidden>
+            <header class="page-heading">
+              <div>
+                <p class="eyebrow">支持与排障</p>
+                <h1 id="messages-title" tabindex="-1">消息记录</h1>
+                <p>查看用户主动发送的 Agent/故事消息及对应模型回复。</p>
+              </div>
+              <button class="button button--quiet" id="refresh-messages" type="button">刷新本页</button>
+            </header>
+            <div class="metadata-notice" role="note">
+              <span aria-hidden="true">i</span>
+              <div>
+                <strong>正文已加密存储，读取会被审计</strong>
+                <p>仅限用户支持与故障排查。请勿复制、导出或扩散用户内容；对象档案 RAG 正文不在此页面展示。</p>
+              </div>
+            </div>
+            <form class="filter-bar" id="message-filter-form" role="search">
+              <div class="field field--compact">
+                <label for="message-user-id">用户 ID</label>
+                <input id="message-user-id" name="userId" inputmode="numeric" placeholder="留空查看全部" />
+              </div>
+              <div class="field field--compact">
+                <label for="message-channel">消息来源</label>
+                <select id="message-channel" name="channel">
+                  <option value="all">全部来源</option>
+                  <option value="agent">一起想想</option>
+                  <option value="story">开始记录</option>
+                </select>
+              </div>
+              <button class="button button--dark" type="submit">应用筛选</button>
+            </form>
+            <ol class="record-list message-list" id="message-list" aria-label="消息记录"></ol>
+            <div class="empty-panel" id="message-empty" hidden>
+              <h2>暂无消息</h2>
+              <p>用户成功发送 Agent 或故事对话后，记录会显示在这里。</p>
+            </div>
+            <nav class="pagination" aria-label="消息记录分页">
+              <button class="button button--quiet button--small" id="message-prev" type="button">上一页</button>
+              <span id="message-page-status" aria-live="polite">第 1 页</span>
+              <button class="button button--quiet button--small" id="message-next" type="button">下一页</button>
+            </nav>
+          </section>
+
           <section class="view" id="view-audit" data-view-panel="audit" aria-labelledby="audit-title" hidden>
             <header class="page-heading">
               <div>
@@ -235,7 +282,7 @@
               <div>
                 <strong id="metadata-title">此处只展示元数据</strong>
                 <p>
-                  不展示聊天、事件事实、提示词、情绪、分析正文或第三方个人信息；仅展示时间、操作者 ID、动作、资源 ID、结果、固定原因代码和请求 ID。
+                  此页仅展示时间、操作者 ID、动作、资源 ID、结果、固定原因代码和请求 ID。用户消息正文请前往“消息记录”，对象档案正文仍不展示。
                 </p>
               </div>
             </div>

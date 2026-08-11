@@ -85,7 +85,7 @@ const MAX_RATE_LIMIT_KEYS = 10_000;
 const MAX_PASSWORD_QUEUE = 32;
 const AGENT_REQUEST_LIMIT = 30;
 const AGENT_REQUEST_WINDOW_MS = 60 * 1000;
-const EXTERNAL_AI_POLICY_VERSION = "2026-08-02-v2";
+const EXTERNAL_AI_POLICY_VERSION = "2026-08-11-v3";
 const MAX_STREAM_OUTPUT_BYTES = 512 * 1024;
 const MAX_SSE_FRAME_BYTES = 128 * 1024;
 const REQUEST_ID = Symbol("gameRequestId");
@@ -966,6 +966,16 @@ export async function createBackend(options = {}) {
       }
       const body = await readJson(request, AGENT_BODY_LIMIT);
       const agentInput = validateAgentInput(body);
+      const conversationId = String(request[REQUEST_ID] ?? `req_${randomToken(16)}`);
+      if (agentInput.archiveText) {
+        archiveConversationMessage(db, masterKey, {
+          userId: auth.id,
+          conversationId,
+          channel: agentInput.channel,
+          role: "user",
+          content: agentInput.archiveText,
+        });
+      }
       const clientIp = resolveClientIp(request);
       const ipLocale = clientIp ? (geoip.lookup(clientIp)?.country === "CN" ? "zh" : "en") : "en";
       const locale = body.locale === "zh" || body.locale === "en" ? body.locale : ipLocale;
@@ -989,6 +999,7 @@ export async function createBackend(options = {}) {
           agentInput,
           langPrompt,
           privateContext,
+          conversationId,
         });
       } finally {
         releaseAgentSlot();
@@ -1765,6 +1776,17 @@ export async function createBackend(options = {}) {
       return;
     }
 
+    if (subpath === "/messages" && method === "GET") {
+      const payload = listAdminMessages(db, masterKey, url);
+      writeAudit(db, request, masterKey, {
+        actorUserId: auth.id,
+        action: "admin.messages.read",
+        targetType: "conversation_archive",
+      });
+      sendJson(response, 200, payload);
+      return;
+    }
+
     if (subpath === "/integrations/deepseek" && method === "GET") {
       sendJson(response, 200, publicAdminDeepSeekConfig(db));
       return;
@@ -2001,6 +2023,7 @@ export async function createBackend(options = {}) {
     agentInput,
     langPrompt,
     privateContext,
+    conversationId,
   }) {
     if (config.algorithm !== "AES-256-GCM" || config.key_version !== 1) {
       writeAudit(db, request, masterKey, {
@@ -2101,6 +2124,15 @@ export async function createBackend(options = {}) {
       const streamResult = await proxyAllowedSse(upstream.body, response, controller);
       completed = true;
       response.end();
+      if (streamResult.ok && agentInput.archiveText && streamResult.text.trim()) {
+        archiveConversationMessage(db, masterKey, {
+          userId: auth.id,
+          conversationId,
+          channel: agentInput.channel,
+          role: "assistant",
+          content: streamResult.text,
+        });
+      }
       writeAudit(db, request, masterKey, {
         actorUserId: auth.id,
         action: "agent.stream",
@@ -2456,6 +2488,7 @@ function adminSessionPayload(user, csrfToken) {
         "users:read",
         "entitlements:write",
         "audit:read",
+        "messages:read",
         "deepseek:write",
       ],
     },
@@ -2656,6 +2689,100 @@ function listAdminAuditEvents(db, url) {
     total,
     pageCount: Math.max(1, Math.ceil(total / pageSize)),
   };
+}
+
+function listAdminMessages(db, masterKey, url) {
+  const page = parseBoundedInteger(url.searchParams.get("page"), 1, 100_000, 1, "page");
+  const pageSize = parseBoundedInteger(
+    url.searchParams.get("pageSize"),
+    1,
+    50,
+    20,
+    "pageSize"
+  );
+  const userIdValue = url.searchParams.get("userId");
+  const userId = userIdValue ? parsePositiveInteger(userIdValue) : null;
+  const channelValue = url.searchParams.get("channel") || "all";
+  if (!["all", "agent", "story"].includes(channelValue)) {
+    throw new HttpError(400, "INVALID_MESSAGE_CHANNEL", "消息来源筛选无效。");
+  }
+  const where = [];
+  const parameters = [];
+  if (userId !== null) {
+    where.push("m.user_id = ?");
+    parameters.push(userId);
+  }
+  if (channelValue !== "all") {
+    where.push("m.channel = ?");
+    parameters.push(channelValue);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const total = db
+    .prepare(`SELECT COUNT(*) AS value FROM conversation_messages m ${whereSql}`)
+    .get(...parameters).value;
+  const rows = db
+    .prepare(
+      `SELECT m.id, m.message_id, m.user_id, u.username, m.conversation_id,
+              m.channel, m.role, m.ciphertext, m.iv, m.auth_tag,
+              m.algorithm, m.key_version, m.created_at
+       FROM conversation_messages m
+       JOIN users u ON u.id = m.user_id
+       ${whereSql}
+       ORDER BY m.id DESC
+       LIMIT ? OFFSET ?`
+    )
+    .all(...parameters, pageSize, (page - 1) * pageSize);
+  return {
+    items: rows.map((row) => ({
+      id: String(row.id),
+      userId: String(row.user_id),
+      userAlias: row.username,
+      conversationId: row.conversation_id,
+      channel: row.channel,
+      role: row.role,
+      content: decryptSecret(
+        row,
+        masterKey,
+        `game-signal-lab:conversation:${row.message_id}:v1`
+      ),
+      occurredAt: row.created_at,
+    })),
+    page,
+    pageSize,
+    total,
+    pageCount: Math.max(1, Math.ceil(total / pageSize)),
+  };
+}
+
+function archiveConversationMessage(
+  db,
+  masterKey,
+  { userId, conversationId, channel, role, content }
+) {
+  const messageId = `msg_${randomToken(18)}`;
+  const secret = encryptSecret(
+    String(content).slice(0, 20_000),
+    masterKey,
+    `game-signal-lab:conversation:${messageId}:v1`
+  );
+  db.prepare(
+    `INSERT INTO conversation_messages
+      (message_id, user_id, conversation_id, channel, role, ciphertext, iv,
+       auth_tag, algorithm, key_version, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    messageId,
+    userId,
+    conversationId,
+    channel,
+    role,
+    secret.ciphertext,
+    secret.iv,
+    secret.authTag,
+    secret.algorithm ?? "AES-256-GCM",
+    secret.keyVersion ?? 1,
+    new Date().toISOString()
+  );
 }
 
 function publicAdminDeepSeekConfig(db) {
@@ -3076,7 +3203,21 @@ function validateAgentInput(body) {
       throw new HttpError(400, "invalid_temperature", "temperature 必须在 0–2 之间。");
     }
   }
-  return { messages, temperature, inputBytes };
+  const channel = body.channel === undefined ? "agent" : String(body.channel);
+  if (!["agent", "story"].includes(channel)) {
+    throw new HttpError(400, "invalid_channel", "channel 必须是 agent 或 story。");
+  }
+  let archiveText = "";
+  if (body.archiveText !== undefined) {
+    if (typeof body.archiveText !== "string") {
+      throw new HttpError(400, "invalid_archive_text", "archiveText 必须是字符串。");
+    }
+    archiveText = body.archiveText.normalize("NFKC").trim();
+    if (archiveText.length > 20_000) {
+      throw new HttpError(413, "archive_text_too_large", "存档消息不能超过 20000 个字符。");
+    }
+  }
+  return { messages, temperature, inputBytes, channel, archiveText };
 }
 
 function validateVoiceOrganizeInput(body) {
@@ -3316,6 +3457,7 @@ async function proxyAllowedSse(readable, response, controller) {
   const decoder = new TextDecoder();
   let pending = "";
   let emittedBytes = 0;
+  let assistantText = "";
 
   for await (const chunk of readable) {
     pending += decoder.decode(chunk, { stream: true });
@@ -3338,7 +3480,7 @@ async function proxyAllowedSse(readable, response, controller) {
       }
       if (data === "[DONE]") {
         await writeStreamChunk(response, "data: [DONE]\n\n", controller);
-        return { ok: true, reasonCode: null };
+        return { ok: true, reasonCode: null, text: assistantText };
       }
 
       let parsed;
@@ -3354,6 +3496,11 @@ async function proxyAllowedSse(readable, response, controller) {
       }
       const filtered = filterDeepSeekFrame(parsed);
       if (!filtered) continue;
+      for (const choice of filtered.choices) {
+        if (typeof choice.delta?.content === "string") {
+          assistantText += choice.delta.content;
+        }
+      }
       const encoded = `data: ${JSON.stringify(filtered)}\n\n`;
       emittedBytes += Buffer.byteLength(encoded);
       if (emittedBytes > MAX_STREAM_OUTPUT_BYTES) {
@@ -4282,4 +4429,3 @@ class AgentConcurrencyGate {
     };
   }
 }
-

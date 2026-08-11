@@ -2,11 +2,13 @@
 
 const API_ROOT = "/api/admin/v1";
 const AUDIT_PAGE_SIZE = 5;
+const MESSAGE_PAGE_SIZE = 20;
 const MOBILE_NAV_QUERY = "(max-width: 900px)";
 
 const viewTitles = {
   overview: "概览",
   users: "用户与授权",
+  messages: "消息记录",
   audit: "行为审计",
   deepseek: "DeepSeek 配置",
   voice: "语音配置",
@@ -210,6 +212,8 @@ let demoState = null;
 let currentView = "overview";
 let auditPage = 1;
 let auditPageCount = 1;
+let messagePage = 1;
+let messagePageCount = 1;
 let currentUsers = [];
 let nextUsersCursor = null;
 let userTotal = 0;
@@ -257,6 +261,15 @@ const auditPrev = document.querySelector("#audit-prev");
 const auditNext = document.querySelector("#audit-next");
 const auditPageStatus = document.querySelector("#audit-page-status");
 const refreshAuditButton = document.querySelector("#refresh-audit");
+const messageFilterForm = document.querySelector("#message-filter-form");
+const messageUserId = document.querySelector("#message-user-id");
+const messageChannel = document.querySelector("#message-channel");
+const messageList = document.querySelector("#message-list");
+const messageEmpty = document.querySelector("#message-empty");
+const messagePrev = document.querySelector("#message-prev");
+const messageNext = document.querySelector("#message-next");
+const messagePageStatus = document.querySelector("#message-page-status");
+const refreshMessagesButton = document.querySelector("#refresh-messages");
 
 const agentAccessForm = document.querySelector("#agent-access-form");
 const agentGlobalEnabled = document.querySelector("#agent-global-enabled");
@@ -339,6 +352,13 @@ function bindEvents() {
   auditPrev.addEventListener("click", () => loadAudit(auditPage - 1, true));
   auditNext.addEventListener("click", () => loadAudit(auditPage + 1, true));
   refreshAuditButton.addEventListener("click", () => loadAudit(auditPage, true));
+  messageFilterForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    loadMessages(1, true);
+  });
+  messagePrev.addEventListener("click", () => loadMessages(messagePage - 1, true));
+  messageNext.addEventListener("click", () => loadMessages(messagePage + 1, true));
+  refreshMessagesButton.addEventListener("click", () => loadMessages(messagePage, true));
 
   deepseekForm.addEventListener("submit", saveDeepseekConfig);
   agentAccessForm.addEventListener("submit", saveAgentAccess);
@@ -499,6 +519,7 @@ async function navigate(view, options = {}) {
 
   if (view === "overview") await loadOverview(false);
   if (view === "users") await loadUsers(false);
+  if (view === "messages") await loadMessages(messagePage, false);
   if (view === "audit") await loadAudit(auditPage, false);
   if (view === "deepseek") await loadDeepseek(false);
   if (view === "voice") await loadMimo(false);
@@ -875,6 +896,69 @@ function appendDemoAuditEvent(change) {
 
 function findCurrentUser(userId) {
   return currentUsers.find((user) => user.id === userId) || null;
+}
+
+async function loadMessages(page, announce) {
+  const requestedPage = Math.max(1, Number(page) || 1);
+  messagePrev.disabled = true;
+  messageNext.disabled = true;
+  try {
+    let payload;
+    if (session.mode === "demo") {
+      payload = { items: [], page: 1, pageSize: MESSAGE_PAGE_SIZE, total: 0, pageCount: 1 };
+    } else {
+      const params = new URLSearchParams({
+        page: String(requestedPage),
+        pageSize: String(MESSAGE_PAGE_SIZE),
+        channel: messageChannel.value || "all",
+      });
+      const userId = messageUserId.value.trim();
+      if (userId) params.set("userId", userId);
+      payload = await request(`/messages?${params}`);
+    }
+    messagePage = Number(payload.page) || requestedPage;
+    messagePageCount = Math.max(1, Number(payload.pageCount) || 1);
+    renderMessages(payload.items || []);
+    messagePageStatus.textContent =
+      `第 ${messagePage} / ${messagePageCount} 页，共 ${Number(payload.total) || 0} 条`;
+    messagePrev.disabled = messagePage <= 1;
+    messageNext.disabled = messagePage >= messagePageCount;
+    if (announce) showToast("消息记录已刷新");
+  } catch (error) {
+    messageList.replaceChildren();
+    messageEmpty.hidden = false;
+    messagePageStatus.textContent = "消息记录加载失败";
+    handleViewError(error, "消息记录加载失败");
+  }
+}
+
+function renderMessages(messages) {
+  messageList.replaceChildren(...messages.map(createMessageCard));
+  messageEmpty.hidden = messages.length !== 0;
+}
+
+function createMessageCard(message) {
+  const item = document.createElement("li");
+  const article = document.createElement("article");
+  article.className = `message-card message-card--${message.role === "assistant" ? "assistant" : "user"}`;
+
+  const header = document.createElement("div");
+  header.className = "message-card__header";
+  const identity = document.createElement("strong");
+  identity.textContent = `${message.userAlias || "用户"} · ID ${message.userId || "?"}`;
+  const meta = document.createElement("span");
+  meta.textContent = `${message.channel === "story" ? "开始记录" : "一起想想"} · ${message.role === "assistant" ? "AI 回复" : "用户消息"}`;
+  const time = document.createElement("time");
+  time.dateTime = message.occurredAt || "";
+  time.textContent = formatDateTime(message.occurredAt);
+  header.append(identity, meta, time);
+
+  const content = document.createElement("p");
+  content.className = "message-card__content";
+  content.textContent = message.content || "";
+  article.append(header, content);
+  item.append(article);
+  return item;
 }
 
 async function loadAudit(page, announce) {

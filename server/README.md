@@ -1,6 +1,6 @@
 # GAME Node 后端运行说明
 
-这个目录提供无第三方运行时依赖的 Node 后端：SQLite 迁移、账号与会员、管理员控制面、外部 AI 明示同意、加密 DeepSeek 配置、最小化审计，以及不落盘正文的 SSE 代理。
+这个目录提供 Node 后端：SQLite 迁移、账号与会员、管理员控制面、外部 AI 明示同意、加密 DeepSeek 配置、最小化审计、个人向量检索，以及加密消息归档的 SSE 代理。
 
 ## 运行要求
 
@@ -74,6 +74,7 @@ node --test tests/backend.test.mjs
 - SSE 路由需要关闭代理缓冲，并允许至少 120 秒的上游响应窗口。
 - DeepSeek 上游固定为 `https://api.deepseek.com/`，只允许 `deepseek-v4-flash` 与 `deepseek-v4-pro`；默认使用 Flash，并由服务端关闭 thinking 模式。
 - API Key 使用 AES-256-GCM 加密后存入 SQLite；管理员读取接口只返回是否已配置。
+- 用户主动发送的 Agent/故事消息及模型回复使用 AES-256-GCM 加密后存入 `conversation_messages`；只有管理员接口可解密读取，且每次读取都会新增审计事件。
 - Agent 仅发送用户本次明确提交的消息。客户端 `system` 消息会被拒绝，服务端固定注入安全提示词。
 - prompt、模型正文与自由文本审批理由均不写入数据库；审计只保存动作、资源、结果、固定 reason code、请求 ID 和时间。
 - Agent 同时受当前外部 AI 同意、相互独立的 provider 开关与全局开关、会员状态、个人授权、每用户频率与并发、全局并发约束。
