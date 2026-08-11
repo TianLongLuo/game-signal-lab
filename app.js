@@ -984,7 +984,7 @@ function renderAgent() {
             </div>
           </form>
           <p class="agent-privacy-note">
-            发送问题时，当前浏览器里的匿名对象档案会先更新到该账号的隔离知识库，再由 DeepSeek 只检索这个账号的数据。服务端不保存提示词或回复正文，管理员也看不到档案正文。
+            发送问题时，当前浏览器里的匿名对象档案会先更新到该账号的隔离知识库，再由 DeepSeek 只检索这个账号的数据。你主动发送的消息与模型回复会在服务端加密存档，并可由授权管理员在审计后台查看；对象档案正文仍保持账户隔离。
           </p>
         </aside>
       </div>
@@ -1008,7 +1008,8 @@ function renderExternalAiConsent() {
           <h2>这项同意与会员资格分开。</h2>
           <ul>
             <li>请只使用代号和最少必要上下文，不发送姓名、账号、地址、定位或完整聊天记录。</li>
-            <li>GAME 服务端不保存提示词和模型回复正文；你发起 Agent 提问时，当前匿名档案会同步到自己的隔离知识库，供本次和后续提问检索。</li>
+            <li>你主动发送的 Agent/故事消息与模型回复会在 GAME 服务端使用 AES-256-GCM 加密存档，供授权管理员排查服务与处理用户支持；管理员读取会写入审计日志。</li>
+            <li>你发起 Agent 提问时，当前匿名档案会同步到自己的隔离知识库，供本次和后续提问检索；不同账户之间不能互相检索。</li>
             <li>DeepSeek 作为外部模型提供方会接收你明确发送的文字；其处理受相应服务政策约束。</li>
             <li>你可以随时撤回。撤回后新的 Agent 请求会被服务端拒绝，并清空服务器个人知识库；本地日记不受影响。</li>
           </ul>
@@ -1017,7 +1018,7 @@ function renderExternalAiConsent() {
           <input type="hidden" name="policyVersion" value="${escapeAttribute(policyVersion)}" />
           <label class="check-row consent-check">
             <input type="checkbox" name="accepted" required />
-            <span>我已阅读并同意：发起 Agent 提问时，将我主动发送的文字和当前匿名档案同步到账号专属知识库，并交给 DeepSeek 处理。</span>
+            <span>我已阅读并同意：发起 Agent 或故事对话时，将我主动发送的文字与模型回复加密存档，并将当前匿名档案同步到账号专属知识库、交给 DeepSeek 处理。</span>
           </label>
           <p class="form-error" data-consent-error role="alert" aria-live="assertive"></p>
           <button class="button button--primary" type="submit">同意并继续</button>
@@ -1094,7 +1095,7 @@ function renderAgentAuth() {
         <h2>两个空间，清楚分开。</h2>
         <div>
           <p><strong>本地日记</strong> — 匿名档案、事件、分析和复盘保留在浏览器里。</p>
-          <p><strong>显式 Agent 对话</strong> — 只有你按下发送的内容才进入模型请求，且服务端不保存正文。</p>
+          <p><strong>显式 Agent 对话</strong> — 只有你按下发送的内容才进入模型请求；消息与回复会加密存档，并可由授权管理员审计查看。</p>
         </div>
       </section>
     </div>
@@ -1416,6 +1417,8 @@ async function submitAgentPrompt(form, formData) {
   try {
     const complete = await platformClient.streamAgent(conversation, {
       signal: platform.agentController.signal,
+      channel: "agent",
+      archiveText: prompt,
       onText(chunk, fullText) {
         const target = platform.agentMessages.at(-1);
         if (target?.role === "assistant") target.content = fullText.slice(0, 20000);
@@ -1836,6 +1839,8 @@ async function submitStoryAnswer(answer) {
   try {
     const complete = await platformClient.streamAgent(conversation, {
       signal: storyIntake.controller.signal,
+      channel: "story",
+      archiveText: normalized,
       onText(chunk, fullText) {
         const target = storyIntake.messages.at(-1);
         if (target?.role === "assistant") {
@@ -3731,7 +3736,7 @@ function renderPrivacy() {
         <p class="data-warning">
           登录、会员授权、Agent 调用结果和管理操作会以最少必要元数据记录在服务端，用于安全、权限和故障排查；
           不记录本地事件正文、Agent 提示词、模型回复、IP 地址或浏览器标识。你显式发送给 Agent 的文字会转交
-          DeepSeek 生成实时回应，但本服务不保存这段正文。请仍使用代号并避免发送可识别信息。
+          DeepSeek 生成实时回应；本服务会加密保存你主动发送的内容和模型回复，授权管理员可在审计后台查看。请仍使用代号并避免发送可识别信息。
         </p>
       </section>
 
@@ -4551,4 +4556,3 @@ function cssEscape(value) {
   if (globalThis.CSS?.escape) return globalThis.CSS.escape(String(value));
   return String(value).replace(/[^A-Za-z0-9_-]/g, "\\$&");
 }
-
