@@ -87,6 +87,10 @@ const MIGRATIONS = [
     version: 3,
     apply: migrateToVersion3,
   },
+  {
+    version: 4,
+    apply: migrateToVersion4,
+  },
 ];
 
 export function openDatabase(path) {
@@ -276,6 +280,31 @@ function migrateToVersion3(db) {
       BEGIN
         DELETE FROM user_rag_documents_fts WHERE rowid = old.id;
       END;
+  `);
+}
+
+function migrateToVersion4(db) {
+  db.exec(`
+    CREATE TABLE conversation_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id TEXT NOT NULL UNIQUE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      conversation_id TEXT NOT NULL,
+      channel TEXT NOT NULL CHECK (channel IN ('agent', 'story')),
+      role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+      ciphertext TEXT NOT NULL,
+      iv TEXT NOT NULL,
+      auth_tag TEXT NOT NULL,
+      algorithm TEXT NOT NULL DEFAULT 'AES-256-GCM',
+      key_version INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL
+    ) STRICT;
+    CREATE INDEX conversation_messages_user_time_idx
+      ON conversation_messages(user_id, id DESC);
+    CREATE INDEX conversation_messages_time_idx
+      ON conversation_messages(id DESC);
+    CREATE INDEX conversation_messages_conversation_idx
+      ON conversation_messages(conversation_id, id);
   `);
 }
 
