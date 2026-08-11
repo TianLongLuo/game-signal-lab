@@ -168,6 +168,7 @@ test("a legacy version-1 database is upgraded without rewriting migration histor
     env: {
       ADMIN_BOOTSTRAP_PASSWORD: ADMIN_PASSWORD,
       CONFIG_MASTER_KEY: MASTER_KEY,
+      GA_MEASUREMENT_ID: "G-TEST123456",
     },
   });
   assert.deepEqual(
@@ -301,6 +302,7 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
     env: {
       ADMIN_BOOTSTRAP_PASSWORD: ADMIN_PASSWORD,
       CONFIG_MASTER_KEY: MASTER_KEY,
+      GA_MEASUREMENT_ID: "G-TEST123456",
     },
   });
   await backend.listen();
@@ -318,13 +320,24 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
   assert.equal(runtimeConfig.status, 200);
   assert.match(runtimeConfig.headers.get("content-type"), /^text\/javascript/);
   assert.equal(runtimeConfig.headers.get("cache-control"), "no-store");
-  assert.match(await runtimeConfig.text(), /apiEnabled: true/);
+  const runtimeConfigText = await runtimeConfig.text();
+  assert.match(runtimeConfigText, /apiEnabled: true/);
+  assert.match(runtimeConfigText, /gaMeasurementId: "G-TEST123456"/);
 
   const home = await fetch(`${baseUrl}/`);
   assert.equal(home.status, 200);
   assert.match(home.headers.get("content-type"), /^text\/html/);
   assert.match(home.headers.get("content-security-policy"), /connect-src 'self'/);
-  assert.match(await home.text(), /GAME Signal Lab/);
+  assert.match(home.headers.get("content-security-policy"), /googletagmanager\.com/);
+  const homeText = await home.text();
+  assert.match(homeText, /GAME Signal Lab/);
+  assert.match(homeText, /hreflang="en" href="http:\/\/game\.test\/en\/"/);
+  const englishHome = await fetch(`${baseUrl}/en/`);
+  assert.equal(englishHome.status, 200);
+  assert.match(await englishHome.text(), /Privacy-First Relationship Journal/);
+  const analyticsScript = await fetch(`${baseUrl}/analytics.js`);
+  assert.equal(analyticsScript.status, 200);
+  assert.match(await analyticsScript.text(), /gameAnalytics/);
   const homeScript = await fetch(`${baseUrl}/app.js`, { method: "HEAD" });
   assert.equal(homeScript.status, 200);
   assert.match(homeScript.headers.get("content-type"), /^text\/javascript/);
@@ -349,7 +362,9 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
   assert.equal(sitemap.status, 200);
   assert.match(sitemap.headers.get("content-type"), /^application\/xml/);
   assert.equal(sitemap.headers.get("cache-control"), "public, max-age=3600");
-  assert.match(await sitemap.text(), /<loc>http:\/\/game\.test\/<\/loc>/);
+  const sitemapText = await sitemap.text();
+  assert.match(sitemapText, /<loc>http:\/\/game\.test\/<\/loc>/);
+  assert.match(sitemapText, /<loc>http:\/\/game\.test\/en\/<\/loc>/);
 
   const bootstrapAdmin = backend.db
     .prepare("SELECT username, role, password_hash FROM users WHERE username_norm = 'drac'")

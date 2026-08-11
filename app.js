@@ -41,6 +41,17 @@ const viewTitles = {
   agent: "一起想想",
 };
 
+const englishViewTitles = {
+  dashboard: "Home",
+  "new-event": "Tell Your Story",
+  people: "People & Stories",
+  review: "Outcome Review",
+  profile: "Your Preferences",
+  privacy: "Privacy & Data",
+  analysis: "Signal Review",
+  agent: "Think It Through",
+};
+
 const signalMeta = {
   weak: {
     label: "弱信号",
@@ -584,6 +595,7 @@ function navigate(view) {
   setMobileMenu(false);
   homeSceneInput.transitioning = false;
   renderCurrentView();
+  window.gameAnalytics?.page(view, document.title);
   window.scrollTo({ top: 0, behavior: "smooth" });
   requestAnimationFrame(() => main.focus({ preventScroll: true }));
 }
@@ -807,8 +819,11 @@ function renderStoryViewPreservingScroll(snapshot = captureStoryThreadScroll(), 
 }
 
 function updateNavigation() {
-  document.querySelector("#topbar-title").textContent = viewTitles[currentView] || "Signal Lab";
-  document.title = `${viewTitles[currentView] || "Signal Lab"} · GAME`;
+  const localizedTitle = detectLocale() === "en"
+    ? englishViewTitles[currentView] || "Signal Lab"
+    : viewTitles[currentView] || "Signal Lab";
+  document.querySelector("#topbar-title").textContent = localizedTitle;
+  document.title = `${localizedTitle} · GAME Signal Lab`;
   document.querySelectorAll(".nav-item[data-view]").forEach((item) => {
     const isCurrent = item.dataset.view === currentView;
     item.classList.toggle("is-active", isCurrent);
@@ -3697,6 +3712,13 @@ function renderPrivacy() {
           <p>会删除所有匿名档案、事件、分析和复盘。操作完成后无法在本站恢复。</p>
           <button class="button button--danger" data-action="clear-data">清空全部数据</button>
         </article>
+
+        <article class="data-card">
+          <p class="eyebrow">匿名使用分析</p>
+          <h2>Google Analytics 偏好</h2>
+          <p>只统计页面和功能完成状态，不发送日记、档案、录音、AI 消息、用户名或用户 ID。你可以随时重新选择。</p>
+          <button class="button button--quiet" data-action="analytics-preferences">管理分析偏好</button>
+        </article>
       </div>
 
       <section class="section panel panel--flat">
@@ -3735,7 +3757,7 @@ function renderPrivacy() {
         <h2 class="panel-title">账号、Agent 与最小审计</h2>
         <p class="data-warning">
           登录、会员授权、Agent 调用结果和管理操作会以最少必要元数据记录在服务端，用于安全、权限和故障排查；
-          不记录本地事件正文、Agent 提示词、模型回复、IP 地址或浏览器标识。你显式发送给 Agent 的文字会转交
+          不记录本地事件正文、系统提示词、IP 地址或浏览器标识。你显式发送给 Agent 的文字会转交
           DeepSeek 生成实时回应；本服务会加密保存你主动发送的内容和模型回复，授权管理员可在审计后台查看。请仍使用代号并避免发送可识别信息。
         </p>
       </section>

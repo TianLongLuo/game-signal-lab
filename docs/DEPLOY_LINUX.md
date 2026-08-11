@@ -31,6 +31,8 @@ sudo -u game npm run check
 ```dotenv
 NODE_ENV=production
 PUBLIC_ORIGIN=https://game.example.com
+# GA4 Web 数据流 Measurement ID；不是 API Key，可留空禁用统计。
+GA_MEASUREMENT_ID=G-XXXXXXXXXX
 DATABASE_PATH=/var/lib/game-signal-lab/game.sqlite
 COOKIE_SECURE=true
 CONFIG_MASTER_KEY=<32-byte-base64url-or-64-hex-value>
@@ -91,6 +93,8 @@ loopback HTTP/WebSocket URL。HTTP `8000` 和旧版 WebSocket `10095` 是不同�
 不能混填。需要中文和英语时使用 HTTP `sensevoice + language=auto`，不要把
 中文 `paraformer-online` 当作英语模型。FunASR 不可用、超时或拒绝音频时，应用会自动回退到后台配置的 MiMo
 ASR；两者都不可用时才向用户返回错误。
+
+GA4 使用 Basic Consent Mode：访客允许匿名分析前不会加载 Google Tag。只记录页面、功能入口和完成状态等无正文事件，不发送日记、档案、录音、AI 消息、用户名或用户 ID。部署后请在 GA4 DebugView/Realtime 验证首页、`/en/`、博客和应用内页面切换的 `page_view`。
 
 对于 2 核 4G 轻量服务器，仓库默认把 FunASR 限制为 1.75 核、2.5G 内存、
 2 个计算线程和单并发。建议额外配置至少 2G swap，并确保 Node、Qdrant、FunASR

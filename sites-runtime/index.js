@@ -149,6 +149,15 @@ async function route(request, env, ctx) {
   if (method === "GET" && path === "/sitemap.xml") {
     return publicSitemap(url.origin);
   }
+  if (method === "GET" && path === "/runtime-config.js") {
+    const gaMeasurementId = /^G-[A-Z0-9]{6,14}$/.test(String(env.GA_MEASUREMENT_ID || "").trim().toUpperCase())
+      ? String(env.GA_MEASUREMENT_ID).trim().toUpperCase()
+      : "";
+    return withSecurity(new Response(
+      `window.__GAME_RUNTIME__ = Object.freeze({ apiEnabled: true, deployment: "sites", locale: "en", gaMeasurementId: "${gaMeasurementId}" });\n`,
+      { headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" } }
+    ));
+  }
   if (method === "GET" && path === "/api/auth/csrf") {
     return issuePreauthCsrf(env);
   }
@@ -2911,6 +2920,7 @@ async function serveStatic(request, env, path) {
   const target = new URL(request.url);
   if (path === "/admin") target.pathname = "/admin/index.html";
   if (path === "/") target.pathname = "/index.html";
+  if (path === "/en") target.pathname = "/en/index.html";
   let response;
   if (env.ASSETS?.fetch) {
     response = await env.ASSETS.fetch(new Request(target, request));
@@ -2964,12 +2974,21 @@ function publicRobots(origin) {
 }
 
 function publicSitemap(origin) {
+  const publicPaths = [
+    "/",
+    "/en/",
+    ...Object.keys(EMBEDDED_STATIC_ASSETS || {})
+      .filter((path) => path === "/blog/index.html" || /^\/blog\/[^/]+\.html$/.test(path))
+      .map((path) => path === "/blog/index.html" ? "/blog/" : path),
+  ];
   const body = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
-    "  <url>",
-    `    <loc>${origin}/</loc>`,
-    "  </url>",
+    ...[...new Set(publicPaths)].sort().flatMap((path) => [
+      "  <url>",
+      `    <loc>${origin}${path}</loc>`,
+      "  </url>",
+    ]),
     "</urlset>",
     "",
   ].join("\n");
@@ -3007,7 +3026,7 @@ function secureHeaders(initial = undefined) {
   );
   headers.set(
     "Content-Security-Policy",
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+    "default-src 'self'; script-src 'self' https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://www.google-analytics.com; connect-src 'self' https://www.google-analytics.com https://region1.google-analytics.com; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
   );
   return headers;
 }
