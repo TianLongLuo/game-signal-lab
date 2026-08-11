@@ -93,7 +93,7 @@ export class PlatformClient {
     });
   }
 
-  async streamAgent(messages, { onText, signal } = {}) {
+  async streamAgent(messages, { onText, signal, channel, archiveText } = {}) {
     const normalizedMessages = normalizeAgentMessages(messages);
     const response = await fetch("/api/agent/stream", {
       method: "POST",
@@ -104,6 +104,8 @@ export class PlatformClient {
       }),
       body: JSON.stringify({
         messages: normalizedMessages,
+        ...(channel ? { channel } : {}),
+        ...(archiveText ? { archiveText } : {}),
         locale: (() => {
           try {
             const stored = localStorage.getItem("game-locale");
