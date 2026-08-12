@@ -330,6 +330,10 @@ function bindGlobalEvents() {
   document.addEventListener("click", async (event) => {
     const viewButton = event.target.closest("[data-view]");
     if (viewButton && viewButton.dataset.action !== "home-scene-open") {
+      if (viewButton.dataset.view === "agent" && !platform.user) {
+        openPlatformAuthDialog();
+        return;
+      }
       preferredContactId =
         viewButton.dataset.view === "new-event" && viewButton.dataset.contactId
           ? viewButton.dataset.contactId
@@ -342,6 +346,17 @@ function bindGlobalEvents() {
     if (!action) return;
 
     const actionName = action.dataset.action;
+
+    if (actionName === "open-platform-account") {
+      if (platform.user) navigate("agent");
+      else openPlatformAuthDialog();
+      return;
+    }
+
+    if (actionName === "close-platform-auth") {
+      closePlatformAuthDialog();
+      return;
+    }
 
     if (actionName === "home-scene-next") {
       setHomeSceneIndex(homeSceneIndex + 1);
@@ -604,6 +619,10 @@ function bindGlobalEvents() {
 
   document.addEventListener("cancel", (event) => {
     if (event.target?.matches?.("#contact-editor-dialog")) closeContactEditor();
+    if (event.target?.matches?.("#platform-auth-dialog")) {
+      event.preventDefault();
+      closePlatformAuthDialog();
+    }
   });
 }
 
@@ -892,7 +911,11 @@ async function refreshPlatformSession() {
     platform.knowledge = null;
     platform.knowledgeSignature = "";
     syncPlatformStatus();
-    if (currentView === "agent") renderCurrentView();
+    if (currentView === "agent") {
+      currentView = "dashboard";
+      renderCurrentView();
+      requestAnimationFrame(openPlatformAuthDialog);
+    }
     return;
   }
   try {
@@ -928,7 +951,13 @@ async function refreshPlatformSession() {
     }
   }
   syncPlatformStatus();
-  if (currentView === "agent") renderCurrentView();
+  if (currentView === "agent" && !platform.user) {
+    currentView = "dashboard";
+    renderCurrentView();
+    requestAnimationFrame(openPlatformAuthDialog);
+  } else if (currentView === "agent") {
+    renderCurrentView();
+  }
 }
 
 function syncPlatformStatus() {
@@ -943,7 +972,7 @@ function syncPlatformStatus() {
     status.textContent = t("localMode");
     status.classList.remove("is-online");
   } else {
-    status.textContent = "登录 Agent";
+    status.textContent = detectLocale() === "en" ? "Sign In" : "登录";
     status.classList.remove("is-online");
   }
 }
@@ -1170,6 +1199,80 @@ function renderAgentAuth() {
   `;
 }
 
+function ensurePlatformAuthDialog() {
+  let dialog = document.querySelector("#platform-auth-dialog");
+  if (dialog) return dialog;
+  dialog = document.createElement("dialog");
+  dialog.id = "platform-auth-dialog";
+  dialog.className = "platform-auth-dialog";
+  dialog.setAttribute("aria-labelledby", "platform-auth-title");
+  document.body.append(dialog);
+  return dialog;
+}
+
+function renderPlatformAuthDialog() {
+  const english = detectLocale() === "en";
+  const serviceUnavailable = platform.available === false;
+  const serviceNote = serviceUnavailable
+    ? english
+      ? "Account services are unavailable in this preview. Your local journal still works."
+      : "当前预览未连接账号服务；本地记录功能仍可正常使用。"
+    : english
+      ? "Sign in here without leaving your current page. Nothing in your local journal is uploaded just by signing in."
+      : "在这里登录，无需离开当前页面。仅登录不会上传你的本地日记。";
+  return `
+    <button class="platform-auth-close" type="button" data-action="close-platform-auth" aria-label="${english ? "Close sign-in" : "关闭登录窗口"}">×</button>
+    <header class="platform-auth-head">
+      <p class="eyebrow">GAME · ACCOUNT ACCESS</p>
+      <h1 id="platform-auth-title">${english ? "Stay where you are." : "留在当前页面。"}</h1>
+      <p>${serviceNote}</p>
+    </header>
+    <div class="platform-auth-grid">
+      <form class="platform-auth-panel" id="platform-login-form">
+        <span class="editorial-number">01</span>
+        <p class="eyebrow">${english ? "WELCOME BACK" : "已有账户"}</p>
+        <h2>${english ? "Sign in" : "登录"}</h2>
+        ${authFields("login")}
+        <p class="form-error" data-auth-error role="alert" aria-live="assertive"></p>
+        <button class="button button--primary" type="submit" ${serviceUnavailable ? "disabled" : ""}>${english ? "Sign In" : "登录"}</button>
+      </form>
+      <form class="platform-auth-panel platform-auth-panel--register" id="platform-register-form">
+        <span class="editorial-number">02</span>
+        <p class="eyebrow">${english ? "NEW HERE" : "创建账户"}</p>
+        <h2>${english ? "Create an account" : "创建账户"}</h2>
+        ${authFields("register")}
+        <p class="form-error" data-auth-error role="alert" aria-live="assertive"></p>
+        <button class="button button--quiet" type="submit" ${serviceUnavailable ? "disabled" : ""}>${english ? "Create Account" : "注册并登录"}</button>
+      </form>
+    </div>
+    <p class="platform-auth-foot">${english ? "Your anonymous profiles remain on this device until you explicitly consent to AI processing and send a request." : "匿名档案仍保留在当前设备；只有你明确同意外部 AI 处理并主动发送请求后，才会同步最少必要内容。"}</p>
+  `;
+}
+
+function openPlatformAuthDialog() {
+  if (platform.user) {
+    navigate("agent");
+    return;
+  }
+  const dialog = ensurePlatformAuthDialog();
+  dialog.classList.remove("is-closing");
+  dialog.innerHTML = renderPlatformAuthDialog();
+  if (!dialog.open) dialog.showModal();
+  localizePage();
+  requestAnimationFrame(() => dialog.querySelector("#login-username")?.focus());
+}
+
+function closePlatformAuthDialog({ restoreFocus = true } = {}) {
+  const dialog = document.querySelector("#platform-auth-dialog");
+  if (!dialog?.open || dialog.classList.contains("is-closing")) return;
+  dialog.classList.add("is-closing");
+  window.setTimeout(() => {
+    dialog.close();
+    dialog.classList.remove("is-closing");
+    if (restoreFocus) document.querySelector("#platform-status")?.focus();
+  }, window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 170);
+}
+
 function authFields(prefix) {
   return `
     <div class="field">
@@ -1254,8 +1357,21 @@ async function authenticatePlatform(form, mode) {
     platform.membership = payload.membership;
     await refreshPlatformSession();
     syncPlatformStatus();
-    showToast(mode === "register" ? "账户已创建并安全登录" : "已登录关系思考 Agent");
-    requestAnimationFrame(() => document.querySelector("#agent-prompt")?.focus());
+    const english = detectLocale() === "en";
+    showToast(
+      mode === "register"
+        ? english
+          ? "Account created. You're signed in."
+          : "账户已创建并安全登录"
+        : english
+          ? "You're signed in."
+          : "已登录",
+    );
+    closePlatformAuthDialog({ restoreFocus: false });
+    requestAnimationFrame(() => {
+      if (currentView === "agent") document.querySelector("#agent-prompt")?.focus();
+      else main.focus({ preventScroll: true });
+    });
   } catch (error) {
     errorNode.textContent =
       error instanceof PlatformError ? error.message : "登录请求未完成，请稍后重试。";
@@ -1282,6 +1398,7 @@ async function logoutPlatform() {
   platform.agentMessages = [];
   platform.agentController?.abort();
   platform.agentBusy = false;
+  if (currentView === "agent") currentView = "dashboard";
   syncPlatformStatus();
   renderCurrentView();
   showToast("已退出账户；本地关系记录未受影响");
@@ -1311,7 +1428,7 @@ async function updateExternalAiConsent(accepted, policyVersion = "", form = null
 async function syncPersonalKnowledge() {
   if (!platform.user) {
     showToast("请先登录，再同步你的个人档案", 3600);
-    navigate("agent");
+    openPlatformAuthDialog();
     return;
   }
   if (!platform.externalAiConsent?.current) {
@@ -1733,8 +1850,8 @@ function formatRecordingDuration(milliseconds = 0) {
 function startStoryIntake({ beginVoice = false } = {}) {
   cancelStorySpeech();
   if (!platform.user) {
-    showToast("请先在 Agent 页面登录，再开始故事记录", 3600);
-    navigate("agent");
+    showToast("请先登录，再开始故事记录", 3600);
+    openPlatformAuthDialog();
     return;
   }
   if (!platform.externalAiConsent?.current) {

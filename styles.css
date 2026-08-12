@@ -2470,6 +2470,196 @@ body {
   }
 }
 
+/* Account access is a secondary surface, not a route change. */
+.platform-auth-dialog {
+  width: min(920px, calc(100vw - 32px));
+  max-height: min(820px, calc(100dvh - 32px));
+  padding: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid #80504a;
+  border-radius: 3px;
+  background:
+    radial-gradient(circle at 88% 8%, rgba(57, 230, 208, 0.08), transparent 18rem),
+    linear-gradient(145deg, rgba(255, 69, 58, 0.09), transparent 34%),
+    #0d0c0c;
+  color: #f7eee8;
+  box-shadow: 0 30px 100px rgba(0, 0, 0, 0.72);
+  opacity: 0;
+  transform: translate3d(0, 18px, 0) scale(0.975);
+  transition:
+    opacity 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 260ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.platform-auth-dialog[open] {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1);
+}
+
+.platform-auth-dialog.is-closing {
+  opacity: 0;
+  transform: translate3d(0, 10px, 0) scale(0.985);
+  transition-duration: 150ms;
+}
+
+.platform-auth-dialog::backdrop {
+  background: rgba(3, 3, 4, 0.78);
+  backdrop-filter: blur(10px) saturate(0.75);
+  opacity: 1;
+  transition: opacity 180ms ease;
+}
+
+.platform-auth-dialog.is-closing::backdrop {
+  opacity: 0;
+}
+
+@starting-style {
+  .platform-auth-dialog[open] {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0) scale(0.975);
+  }
+
+  .platform-auth-dialog[open]::backdrop {
+    opacity: 0;
+  }
+}
+
+.platform-auth-close {
+  position: sticky;
+  z-index: 3;
+  top: 16px;
+  float: right;
+  width: 42px;
+  height: 42px;
+  margin: 16px 16px -58px 0;
+  border: 1px solid #72514c;
+  border-radius: 2px;
+  background: #171313;
+  color: #fff8ef;
+  cursor: pointer;
+  font-size: 25px;
+  line-height: 1;
+  transition: transform 140ms cubic-bezier(0.22, 1, 0.36, 1), border-color 180ms ease;
+}
+
+.platform-auth-close:hover,
+.platform-auth-close:focus-visible {
+  border-color: var(--signal);
+  transform: rotate(3deg) scale(1.04);
+}
+
+.platform-auth-head {
+  padding: clamp(30px, 5vw, 58px) clamp(26px, 6vw, 72px) 28px;
+  border-bottom: 1px solid #4e3430;
+}
+
+.platform-auth-head h1 {
+  max-width: 14ch;
+  margin: 12px 0;
+  font-family: var(--font-display);
+  font-size: clamp(38px, 6vw, 72px);
+  font-weight: 650;
+  letter-spacing: -0.045em;
+  line-height: 0.98;
+}
+
+.platform-auth-head > p:last-child {
+  max-width: 650px;
+  margin: 0;
+  color: #b8aaa4;
+  line-height: 1.7;
+}
+
+.platform-auth-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.platform-auth-panel {
+  min-width: 0;
+  padding: clamp(26px, 4vw, 46px);
+}
+
+.platform-auth-panel + .platform-auth-panel {
+  border-left: 1px solid #4e3430;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.platform-auth-panel h2 {
+  margin: 8px 0 24px;
+  color: #fff8ef;
+  font-family: var(--font-display);
+  font-size: clamp(26px, 3vw, 38px);
+}
+
+.platform-auth-panel .field {
+  margin-bottom: 16px;
+}
+
+.platform-auth-panel .field label {
+  color: #c6b8b1;
+}
+
+.platform-auth-panel .button {
+  width: 100%;
+}
+
+.platform-auth-foot {
+  margin: 0;
+  padding: 18px clamp(26px, 6vw, 72px) 24px;
+  border-top: 1px solid #4e3430;
+  color: #8f817c;
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+html[lang="en"] .platform-auth-head h1,
+html[lang="en"] .platform-auth-panel h2 {
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+@media (max-width: 700px) {
+  .platform-auth-dialog {
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 20px);
+  }
+
+  .platform-auth-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .platform-auth-panel + .platform-auth-panel {
+    border-top: 1px solid #4e3430;
+    border-left: 0;
+  }
+
+  .platform-auth-head {
+    padding: 28px 22px 22px;
+  }
+
+  .platform-auth-head h1 {
+    padding-right: 42px;
+    font-size: clamp(36px, 12vw, 54px);
+  }
+
+  .platform-auth-panel {
+    padding: 25px 22px;
+  }
+
+  .platform-auth-foot {
+    padding-inline: 22px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .platform-auth-dialog,
+  .platform-auth-dialog::backdrop,
+  .platform-auth-close {
+    transition: none !important;
+  }
+}
+
 /* Complete-capture voice flow: record locally, then transcribe one MP3 after stop. */
 .story-recording-panel {
   display: grid;
