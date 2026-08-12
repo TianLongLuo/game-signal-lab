@@ -300,7 +300,10 @@ function bindGlobalEvents() {
     persistCurrentState();
     ageGate.close();
     setAppAvailability(true);
-    main.focus();
+    main.focus({ preventScroll: true });
+    if (window.matchMedia("(max-width: 700px)").matches) {
+      window.scrollTo({ top: 0, behavior: "auto" });
+    }
   });
 
   mobileMenu.addEventListener("click", () => {
@@ -741,6 +744,22 @@ function setHomeSceneIndex(nextIndex, { announce = true } = {}) {
 }
 
 function renderSceneLetters(text) {
+  if (detectLocale() === "en") {
+    let letterIndex = 0;
+    return String(text)
+      .trim()
+      .split(/\s+/)
+      .map((word) => {
+        const letters = Array.from(word)
+          .map(
+            (letter) =>
+              `<span class="scene-title-letter" style="--letter-index:${letterIndex++}" aria-hidden="true">${escapeHTML(letter)}</span>`,
+          )
+          .join("");
+        return `<span class="scene-title-word" aria-hidden="true">${letters}</span>`;
+      })
+      .join("");
+  }
   return Array.from(text)
     .map(
       (letter, index) =>
@@ -764,16 +783,22 @@ function handleHomeSceneWheel(event) {
 
 function handleHomeSceneTouchStart(event) {
   if (currentView !== "dashboard" || ageGate.open) return;
+  if (window.matchMedia("(max-width: 700px)").matches) return;
   homeSceneInput.touchStartY = event.touches[0]?.clientY ?? null;
 }
 
 function handleHomeSceneTouchMove(event) {
   if (currentView !== "dashboard" || homeSceneInput.touchStartY === null || ageGate.open) return;
+  if (window.matchMedia("(max-width: 700px)").matches) return;
   event.preventDefault();
 }
 
 function handleHomeSceneTouchEnd(event) {
   if (currentView !== "dashboard" || homeSceneInput.touchStartY === null || ageGate.open) return;
+  if (window.matchMedia("(max-width: 700px)").matches) {
+    homeSceneInput.touchStartY = null;
+    return;
+  }
   const endY = event.changedTouches[0]?.clientY ?? homeSceneInput.touchStartY;
   const distance = homeSceneInput.touchStartY - endY;
   homeSceneInput.touchStartY = null;
