@@ -2470,6 +2470,196 @@ body {
   }
 }
 
+/* Account access is a secondary surface, not a route change. */
+.platform-auth-dialog {
+  width: min(920px, calc(100vw - 32px));
+  max-height: min(820px, calc(100dvh - 32px));
+  padding: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid #80504a;
+  border-radius: 3px;
+  background:
+    radial-gradient(circle at 88% 8%, rgba(57, 230, 208, 0.08), transparent 18rem),
+    linear-gradient(145deg, rgba(255, 69, 58, 0.09), transparent 34%),
+    #0d0c0c;
+  color: #f7eee8;
+  box-shadow: 0 30px 100px rgba(0, 0, 0, 0.72);
+  opacity: 0;
+  transform: translate3d(0, 18px, 0) scale(0.975);
+  transition:
+    opacity 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 260ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.platform-auth-dialog[open] {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1);
+}
+
+.platform-auth-dialog.is-closing {
+  opacity: 0;
+  transform: translate3d(0, 10px, 0) scale(0.985);
+  transition-duration: 150ms;
+}
+
+.platform-auth-dialog::backdrop {
+  background: rgba(3, 3, 4, 0.78);
+  backdrop-filter: blur(10px) saturate(0.75);
+  opacity: 1;
+  transition: opacity 180ms ease;
+}
+
+.platform-auth-dialog.is-closing::backdrop {
+  opacity: 0;
+}
+
+@starting-style {
+  .platform-auth-dialog[open] {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0) scale(0.975);
+  }
+
+  .platform-auth-dialog[open]::backdrop {
+    opacity: 0;
+  }
+}
+
+.platform-auth-close {
+  position: sticky;
+  z-index: 3;
+  top: 16px;
+  float: right;
+  width: 42px;
+  height: 42px;
+  margin: 16px 16px -58px 0;
+  border: 1px solid #72514c;
+  border-radius: 2px;
+  background: #171313;
+  color: #fff8ef;
+  cursor: pointer;
+  font-size: 25px;
+  line-height: 1;
+  transition: transform 140ms cubic-bezier(0.22, 1, 0.36, 1), border-color 180ms ease;
+}
+
+.platform-auth-close:hover,
+.platform-auth-close:focus-visible {
+  border-color: var(--signal);
+  transform: rotate(3deg) scale(1.04);
+}
+
+.platform-auth-head {
+  padding: clamp(30px, 5vw, 58px) clamp(26px, 6vw, 72px) 28px;
+  border-bottom: 1px solid #4e3430;
+}
+
+.platform-auth-head h1 {
+  max-width: 14ch;
+  margin: 12px 0;
+  font-family: var(--font-display);
+  font-size: clamp(38px, 6vw, 72px);
+  font-weight: 650;
+  letter-spacing: -0.045em;
+  line-height: 0.98;
+}
+
+.platform-auth-head > p:last-child {
+  max-width: 650px;
+  margin: 0;
+  color: #b8aaa4;
+  line-height: 1.7;
+}
+
+.platform-auth-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.platform-auth-panel {
+  min-width: 0;
+  padding: clamp(26px, 4vw, 46px);
+}
+
+.platform-auth-panel + .platform-auth-panel {
+  border-left: 1px solid #4e3430;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.platform-auth-panel h2 {
+  margin: 8px 0 24px;
+  color: #fff8ef;
+  font-family: var(--font-display);
+  font-size: clamp(26px, 3vw, 38px);
+}
+
+.platform-auth-panel .field {
+  margin-bottom: 16px;
+}
+
+.platform-auth-panel .field label {
+  color: #c6b8b1;
+}
+
+.platform-auth-panel .button {
+  width: 100%;
+}
+
+.platform-auth-foot {
+  margin: 0;
+  padding: 18px clamp(26px, 6vw, 72px) 24px;
+  border-top: 1px solid #4e3430;
+  color: #8f817c;
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+html[lang="en"] .platform-auth-head h1,
+html[lang="en"] .platform-auth-panel h2 {
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+@media (max-width: 700px) {
+  .platform-auth-dialog {
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 20px);
+  }
+
+  .platform-auth-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .platform-auth-panel + .platform-auth-panel {
+    border-top: 1px solid #4e3430;
+    border-left: 0;
+  }
+
+  .platform-auth-head {
+    padding: 28px 22px 22px;
+  }
+
+  .platform-auth-head h1 {
+    padding-right: 42px;
+    font-size: clamp(36px, 12vw, 54px);
+  }
+
+  .platform-auth-panel {
+    padding: 25px 22px;
+  }
+
+  .platform-auth-foot {
+    padding-inline: 22px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .platform-auth-dialog,
+  .platform-auth-dialog::backdrop,
+  .platform-auth-close {
+    transition: none !important;
+  }
+}
+
 /* Complete-capture voice flow: record locally, then transcribe one MP3 after stop. */
 .story-recording-panel {
   display: grid;
@@ -6429,4 +6619,472 @@ body::after {
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-right: 1px solid rgba(168,85,247,.08);
+}
+
+/* ============================================================
+   AUTO-COLLAPSING NAVIGATION RAIL
+   The rail occupies a stable 76px column. On precise pointing devices the
+   panel unfolds behind stationary icons, so the workspace never jumps.
+   ============================================================ */
+@media (min-width: 981px) and (hover: hover) and (pointer: fine) {
+  .app-shell {
+    grid-template-columns: 76px minmax(0, 1fr);
+  }
+
+  .sidebar {
+    --sidebar-open-width: 304px;
+    --sidebar-rail-width: 76px;
+    --sidebar-shift: calc(var(--sidebar-open-width) - var(--sidebar-rail-width));
+    position: sticky;
+    z-index: 60;
+    width: var(--sidebar-open-width);
+    padding: 26px 18px 22px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    box-shadow: 18px 0 46px rgba(0, 0, 0, 0);
+    transform: translate3d(calc(var(--sidebar-shift) * -1), 0, 0);
+    transition:
+      transform 260ms cubic-bezier(0.32, 0.72, 0, 1),
+      box-shadow 180ms ease,
+      border-color 180ms ease;
+  }
+
+  .sidebar:hover,
+  .sidebar:focus-within {
+    border-right-color: rgba(255, 69, 58, 0.4);
+    box-shadow: 24px 0 64px rgba(0, 0, 0, 0.58);
+    transform: translate3d(0, 0, 0);
+  }
+
+  .sidebar > .brand,
+  .sidebar .nav-item {
+    transform: translate3d(var(--sidebar-shift), 0, 0);
+    transition:
+      transform 260ms cubic-bezier(0.32, 0.72, 0, 1),
+      color 180ms ease,
+      background-color 180ms ease,
+      border-color 180ms ease,
+      box-shadow 180ms ease;
+  }
+
+  .sidebar:hover > .brand,
+  .sidebar:focus-within > .brand,
+  .sidebar:hover .nav-item,
+  .sidebar:focus-within .nav-item {
+    transform: translate3d(0, 0, 0);
+  }
+
+  .sidebar .brand-copy,
+  .sidebar .nav-item > span:last-child,
+  .sidebar .sidebar-note {
+    opacity: 0;
+    transform: translate3d(-10px, 0, 0);
+    transition:
+      opacity 120ms ease,
+      transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .sidebar:hover .brand-copy,
+  .sidebar:focus-within .brand-copy,
+  .sidebar:hover .nav-item > span:last-child,
+  .sidebar:focus-within .nav-item > span:last-child,
+  .sidebar:hover .sidebar-note,
+  .sidebar:focus-within .sidebar-note {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+    transition-delay: 70ms;
+  }
+
+  .sidebar .sidebar-note {
+    pointer-events: none;
+  }
+
+  .sidebar:hover .sidebar-note,
+  .sidebar:focus-within .sidebar-note {
+    pointer-events: auto;
+  }
+
+  .sidebar .nav-item {
+    min-height: 52px;
+    padding-inline: 10px;
+  }
+
+  .sidebar .nav-icon {
+    width: 36px;
+    height: 36px;
+    flex-basis: 36px;
+  }
+
+  .sidebar::after {
+    position: fixed;
+    top: 50%;
+    right: 5px;
+    width: 2px;
+    height: 34px;
+    border-radius: 2px;
+    background: linear-gradient(180deg, transparent, var(--signal), transparent);
+    content: "";
+    opacity: 0.7;
+    transform: translateY(-50%);
+    transition: opacity 120ms ease, transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .sidebar:hover::after,
+  .sidebar:focus-within::after {
+    opacity: 0;
+    transform: translate3d(8px, -50%, 0);
+  }
+
+  .sidebar:hover .nav-item:hover,
+  .sidebar:focus-within .nav-item:hover {
+    transform: translate3d(3px, 0, 0);
+  }
+}
+
+/* ============================================================
+   ENGLISH PRODUCT LAYOUT
+   English uses longer words and lower information density than Chinese.
+   Give it its own type scale, wrapping rules, and wider reading rhythm.
+   ============================================================ */
+html[lang="en"] body {
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+html[lang="en"] .brand-copy strong,
+html[lang="en"] .topbar-copy strong,
+html[lang="en"] .page-heading h1,
+html[lang="en"] .scene-card-title,
+html[lang="en"] .scene-home-copy h1,
+html[lang="en"] .story-intake-copy h2,
+html[lang="en"] .story-prompt-note strong,
+html[lang="en"] .agent-masthead h1,
+html[lang="en"] .auth-masthead h1,
+html[lang="en"] .agent-empty h2,
+html[lang="en"] .agent-message p,
+html[lang="en"] .contact-card h2 {
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+html[lang="en"] :is(h1, h2, h3, strong, p, li, label, button, a, span) {
+  overflow-wrap: break-word;
+}
+
+html[lang="en"] :is(h1, h2, h3) {
+  text-wrap: balance;
+}
+
+html[lang="en"] :is(p, li) {
+  text-wrap: pretty;
+}
+
+html[lang="en"] .topbar-copy,
+html[lang="en"] .topbar-actions,
+html[lang="en"] .page-heading > *,
+html[lang="en"] .story-intake-topline > *,
+html[lang="en"] .story-controls > *,
+html[lang="en"] .agent-thread-head > * {
+  min-width: 0;
+}
+
+html[lang="en"] .topbar {
+  min-height: 78px;
+  padding-inline: clamp(20px, 3.6vw, 58px);
+}
+
+html[lang="en"] .topbar-copy strong {
+  font-size: clamp(16px, 1.6vw, 21px);
+  line-height: 1.15;
+}
+
+html[lang="en"] .local-badge {
+  max-width: min(29vw, 280px);
+  line-height: 1.25;
+  white-space: normal;
+}
+
+html[lang="en"] main {
+  width: min(1360px, 100%);
+  padding-inline: clamp(20px, 3.6vw, 58px);
+}
+
+html[lang="en"] .page-heading h1 {
+  max-width: 18ch;
+  font-size: clamp(34px, 4.2vw, 62px);
+  letter-spacing: -0.035em;
+  line-height: 1.02;
+}
+
+html[lang="en"] .button,
+html[lang="en"] .story-voice-button,
+html[lang="en"] .text-button,
+html[lang="en"] .copy-button,
+html[lang="en"] .tag {
+  max-width: 100%;
+  letter-spacing: 0.025em;
+  line-height: 1.3;
+  text-align: center;
+  text-transform: none;
+  white-space: normal;
+}
+
+html[lang="en"] .nav-item {
+  gap: 13px;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.2;
+  white-space: normal;
+}
+
+html[lang="en"] .sidebar-note strong {
+  display: block;
+  line-height: 1.35;
+}
+
+html[lang="en"] .scene-home {
+  padding-inline: clamp(22px, 3.6vw, 58px);
+}
+
+html[lang="en"] .scene-home-stage {
+  grid-template-columns: minmax(300px, 0.88fr) minmax(340px, 1.12fr);
+  gap: clamp(28px, 4vw, 72px);
+}
+
+html[lang="en"] .scene-home-index {
+  width: min(190px, 32vw);
+}
+
+html[lang="en"] .scene-home-index strong {
+  letter-spacing: 0.035em;
+  line-height: 1.3;
+  white-space: normal;
+}
+
+html[lang="en"] .scene-card {
+  inset: 17% 10%;
+  padding: clamp(18px, 2.4vw, 28px);
+}
+
+html[lang="en"] .scene-card-title,
+html[lang="en"] .scene-home-copy h1 {
+  display: flex;
+  width: 100%;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0.24em;
+  overflow: visible;
+  white-space: normal;
+}
+
+html[lang="en"] .scene-card-title {
+  min-height: 0;
+  margin-block: 18px 12px;
+  font-size: clamp(24px, 2.55vw, 39px);
+  letter-spacing: -0.035em;
+  line-height: 0.98;
+}
+
+html[lang="en"] .scene-home-copy {
+  width: 100%;
+  max-width: 620px;
+}
+
+html[lang="en"] .scene-home-copy h1 {
+  max-width: 11ch;
+  min-height: 0;
+  font-size: clamp(48px, 6.2vw, 94px);
+  letter-spacing: -0.055em;
+  line-height: 0.88;
+}
+
+html[lang="en"] .scene-title-word {
+  display: inline-flex;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+html[lang="en"] .scene-card-subtitle {
+  max-width: 24em;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+html[lang="en"] .scene-home-subtitle {
+  max-width: 42em;
+  font-size: clamp(14px, 1.4vw, 17px);
+}
+
+html[lang="en"] .scene-home-description {
+  max-width: 46em;
+  font-size: 13px;
+}
+
+html[lang="en"] .scene-home-footer {
+  flex-wrap: wrap;
+}
+
+html[lang="en"] .story-intake-copy {
+  max-width: 760px;
+}
+
+html[lang="en"] .story-intake-copy h2 {
+  font-size: clamp(30px, 4vw, 50px);
+  line-height: 1.02;
+}
+
+html[lang="en"] .story-intake-topline,
+html[lang="en"] .story-controls,
+html[lang="en"] .story-actions,
+html[lang="en"] .agent-thread-head {
+  flex-wrap: wrap;
+}
+
+html[lang="en"] .story-bubble {
+  max-width: min(92%, 850px);
+}
+
+html[lang="en"] .story-bubble p,
+html[lang="en"] .agent-message p {
+  overflow-wrap: anywhere;
+}
+
+html[lang="en"] .agent-masthead h1,
+html[lang="en"] .auth-masthead h1 {
+  max-width: 13ch;
+  font-size: clamp(46px, 6.4vw, 92px);
+  letter-spacing: -0.045em;
+  line-height: 0.96;
+}
+
+html[lang="en"] .agent-account {
+  min-width: min(230px, 100%);
+}
+
+html[lang="en"] .agent-thread-head {
+  line-height: 1.35;
+}
+
+@media (max-width: 1180px) {
+  html[lang="en"] .scene-home-stage {
+    grid-template-columns: minmax(280px, 0.82fr) minmax(300px, 1.18fr);
+    gap: 24px;
+  }
+
+  html[lang="en"] .scene-card {
+    inset-inline: 8%;
+  }
+
+  html[lang="en"] .scene-home-copy h1 {
+    font-size: clamp(44px, 6vw, 70px);
+  }
+}
+
+@media (max-width: 700px) {
+  html[lang="en"] .topbar-actions {
+    gap: 8px;
+  }
+
+  html[lang="en"] .scene-home-stage {
+    display: flex;
+    flex: 0 0 auto;
+    justify-content: flex-start;
+    gap: 4px;
+    padding-top: 8px;
+  }
+
+  html[lang="en"] body.scene-home-active {
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: auto;
+  }
+
+  html[lang="en"] .scene-home-page,
+  html[lang="en"] .scene-home {
+    min-height: auto;
+  }
+
+  html[lang="en"] .scene-home {
+    padding: 16px 14px 18px;
+  }
+
+  html[lang="en"] .scene-home-header {
+    gap: 10px;
+  }
+
+  html[lang="en"] .scene-home-intro {
+    max-width: 17ch;
+    letter-spacing: 0.045em;
+    line-height: 1.25;
+  }
+
+  html[lang="en"] .scene-home-index {
+    width: 118px;
+    min-width: 118px;
+  }
+
+  html[lang="en"] .scene-ring-wrap {
+    width: min(100%, 260px);
+  }
+
+  html[lang="en"] .scene-card {
+    inset: 2%;
+    padding: 14px;
+  }
+
+  html[lang="en"] .scene-card-kicker {
+    margin-top: 6px;
+  }
+
+  html[lang="en"] .scene-card-title {
+    margin-block: 10px 8px;
+    font-size: clamp(23px, 7vw, 29px);
+    line-height: 0.94;
+  }
+
+  html[lang="en"] .scene-card-subtitle {
+    font-size: 10px;
+    line-height: 1.4;
+  }
+
+  html[lang="en"] .scene-card-edge {
+    right: 14px;
+    bottom: 10px;
+  }
+
+  html[lang="en"] .scene-home-copy h1 {
+    max-width: 12ch;
+    margin-block: 8px;
+    font-size: clamp(40px, 12vw, 58px);
+    line-height: 0.9;
+  }
+
+  html[lang="en"] .scene-home-description {
+    margin: 8px 0 14px;
+    font-size: 12px;
+    line-height: 1.55;
+  }
+
+  html[lang="en"] .scene-home-footer {
+    margin-top: 16px;
+  }
+
+  html[lang="en"] .scene-card-title {
+    font-size: clamp(22px, 7vw, 34px);
+  }
+
+  html[lang="en"] .agent-masthead h1,
+  html[lang="en"] .auth-masthead h1 {
+    font-size: clamp(42px, 13vw, 68px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .sidebar > .brand,
+  .sidebar .nav-item,
+  .sidebar .brand-copy,
+  .sidebar .nav-item > span:last-child,
+  .sidebar .sidebar-note,
+  .sidebar::after {
+    transition: none !important;
+  }
 }

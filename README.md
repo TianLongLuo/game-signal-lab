@@ -35,14 +35,14 @@ GAME 把高度敏感的关系记录与可选在线能力分开：
 
 ### 可选平台平面
 
-- 用户名/密码账号、会员状态、个人 Agent 授权和全局总闸；
+- 用户名/密码账号、每个新用户默认 50 次 AI 调用额度、个人持续 Agent 授权和全局总闸；
 - 当前版本的外部 AI 数据处理明示同意，可随时撤回；
 - 服务端固定安全提示词与 DeepSeek V4 流式 Agent；
 - 仅允许 `deepseek-v4-flash`（默认）和 `deepseek-v4-pro`；
 - DeepSeek API Key 由服务端使用 AES-256-GCM 加密，浏览器永远读不到密钥；
 - 用户确认当前外部 AI 条款并提交 Agent 问题时，客户端会更新自己的匿名资料到个人 RAG；Linux/Node 生产检索使用 Qdrant，始终按服务端会话 `user_id` 隔离，管理员看不到正文；
 - 管理员控制台：用户与授权、服务配置、全局开关、最小化行为审计，以及加密的 Agent/故事消息记录；
-- Agent 输入/输出不落库，SSE 只转发经过清洗的 assistant 内容与终止状态；
+- Agent/故事消息和模型回复以 AES-256-GCM 加密归档，SSE 只向当前会话转发经过清洗的 assistant 内容与终止状态；
 - 动态 `robots.txt`、`sitemap.xml`，管理员与 API 路径禁止索引。
 
 Agent 最终可用条件为：
@@ -52,7 +52,7 @@ provider configured and enabled
 AND globalEnabled
 AND (
   administrator
-  OR (active, unexpired member AND per-user Agent grant)
+  OR (active account AND (included AI calls remaining OR per-user ongoing Agent grant))
 )
 AND current explicit external-AI consent
 ```

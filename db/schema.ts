@@ -122,6 +122,25 @@ export const agentMemberGrants = sqliteTable("agent_member_grants", {
   }),
 });
 
+export const agentUsageQuotas = sqliteTable(
+  "agent_usage_quotas",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    includedLimit: integer("included_limit").notNull().default(50),
+    usedCount: integer("used_count").notNull().default(0),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("agent_usage_quotas_remaining_idx").on(
+      table.usedCount,
+      table.includedLimit
+    ),
+  ]
+);
+
 export const externalAiConsents = sqliteTable("external_ai_consents", {
   userId: text("user_id")
     .primaryKey()

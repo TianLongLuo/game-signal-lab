@@ -88,6 +88,7 @@ let reviewEventId = null;
 let preferredContactId = null;
 let editingContactId = null;
 let toastTimer = null;
+let platformAuthOpener = null;
 const platformClient = new PlatformClient();
 const platform = {
   available: null,
@@ -194,6 +195,12 @@ const homeSceneCatalog = [
     subtitle: "把一段关系放回现场。",
     description: "文字或语音都可以。只说你愿意保留的部分，Agent 会一次问一个真正有帮助的问题。",
     cue: "进入记录",
+    en: {
+      title: "Tell Your Story",
+      subtitle: "Revisit what happened, one moment at a time.",
+      description: "Write or record only what you want to keep. The Agent will ask one useful question at a time.",
+      cue: "Start a Story",
+    },
     tone: "signal",
   },
   {
@@ -204,6 +211,12 @@ const homeSceneCatalog = [
     subtitle: "让线索有一个可以回来的地方。",
     description: "背景、目标、边界和互动记录会在故事结束后归档成匿名卡片，随时可以修正。",
     cue: "查看档案",
+    en: {
+      title: "People & Stories",
+      subtitle: "Give every detail a place to return to.",
+      description: "Background, goals, boundaries, and interactions become an anonymous profile you can revise anytime.",
+      cue: "Browse Profiles",
+    },
     tone: "cyan",
   },
   {
@@ -214,6 +227,12 @@ const homeSceneCatalog = [
     subtitle: "把不确定写成可以讨论的问题。",
     description: "只检索你的个人知识库，帮你区分事实、感受与猜测，再决定下一步。",
     cue: "进入 Agent",
+    en: {
+      title: "Think It Through",
+      subtitle: "Turn uncertainty into a question you can explore.",
+      description: "The Agent searches only your private knowledge base, separating facts, feelings, and assumptions before you decide what comes next.",
+      cue: "Open the Agent",
+    },
     tone: "neon",
   },
 ];
@@ -282,7 +301,10 @@ function bindGlobalEvents() {
     persistCurrentState();
     ageGate.close();
     setAppAvailability(true);
-    main.focus();
+    main.focus({ preventScroll: true });
+    if (window.matchMedia("(max-width: 700px)").matches) {
+      window.scrollTo({ top: 0, behavior: "auto" });
+    }
   });
 
   mobileMenu.addEventListener("click", () => {
@@ -309,6 +331,10 @@ function bindGlobalEvents() {
   document.addEventListener("click", async (event) => {
     const viewButton = event.target.closest("[data-view]");
     if (viewButton && viewButton.dataset.action !== "home-scene-open") {
+      if (viewButton.dataset.view === "agent" && !platform.user) {
+        openPlatformAuthDialog(viewButton);
+        return;
+      }
       preferredContactId =
         viewButton.dataset.view === "new-event" && viewButton.dataset.contactId
           ? viewButton.dataset.contactId
@@ -321,6 +347,17 @@ function bindGlobalEvents() {
     if (!action) return;
 
     const actionName = action.dataset.action;
+
+    if (actionName === "open-platform-account") {
+      if (platform.user) navigate("agent");
+      else openPlatformAuthDialog(action);
+      return;
+    }
+
+    if (actionName === "close-platform-auth") {
+      closePlatformAuthDialog();
+      return;
+    }
 
     if (actionName === "home-scene-next") {
       setHomeSceneIndex(homeSceneIndex + 1);
@@ -583,6 +620,10 @@ function bindGlobalEvents() {
 
   document.addEventListener("cancel", (event) => {
     if (event.target?.matches?.("#contact-editor-dialog")) closeContactEditor();
+    if (event.target?.matches?.("#platform-auth-dialog")) {
+      event.preventDefault();
+      closePlatformAuthDialog();
+    }
   });
 }
 
@@ -672,7 +713,12 @@ function renderCurrentView() {
 }
 
 function currentHomeScene() {
-  return homeSceneCatalog[homeSceneIndex] || homeSceneCatalog[0];
+  return localizeHomeScene(homeSceneCatalog[homeSceneIndex] || homeSceneCatalog[0]);
+}
+
+function localizeHomeScene(scene) {
+  if (detectLocale() !== "en" || !scene.en) return scene;
+  return { ...scene, ...scene.en };
 }
 
 function setHomeSceneIndex(nextIndex, { announce = true } = {}) {
@@ -718,6 +764,22 @@ function setHomeSceneIndex(nextIndex, { announce = true } = {}) {
 }
 
 function renderSceneLetters(text) {
+  if (detectLocale() === "en") {
+    let letterIndex = 0;
+    return String(text)
+      .trim()
+      .split(/\s+/)
+      .map((word) => {
+        const letters = Array.from(word)
+          .map(
+            (letter) =>
+              `<span class="scene-title-letter" style="--letter-index:${letterIndex++}" aria-hidden="true">${escapeHTML(letter)}</span>`,
+          )
+          .join("");
+        return `<span class="scene-title-word" aria-hidden="true">${letters}</span>`;
+      })
+      .join("");
+  }
   return Array.from(text)
     .map(
       (letter, index) =>
@@ -728,6 +790,10 @@ function renderSceneLetters(text) {
 
 function handleHomeSceneWheel(event) {
   if (currentView !== "dashboard" || event.ctrlKey || ageGate.open) return;
+  if (
+    document.querySelector("dialog[open]") ||
+    event.target.closest("#primary-sidebar, textarea, input, select, [data-scroll-region]")
+  ) return;
   const scene = document.querySelector(".scene-home");
   if (!scene || homeSceneInput.transitioning) return;
   if (Math.abs(event.deltaY) < Math.abs(event.deltaX) * 0.8) return;
@@ -741,16 +807,22 @@ function handleHomeSceneWheel(event) {
 
 function handleHomeSceneTouchStart(event) {
   if (currentView !== "dashboard" || ageGate.open) return;
+  if (window.matchMedia("(max-width: 700px)").matches) return;
   homeSceneInput.touchStartY = event.touches[0]?.clientY ?? null;
 }
 
 function handleHomeSceneTouchMove(event) {
   if (currentView !== "dashboard" || homeSceneInput.touchStartY === null || ageGate.open) return;
+  if (window.matchMedia("(max-width: 700px)").matches) return;
   event.preventDefault();
 }
 
 function handleHomeSceneTouchEnd(event) {
   if (currentView !== "dashboard" || homeSceneInput.touchStartY === null || ageGate.open) return;
+  if (window.matchMedia("(max-width: 700px)").matches) {
+    homeSceneInput.touchStartY = null;
+    return;
+  }
   const endY = event.changedTouches[0]?.clientY ?? homeSceneInput.touchStartY;
   const distance = homeSceneInput.touchStartY - endY;
   homeSceneInput.touchStartY = null;
@@ -778,7 +850,9 @@ function openHomeScene(view) {
     return;
   }
 
-  const target = homeSceneCatalog.find((item) => item.view === view) || currentHomeScene();
+  const target = localizeHomeScene(
+    homeSceneCatalog.find((item) => item.view === view) || currentHomeScene()
+  );
   homeSceneInput.transitioning = true;
   overlay.querySelector("[data-transition-index]").textContent = target.index;
   overlay.querySelector("[data-transition-title]").textContent = target.title;
@@ -842,7 +916,11 @@ async function refreshPlatformSession() {
     platform.knowledge = null;
     platform.knowledgeSignature = "";
     syncPlatformStatus();
-    if (currentView === "agent") renderCurrentView();
+    if (currentView === "agent") {
+      currentView = "dashboard";
+      renderCurrentView();
+      requestAnimationFrame(openPlatformAuthDialog);
+    }
     return;
   }
   try {
@@ -878,7 +956,13 @@ async function refreshPlatformSession() {
     }
   }
   syncPlatformStatus();
-  if (currentView === "agent") renderCurrentView();
+  if (currentView === "agent" && !platform.user) {
+    currentView = "dashboard";
+    renderCurrentView();
+    requestAnimationFrame(openPlatformAuthDialog);
+  } else if (currentView === "agent") {
+    renderCurrentView();
+  }
 }
 
 function syncPlatformStatus() {
@@ -893,7 +977,7 @@ function syncPlatformStatus() {
     status.textContent = t("localMode");
     status.classList.remove("is-online");
   } else {
-    status.textContent = "登录 Agent";
+    status.textContent = detectLocale() === "en" ? "Sign In" : "登录";
     status.classList.remove("is-online");
   }
 }
@@ -941,6 +1025,7 @@ function renderAgent() {
           <span>已登录</span>
           <strong>${escapeHTML(platform.user.username)}</strong>
           <small>${escapeHTML(membershipLabel(platform.membership))}</small>
+          <small>${escapeHTML(agentUsageLabel(platform.capabilities?.agentUsage))}</small>
           <small>${platform.knowledge?.documentCount ? `个人档案 ${platform.knowledge.documentCount} 条` : "首次提问时同步匿名档案"}</small>
           <button class="text-button" type="button" data-action="revoke-ai-consent">撤回 AI 同意</button>
           <button class="text-button" type="button" data-action="platform-logout">退出账户</button>
@@ -1044,6 +1129,7 @@ function renderExternalAiConsent() {
 }
 
 function renderAgentAccessPending() {
+  const usage = platform.capabilities?.agentUsage;
   return `
     <div class="page">
       <header class="auth-masthead">
@@ -1056,6 +1142,7 @@ function renderAgentAccessPending() {
         <h2>${escapeHTML(platform.user.username)}</h2>
         <div>
           <p><strong>会员状态</strong> — ${escapeHTML(membershipLabel(platform.membership))}</p>
+          <p><strong>AI 调用额度</strong> — ${escapeHTML(agentUsageLabel(usage))}</p>
           <p><strong>外部 AI 同意</strong> — 已确认，可随时撤回。</p>
           <div class="button-row">
             <button class="button button--quiet" type="button" data-action="refresh-platform">刷新授权</button>
@@ -1117,6 +1204,92 @@ function renderAgentAuth() {
   `;
 }
 
+function ensurePlatformAuthDialog() {
+  let dialog = document.querySelector("#platform-auth-dialog");
+  if (dialog) return dialog;
+  dialog = document.createElement("dialog");
+  dialog.id = "platform-auth-dialog";
+  dialog.className = "platform-auth-dialog";
+  dialog.setAttribute("aria-labelledby", "platform-auth-title");
+  document.body.append(dialog);
+  return dialog;
+}
+
+function renderPlatformAuthDialog() {
+  const english = detectLocale() === "en";
+  const serviceUnavailable = platform.available === false;
+  const serviceNote = serviceUnavailable
+    ? english
+      ? "Account services are unavailable in this preview. Your local journal still works."
+      : "当前预览未连接账号服务；本地记录功能仍可正常使用。"
+    : english
+      ? "Sign in here without leaving your current page. Nothing in your local journal is uploaded just by signing in."
+      : "在这里登录，无需离开当前页面。仅登录不会上传你的本地日记。";
+  return `
+    <button class="platform-auth-close" type="button" data-action="close-platform-auth" aria-label="${english ? "Close sign-in" : "关闭登录窗口"}">×</button>
+    <header class="platform-auth-head">
+      <p class="eyebrow">GAME · ACCOUNT ACCESS</p>
+      <h1 id="platform-auth-title">${english ? "Stay where you are." : "留在当前页面。"}</h1>
+      <p>${serviceNote}</p>
+    </header>
+    <div class="platform-auth-grid">
+      <form class="platform-auth-panel" id="platform-login-form">
+        <span class="editorial-number">01</span>
+        <p class="eyebrow">${english ? "WELCOME BACK" : "已有账户"}</p>
+        <h2>${english ? "Sign in" : "登录"}</h2>
+        ${authFields("login")}
+        <p class="form-error" data-auth-error role="alert" aria-live="assertive"></p>
+        <button class="button button--primary" type="submit" ${serviceUnavailable ? "disabled" : ""}>${english ? "Sign In" : "登录"}</button>
+      </form>
+      <form class="platform-auth-panel platform-auth-panel--register" id="platform-register-form">
+        <span class="editorial-number">02</span>
+        <p class="eyebrow">${english ? "NEW HERE" : "创建账户"}</p>
+        <h2>${english ? "Create an account" : "创建账户"}</h2>
+        ${authFields("register")}
+        <p class="form-error" data-auth-error role="alert" aria-live="assertive"></p>
+        <button class="button button--quiet" type="submit" ${serviceUnavailable ? "disabled" : ""}>${english ? "Create Account" : "注册并登录"}</button>
+      </form>
+    </div>
+    <p class="platform-auth-foot">${english ? "Your anonymous profiles remain on this device until you explicitly consent to AI processing and send a request." : "匿名档案仍保留在当前设备；只有你明确同意外部 AI 处理并主动发送请求后，才会同步最少必要内容。"}</p>
+  `;
+}
+
+function openPlatformAuthDialog(opener = document.activeElement) {
+  if (platform.user) {
+    navigate("agent");
+    return;
+  }
+  if (opener instanceof HTMLElement && !opener.closest("dialog")) {
+    platformAuthOpener = opener;
+  }
+  const dialog = ensurePlatformAuthDialog();
+  dialog.classList.remove("is-closing");
+  dialog.innerHTML = renderPlatformAuthDialog();
+  if (!dialog.open) dialog.showModal();
+  localizePage();
+  requestAnimationFrame(() => dialog.querySelector("#login-username")?.focus());
+}
+
+function closePlatformAuthDialog({ restoreFocus = true } = {}) {
+  const dialog = document.querySelector("#platform-auth-dialog");
+  if (!dialog?.open || dialog.classList.contains("is-closing")) return Promise.resolve();
+  dialog.classList.add("is-closing");
+  return new Promise((resolve) => {
+    window.setTimeout(() => {
+      dialog.close();
+      dialog.classList.remove("is-closing");
+      if (restoreFocus) {
+        const focusTarget = platformAuthOpener?.isConnected
+          ? platformAuthOpener
+          : document.querySelector("#platform-status");
+        focusTarget?.focus({ preventScroll: true });
+      }
+      platformAuthOpener = null;
+      resolve();
+    }, window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 170);
+  });
+}
+
 function authFields(prefix) {
   return `
     <div class="field">
@@ -1164,10 +1337,22 @@ function renderAgentMessage(message, index) {
 }
 
 function membershipLabel(membership) {
-  if (!membership) return "未读取会员状态";
-  const plan = membership.plan === "member" ? "会员" : "普通账户";
-  const status = membership.status === "active" ? "有效" : membership.status || "未知";
+  const english = detectLocale() === "en";
+  if (!membership) return english ? "Membership unavailable" : "未读取会员状态";
+  const plan = membership.plan === "member" ? (english ? "Member" : "会员") : (english ? "Free account" : "普通账户");
+  const status = membership.status === "active" ? (english ? "Active" : "有效") : membership.status || (english ? "Unknown" : "未知");
   return `${plan} · ${status}`;
+}
+
+function agentUsageLabel(usage) {
+  const english = detectLocale() === "en";
+  if (!usage) return english ? "AI usage unavailable" : "AI 调用次数暂不可用";
+  if (usage.unlimited) return english ? "Ongoing AI access enabled" : "已开通持续 AI 权限";
+  const remaining = Math.max(0, Number(usage.remaining) || 0);
+  const limit = Math.max(0, Number(usage.limit) || 50);
+  return english
+    ? `${remaining} of ${limit} included AI calls remaining`
+    : `剩余 ${remaining} / ${limit} 次 AI 调用`;
 }
 
 async function authenticatePlatform(form, mode) {
@@ -1189,8 +1374,21 @@ async function authenticatePlatform(form, mode) {
     platform.membership = payload.membership;
     await refreshPlatformSession();
     syncPlatformStatus();
-    showToast(mode === "register" ? "账户已创建并安全登录" : "已登录关系思考 Agent");
-    requestAnimationFrame(() => document.querySelector("#agent-prompt")?.focus());
+    const english = detectLocale() === "en";
+    showToast(
+      mode === "register"
+        ? english
+          ? "Account created. You're signed in."
+          : "账户已创建并安全登录"
+        : english
+          ? "You're signed in."
+          : "已登录",
+    );
+    await closePlatformAuthDialog({ restoreFocus: false });
+    requestAnimationFrame(() => {
+      if (currentView === "agent") document.querySelector("#agent-prompt")?.focus();
+      else main.focus({ preventScroll: true });
+    });
   } catch (error) {
     errorNode.textContent =
       error instanceof PlatformError ? error.message : "登录请求未完成，请稍后重试。";
@@ -1217,6 +1415,7 @@ async function logoutPlatform() {
   platform.agentMessages = [];
   platform.agentController?.abort();
   platform.agentBusy = false;
+  if (currentView === "agent") currentView = "dashboard";
   syncPlatformStatus();
   renderCurrentView();
   showToast("已退出账户；本地关系记录未受影响");
@@ -1246,7 +1445,7 @@ async function updateExternalAiConsent(accepted, policyVersion = "", form = null
 async function syncPersonalKnowledge() {
   if (!platform.user) {
     showToast("请先登录，再同步你的个人档案", 3600);
-    navigate("agent");
+    openPlatformAuthDialog();
     return;
   }
   if (!platform.externalAiConsent?.current) {
@@ -1498,7 +1697,9 @@ function renderDashboard() {
             <div class="scene-ring">
               ${homeSceneCatalog
                 .map(
-                  (item, index) => `
+                  (sourceItem, index) => {
+                    const item = localizeHomeScene(sourceItem);
+                    return `
                     <button
                       class="scene-card ${index === homeSceneIndex ? "is-active" : index === (homeSceneIndex + 1) % homeSceneCatalog.length ? "is-next" : "is-prev"}"
                       type="button"
@@ -1516,7 +1717,8 @@ function renderDashboard() {
                       <span class="scene-card-subtitle">${escapeHTML(item.subtitle)}</span>
                       <span class="scene-card-edge" aria-hidden="true">↗</span>
                     </button>
-                  `,
+                  `;
+                  },
                 )
                 .join("")}
             </div>
@@ -1665,8 +1867,8 @@ function formatRecordingDuration(milliseconds = 0) {
 function startStoryIntake({ beginVoice = false } = {}) {
   cancelStorySpeech();
   if (!platform.user) {
-    showToast("请先在 Agent 页面登录，再开始故事记录", 3600);
-    navigate("agent");
+    showToast("请先登录，再开始故事记录", 3600);
+    openPlatformAuthDialog();
     return;
   }
   if (!platform.externalAiConsent?.current) {

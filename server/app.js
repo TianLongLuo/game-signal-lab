@@ -85,6 +85,7 @@ const MAX_RATE_LIMIT_KEYS = 10_000;
 const MAX_PASSWORD_QUEUE = 32;
 const AGENT_REQUEST_LIMIT = 30;
 const AGENT_REQUEST_WINDOW_MS = 60 * 1000;
+const DEFAULT_AGENT_CALL_LIMIT = 50;
 const EXTERNAL_AI_POLICY_VERSION = "2026-08-11-v3";
 const MAX_STREAM_OUTPUT_BYTES = 512 * 1024;
 const MAX_SSE_FRAME_BYTES = 128 * 1024;
@@ -111,6 +112,8 @@ const STATIC_ASSETS = new Map([
   ["/assets/lovart/hero-bg.webp", ["assets/lovart/hero-bg.webp", "image/webp"]],
   ["/assets/lovart/lovart_2e014588e25e.png", ["assets/lovart/lovart_2e014588e25e.png", "image/png"]],
   ["/blog/", ["blog/index.html", "text/html; charset=utf-8"]],
+  ["/en/blog", ["en/blog/index.html", "text/html; charset=utf-8"]],
+  ["/en/blog/", ["en/blog/index.html", "text/html; charset=utf-8"]],
   ["/en", ["en/index.html", "text/html; charset=utf-8"]],
   ["/en/", ["en/index.html", "text/html; charset=utf-8"]],
 ]);
@@ -339,6 +342,11 @@ export async function createBackend(options = {}) {
           "    <changefreq>weekly</changefreq>",
           "    <priority>1.0</priority>",
           "  </url>",
+          "  <url>",
+          `    <loc>${publicOrigin}/en/blog/</loc>`,
+          "    <changefreq>monthly</changefreq>",
+          "    <priority>0.7</priority>",
+          "  </url>",
           blogEntries,
           "</urlset>",
           "",
@@ -409,6 +417,11 @@ export async function createBackend(options = {}) {
               (user_id, plan, status, expires_at, created_at, updated_at)
              VALUES (?, 'free', 'active', NULL, ?, ?)`
           ).run(id, now, now);
+          db.prepare(
+            `INSERT INTO agent_usage_quotas
+              (user_id, included_limit, used_count, created_at, updated_at)
+             VALUES (?, ?, 0, ?, ?)`
+          ).run(id, DEFAULT_AGENT_CALL_LIMIT, now, now);
           revokePresentedSession(db, request, cookieNames);
           session = createSession(db, id, { sessionTtlMs });
           writeAudit(db, request, masterKey, {
@@ -518,6 +531,7 @@ export async function createBackend(options = {}) {
         externalAiConsent: publicExternalAiConsent(auth),
         capabilities: {
           agent: hasAgentAccess(db, auth),
+          agentUsage: publicAgentUsage(db, auth),
         },
       });
       return;
@@ -571,7 +585,10 @@ export async function createBackend(options = {}) {
       const refreshed = requireAuthentication(request);
       sendJson(response, 200, {
         externalAiConsent: publicExternalAiConsent(refreshed),
-        capabilities: { agent: hasAgentAccess(db, refreshed) },
+        capabilities: {
+          agent: hasAgentAccess(db, refreshed),
+          agentUsage: publicAgentUsage(db, refreshed),
+        },
       });
       return;
     }
@@ -626,9 +643,12 @@ export async function createBackend(options = {}) {
       const rows = db
         .prepare(
           `SELECT u.id, u.username, u.role, u.disabled_at, u.created_at, u.updated_at,
-                  m.plan, m.status AS membership_status, m.expires_at
+                  m.plan, m.status AS membership_status, m.expires_at,
+                  COALESCE(q.included_limit, ${DEFAULT_AGENT_CALL_LIMIT}) AS agent_call_limit,
+                  COALESCE(q.used_count, 0) AS agent_call_used
            FROM users u
            LEFT JOIN memberships m ON m.user_id = u.id
+           LEFT JOIN agent_usage_quotas q ON q.user_id = u.id
            WHERE u.id > ?
            ORDER BY u.id
            LIMIT ?`
@@ -638,6 +658,15 @@ export async function createBackend(options = {}) {
         users: rows.map((row) => ({
           ...publicUser(row),
           membership: publicMembership(row),
+          agentUsage: {
+            used: Number(row.agent_call_used) || 0,
+            limit: Number(row.agent_call_limit) || DEFAULT_AGENT_CALL_LIMIT,
+            remaining: Math.max(
+              0,
+              (Number(row.agent_call_limit) || DEFAULT_AGENT_CALL_LIMIT) -
+                (Number(row.agent_call_used) || 0)
+            ),
+          },
         })),
         nextCursor: rows.length === limit ? rows.at(-1).id : null,
       });
@@ -959,9 +988,7 @@ export async function createBackend(options = {}) {
           "发送前需要明确同意当前版本的外部 AI 数据处理说明。"
         );
       }
-      if (!hasAgentAuthorization(db, auth)) {
-        throw new HttpError(403, "agent_access_denied", "当前会员未获得 Agent 使用权限。");
-      }
+      requireAgentAuthorization(db, auth, "当前会员未获得 Agent 使用权限。");
       agentRequests.consume(String(auth.id));
       const config = db
         .prepare(
@@ -1000,6 +1027,7 @@ export async function createBackend(options = {}) {
       );
       const releaseAgentSlot = agentConcurrency.acquire(auth.id);
       try {
+        consumeIncludedAgentCall(db, auth);
         await proxyDeepSeekStream({
           request,
           response,
@@ -1026,9 +1054,7 @@ export async function createBackend(options = {}) {
           "发送前需要明确同意当前版本的外部 AI 数据处理说明。"
         );
       }
-      if (!hasAgentAuthorization(db, auth)) {
-        throw new HttpError(403, "agent_access_denied", "当前会员未获得语音整理权限。");
-      }
+      requireAgentAuthorization(db, auth, "当前会员未获得语音整理权限。");
       voiceOrganizeRequests.consume(String(auth.id));
       const config = db
         .prepare(
@@ -1044,6 +1070,7 @@ export async function createBackend(options = {}) {
       const text = validateVoiceOrganizeInput(body);
       const releaseAgentSlot = agentConcurrency.acquire(auth.id);
       try {
+        consumeIncludedAgentCall(db, auth);
         const organized = await organizeVoiceWithDeepSeek({
           request,
           auth,
@@ -1067,9 +1094,7 @@ export async function createBackend(options = {}) {
           "发送前需要明确同意当前版本的外部 AI 数据处理说明。"
         );
       }
-      if (!hasAgentAuthorization(db, auth)) {
-        throw new HttpError(403, "agent_access_denied", "当前账户尚未获得语音 Agent 权限。");
-      }
+      requireAgentAuthorization(db, auth, "当前账户尚未获得语音 Agent 权限。");
       const body = await readJson(request, 24 * 1024);
       const text = typeof body.text === "string" ? body.text.trim() : "";
       const streamRequested = body.stream === true;
@@ -1268,9 +1293,7 @@ export async function createBackend(options = {}) {
           "发送前需要明确同意当前版本的外部 AI 数据处理说明。"
         );
       }
-      if (!hasAgentAuthorization(db, auth)) {
-        throw new HttpError(403, "agent_access_denied", "当前账户尚未获得语音 Agent 权限。");
-      }
+      requireAgentAuthorization(db, auth, "当前账户尚未获得语音 Agent 权限。");
       const body = await readJson(request, MAX_ASR_BODY_BYTES);
       const audio = typeof body.audio === "string" ? body.audio.trim() : "";
       const streamRequested = body.stream === true;
@@ -2518,10 +2541,13 @@ function getAdminFacadeUser(db, userId) {
     .prepare(
       `SELECT u.id, u.username, u.role, u.version, u.disabled_at, u.created_at,
               m.plan, m.status AS membership_status, m.expires_at,
-              COALESCE(g.enabled, 0) AS agent_enabled
+              COALESCE(g.enabled, 0) AS agent_enabled,
+              COALESCE(q.included_limit, ${DEFAULT_AGENT_CALL_LIMIT}) AS agent_call_limit,
+              COALESCE(q.used_count, 0) AS agent_call_used
        FROM users u
        LEFT JOIN memberships m ON m.user_id = u.id
        LEFT JOIN agent_member_grants g ON g.user_id = u.id
+       LEFT JOIN agent_usage_quotas q ON q.user_id = u.id
        WHERE u.id = ?`
     )
     .get(userId);
@@ -2540,6 +2566,13 @@ function adminPublicUser(row) {
       !row.disabled_at &&
       (!row.expires_at || Date.parse(row.expires_at) > Date.now()),
     agentEnabled: row.agent_enabled === 1,
+    aiCallsUsed: Number(row.agent_call_used) || 0,
+    aiCallsLimit: Number(row.agent_call_limit) || DEFAULT_AGENT_CALL_LIMIT,
+    aiCallsRemaining: Math.max(
+      0,
+      (Number(row.agent_call_limit) || DEFAULT_AGENT_CALL_LIMIT) -
+        (Number(row.agent_call_used) || 0)
+    ),
     version: row.version,
     disabled: Boolean(row.disabled_at),
   };
@@ -2645,10 +2678,13 @@ function listAdminUsers(db, url) {
     .prepare(
       `SELECT u.id, u.username, u.role, u.version, u.disabled_at, u.created_at,
               m.plan, m.status AS membership_status, m.expires_at,
-              COALESCE(g.enabled, 0) AS agent_enabled
+              COALESCE(g.enabled, 0) AS agent_enabled,
+              COALESCE(q.included_limit, ${DEFAULT_AGENT_CALL_LIMIT}) AS agent_call_limit,
+              COALESCE(q.used_count, 0) AS agent_call_used
        FROM users u
        LEFT JOIN memberships m ON m.user_id = u.id
        LEFT JOIN agent_member_grants g ON g.user_id = u.id
+       LEFT JOIN agent_usage_quotas q ON q.user_id = u.id
        WHERE ${baseWhere} AND u.id > ?
        ORDER BY u.id
        LIMIT ?`
@@ -3282,10 +3318,87 @@ function hasAgentAuthorization(db, auth) {
   ) {
     return false;
   }
-  const grant = db
-    .prepare("SELECT enabled FROM agent_member_grants WHERE user_id = ?")
-    .get(auth.id);
-  return grant?.enabled === 1;
+  if (hasUnlimitedAgentGrant(db, auth.id)) return true;
+  const quota = getAgentUsageQuota(db, auth.id);
+  return quota.used_count < quota.included_limit;
+}
+
+function requireAgentAuthorization(db, auth, fallbackMessage) {
+  if (hasAgentAuthorization(db, auth)) return;
+  const usage = publicAgentUsage(db, auth);
+  if (usage.requiresAdminApproval) {
+    throw new HttpError(
+      403,
+      "agent_quota_exhausted",
+      "你的 50 次试用额度已用完，请联系管理员开通 Agent 权限。"
+    );
+  }
+  throw new HttpError(403, "agent_access_denied", fallbackMessage);
+}
+
+function hasUnlimitedAgentGrant(db, userId) {
+  return (
+    db.prepare("SELECT enabled FROM agent_member_grants WHERE user_id = ?").get(userId)
+      ?.enabled === 1
+  );
+}
+
+function getAgentUsageQuota(db, userId) {
+  return (
+    db
+      .prepare(
+        `SELECT included_limit, used_count, created_at, updated_at
+         FROM agent_usage_quotas WHERE user_id = ?`
+      )
+      .get(userId) ?? {
+      included_limit: DEFAULT_AGENT_CALL_LIMIT,
+      used_count: 0,
+      created_at: null,
+      updated_at: null,
+    }
+  );
+}
+
+function publicAgentUsage(db, auth) {
+  const quota = getAgentUsageQuota(db, auth.id);
+  const unlimited = auth.role === "admin" || hasUnlimitedAgentGrant(db, auth.id);
+  const limit = Number(quota.included_limit) || 0;
+  const used = Number(quota.used_count) || 0;
+  return {
+    used,
+    limit,
+    remaining: Math.max(0, limit - used),
+    unlimited,
+    requiresAdminApproval: !unlimited && used >= limit,
+  };
+}
+
+function consumeIncludedAgentCall(db, auth) {
+  if (auth.role === "admin" || hasUnlimitedAgentGrant(db, auth.id)) {
+    return publicAgentUsage(db, auth);
+  }
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO agent_usage_quotas
+      (user_id, included_limit, used_count, created_at, updated_at)
+     VALUES (?, ?, 0, ?, ?)
+     ON CONFLICT(user_id) DO NOTHING`
+  ).run(auth.id, DEFAULT_AGENT_CALL_LIMIT, now, now);
+  const result = db
+    .prepare(
+      `UPDATE agent_usage_quotas
+       SET used_count = used_count + 1, updated_at = ?
+       WHERE user_id = ? AND used_count < included_limit`
+    )
+    .run(now, auth.id);
+  if (result.changes !== 1) {
+    throw new HttpError(
+      403,
+      "agent_quota_exhausted",
+      "你的 50 次试用额度已用完，请联系管理员开通 Agent 权限。"
+    );
+  }
+  return publicAgentUsage(db, auth);
 }
 
 function hasUsableProviderConfig(db) {

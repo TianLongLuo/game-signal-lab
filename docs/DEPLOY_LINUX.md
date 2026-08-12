@@ -175,9 +175,9 @@ server {
 
 1. 使用一次性管理员秘密登录 `/admin/`。
 2. 在“DeepSeek 配置”中输入 Key、选择允许的模型并启用 provider。
-3. 在“Agent 访问”中打开全局总闸，再为需要的会员启用 Agent grant。
+3. 在“Agent 访问”中打开全局总闸。每个新注册用户默认包含 50 次 DeepSeek AI 调用；后台“用户与授权”会显示 `已用 / 50 / 剩余`。用户用完后，再为该账户启用 Agent 权限，即可转为持续可用。
 4. 在“语音配置”中输入 Token Plan MiMo V2.5 Key、选择声音并启用语音服务。Node 默认使用 `https://token-plan-cn.xiaomimimo.com/v1/`；如需覆盖，设置运行时环境变量 `MIMO_BASE_URL`，不要把密钥写入 `.env` 示例、代码或 Git。启用本地 FunASR 后，MiMo ASR 只在本地服务失败时回退使用。
-5. 普通用户注册后，必须单独确认外部 AI 数据处理说明。
+5. 普通用户注册后仍必须单独确认外部 AI 数据处理说明；50 次额度不会绕过同意、全局开关或 provider 配置。
 
 两种 Key 都只在服务端使用 AES-256-GCM 加密保存；接口只返回是否已配置，
 管理员页面不会显示 Key 尾号。若要轮换 Key，直接在后台重新保存，不要改代码。
@@ -251,7 +251,7 @@ sudo systemctl restart game-signal-lab
 curl -fsS https://game.example.com/api/health
 ```
 
-Node SQLite 迁移会在进程启动时向前执行（当前包含个人 RAG 迁移）。启动
+Node SQLite 迁移会在进程启动时向前执行（当前包含个人 RAG、加密消息归档和 AI 调用额度迁移）。迁移会为既有普通账户补建 50 次额度记录，新注册账户在注册事务中创建额度记录。启动
 失败时保持旧 release 的 symlink，不要手动修改 `schema_migrations`。如需
 回滚：
 
