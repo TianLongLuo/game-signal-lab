@@ -88,6 +88,7 @@ let reviewEventId = null;
 let preferredContactId = null;
 let editingContactId = null;
 let toastTimer = null;
+let platformAuthOpener = null;
 const platformClient = new PlatformClient();
 const platform = {
   available: null,
@@ -331,7 +332,7 @@ function bindGlobalEvents() {
     const viewButton = event.target.closest("[data-view]");
     if (viewButton && viewButton.dataset.action !== "home-scene-open") {
       if (viewButton.dataset.view === "agent" && !platform.user) {
-        openPlatformAuthDialog();
+        openPlatformAuthDialog(viewButton);
         return;
       }
       preferredContactId =
@@ -349,7 +350,7 @@ function bindGlobalEvents() {
 
     if (actionName === "open-platform-account") {
       if (platform.user) navigate("agent");
-      else openPlatformAuthDialog();
+      else openPlatformAuthDialog(action);
       return;
     }
 
@@ -789,6 +790,10 @@ function renderSceneLetters(text) {
 
 function handleHomeSceneWheel(event) {
   if (currentView !== "dashboard" || event.ctrlKey || ageGate.open) return;
+  if (
+    document.querySelector("dialog[open]") ||
+    event.target.closest("#primary-sidebar, textarea, input, select, [data-scroll-region]")
+  ) return;
   const scene = document.querySelector(".scene-home");
   if (!scene || homeSceneInput.transitioning) return;
   if (Math.abs(event.deltaY) < Math.abs(event.deltaX) * 0.8) return;
@@ -1249,10 +1254,13 @@ function renderPlatformAuthDialog() {
   `;
 }
 
-function openPlatformAuthDialog() {
+function openPlatformAuthDialog(opener = document.activeElement) {
   if (platform.user) {
     navigate("agent");
     return;
+  }
+  if (opener instanceof HTMLElement && !opener.closest("dialog")) {
+    platformAuthOpener = opener;
   }
   const dialog = ensurePlatformAuthDialog();
   dialog.classList.remove("is-closing");
@@ -1264,13 +1272,22 @@ function openPlatformAuthDialog() {
 
 function closePlatformAuthDialog({ restoreFocus = true } = {}) {
   const dialog = document.querySelector("#platform-auth-dialog");
-  if (!dialog?.open || dialog.classList.contains("is-closing")) return;
+  if (!dialog?.open || dialog.classList.contains("is-closing")) return Promise.resolve();
   dialog.classList.add("is-closing");
-  window.setTimeout(() => {
-    dialog.close();
-    dialog.classList.remove("is-closing");
-    if (restoreFocus) document.querySelector("#platform-status")?.focus();
-  }, window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 170);
+  return new Promise((resolve) => {
+    window.setTimeout(() => {
+      dialog.close();
+      dialog.classList.remove("is-closing");
+      if (restoreFocus) {
+        const focusTarget = platformAuthOpener?.isConnected
+          ? platformAuthOpener
+          : document.querySelector("#platform-status");
+        focusTarget?.focus({ preventScroll: true });
+      }
+      platformAuthOpener = null;
+      resolve();
+    }, window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 170);
+  });
 }
 
 function authFields(prefix) {
@@ -1367,7 +1384,7 @@ async function authenticatePlatform(form, mode) {
           ? "You're signed in."
           : "已登录",
     );
-    closePlatformAuthDialog({ restoreFocus: false });
+    await closePlatformAuthDialog({ restoreFocus: false });
     requestAnimationFrame(() => {
       if (currentView === "agent") document.querySelector("#agent-prompt")?.focus();
       else main.focus({ preventScroll: true });

@@ -12,6 +12,8 @@ const staticEntries = [
   ["app.js", "app.js"],
   ["analytics.js", "analytics.js"],
   ["styles.css", "styles.css"],
+  ["zine-system.css", "zine-system.css"],
+  ["assets", "assets"],
   ["blog", "blog"],
   ["en", "en"],
   ["src", "src"],
@@ -19,6 +21,7 @@ const staticEntries = [
   ["admin/index.html", "admin/index.html"],
   ["admin/app.js", "admin/app.js"],
   ["admin/styles.css", "admin/styles.css"],
+  ["admin/zine-system.css", "admin/zine-system.css"],
 ];
 
 await rm(dist, { recursive: true, force: true });
@@ -52,13 +55,20 @@ const runtimeSource = await readFile(join(root, "sites-runtime", "index.js"), "u
 const embeddedAssets = {};
 for (const file of await listFiles(staticRoot)) {
   const publicPath = `/${relative(staticRoot, file).split(sep).join("/")}`;
+  const contentType = contentTypeFor(file);
+  const binary = isBinaryContentType(contentType);
   embeddedAssets[publicPath] = {
-    body: await readFile(file, "utf8"),
-    contentType: contentTypeFor(file),
+    body: await readFile(file, binary ? "base64" : "utf8"),
+    bodyEncoding: binary ? "base64" : "utf8",
+    contentType,
     cacheControl: publicPath.endsWith(".html")
       ? "no-cache"
       : "public, max-age=300, must-revalidate",
   };
+}
+
+function isBinaryContentType(contentType) {
+  return contentType.startsWith("image/") || contentType === "application/octet-stream";
 }
 const assetMarker = "const EMBEDDED_STATIC_ASSETS = null;";
 if (!runtimeSource.includes(assetMarker)) {
@@ -117,6 +127,8 @@ function contentTypeFor(path) {
       ".css": "text/css; charset=utf-8",
       ".html": "text/html; charset=utf-8",
       ".js": "text/javascript; charset=utf-8",
+      ".png": "image/png",
+      ".webp": "image/webp",
     }[extname(path)] ?? "application/octet-stream"
   );
 }

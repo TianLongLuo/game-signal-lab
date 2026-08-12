@@ -33,6 +33,16 @@ test("built Sites worker serves embedded static assets without an ASSETS binding
   );
   assert.match(await admin.text(), /管理员登录/);
 
+  const zineAsset = await worker.fetch(
+    new Request(`${ORIGIN}/assets/zine/signal-archive-v1.webp`),
+    {},
+    {}
+  );
+  assert.equal(zineAsset.status, 200);
+  assert.equal(zineAsset.headers.get("content-type"), "image/webp");
+  const zineBytes = new Uint8Array(await zineAsset.arrayBuffer());
+  assert.equal(new TextDecoder().decode(zineBytes.subarray(0, 4)), "RIFF");
+
   const missing = await worker.fetch(new Request(`${ORIGIN}/missing.txt`), {}, {});
   assert.equal(missing.status, 404);
 });

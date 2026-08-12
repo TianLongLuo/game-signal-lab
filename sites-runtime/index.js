@@ -3040,17 +3040,29 @@ async function serveStatic(request, env, path) {
     if (!asset) {
       response = new Response("Not found", { status: 404 });
     } else {
-      response = new Response(request.method === "HEAD" ? null : asset.body, {
+      const body = asset.bodyEncoding === "base64"
+        ? decodeBase64Bytes(asset.body)
+        : asset.body;
+      response = new Response(request.method === "HEAD" ? null : body, {
         status: 200,
         headers: {
           "Content-Type": asset.contentType,
           "Cache-Control": asset.cacheControl,
-          "Content-Length": String(new TextEncoder().encode(asset.body).byteLength),
+          "Content-Length": String(
+            body instanceof Uint8Array
+              ? body.byteLength
+              : new TextEncoder().encode(body).byteLength
+          ),
         },
       });
     }
   }
   return withSecurity(response, { admin: path === "/admin" || path.startsWith("/admin/") });
+}
+
+function decodeBase64Bytes(value) {
+  const binary = atob(value);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
 
 function json(payload, status = 200, extraHeaders = null, options = {}) {
