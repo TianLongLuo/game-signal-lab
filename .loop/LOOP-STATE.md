@@ -7,19 +7,18 @@
 
 | Loop ID | 名称 | 类型 | 节奏 | 状态 | 上次运行 |
 |---------|------|------|------|------|----------|
-| blog-daily | 每日博客发布 | 内容生成 | 每天 9:00 | active | - |
+| blog-daily | 每日博客发布 | 内容生成 | 每天 9:00 | active | 2026-08-11 |
 | seo-weekly | SEO 健康监控 | 监控 | 每周一 10:00 | active | 2026-08-10 |
 | ci-sweeper | CI 失败修复 | 修复 | 每 15 分钟 | active | 2026-08-10 16:08 |
 | changelog-weekly | 更新日志 | 文档 | 每周一 11:00 | active | 2026-08-10 |
 
 ## 每日博客 Loop 状态
 
-- **当前文章编号**: 18（已发布 18 篇中文 + 18 篇英文）
-- **上次主题**: 如何启动困难对话（Difficult Conversations）— 最难的不是说什么，是决定开口
-- **下次主题候选**: 沟通模式、关系中的反馈艺术、关系中权力与平等的边界、如何接受关系中的不确定性
+- **当前文章编号**: 20（已发布 20 篇中文 + 20 篇英文）
+- **上次主题**: 关系中最大的成熟：学会与不确定性共存（The Greatest Maturity in Relationships: Learning to Live with Uncertainty）— 将不确定感拆解为可记录的事实单元，用观察模式替代情绪模式
+- **下次主题候选**: 关系中权力与平等的边界、关系中冲突修复的节奏
 - **待验证**: -
 - **人工干预**: -
-- **修复**: 补充了之前缺失的 en-12-mixed-signals.html（英文版混合信号文章）
 
 ## SEO Health 状态
 
@@ -54,4 +53,4 @@
 
 ---
 
-*最后更新：2026-08-10 (seo-weekly loop 执行) · Loop Engineering framework*
+*最后更新：2026-08-12 (blog-daily loop 执行) · Loop Engineering framework*

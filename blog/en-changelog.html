@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>What's New — Week of August 10, 2026 | GAME Signal Lab</title>
+  <meta name="description" content="Weekly changelog for GAME Signal Lab covering voice recording overhaul, visual system upgrade, i18n completion, blog launch, and performance improvements." />
+  <meta name="robots" content="noindex"/>
+  <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0c0910;color:#c4bfd0;line-height:2;max-width:720px;margin:0 auto;padding:60px 20px}h1{font-size:1.8rem;color:#f5f2fa;margin-bottom:8px;line-height:1.4}.subtitle{color:#6b5e80;font-size:.85rem;margin-bottom:36px}h2{font-size:1.2rem;color:#d4cfe6;margin:36px 0 12px;padding-bottom:6px;border-bottom:1px solid #2a2038}h3{font-size:1rem;color:#b8a8d0;margin:20px 0 8px}ul{margin:8px 0 20px 20px}li{margin-bottom:6px;font-size:.92rem}code{font-family:"SF Mono",Monaco,Menlo,monospace;font-size:.8rem;color:#a855f7;background:#1a1425;padding:1px 6px;border-radius:3px}p{margin-bottom:14px;font-size:.92rem}.badge{display:inline-block;font-size:.7rem;padding:1px 8px;border-radius:4px;margin-right:4px;font-weight:600;text-transform:uppercase}.badge-feat{background:#1a3a2a;color:#4ade80}.badge-fix{background:#3a1a1a;color:#f87171}.badge-perf{background:#1a2a3a;color:#60a5fa}.badge-docs{background:#2a1a3a;color:#c084fc}.badge-i18n{background:#3a2a1a;color:#fbbf24}.stats{background:#14101c;border:1px solid #2a2038;border-radius:6px;padding:16px 20px;margin:20px 0}.stats dt{font-size:.78rem;color:#6b5e80;text-transform:uppercase;letter-spacing:.04em}.stats dd{font-size:1.1rem;color:#d4cfe6;margin-bottom:10px}.stats dd:last-child{margin-bottom:0}.back{margin-top:60px;font-size:.9rem}.back a{color:#a855f7}a{color:#a855f7}</style>
+</head>
+<body>
+  <h1>What's New — Week of August 10, 2026</h1>
+  <div class="subtitle">August 3 – August 10, 2026 · 107 commits · 44 substantive changes</div>
+
+  <p>This was one of the busiest weeks in GAME Signal Lab history. The voice pipeline was rebuilt from the ground up, the visual identity received a dramatic upgrade, full i18n shipped, and the blog went live with 36 bilingual articles.</p>
+
+  <div class="stats">
+    <dl>
+      <dt>Total Commits</dt>
+      <dd>107 (incl. CI sweeper runs)</dd>
+      <dt>Substantive Changes</dt>
+      <dd>44 (14 features, 17 fixes, 3 perf, 2 SEO, 1 i18n, 1 docs, 1 refactor, 5 merges)</dd>
+      <dt>Blog Articles</dt>
+      <dd>18 Chinese + 18 English = 36 articles live</dd>
+      <dt>Google Index</dt>
+      <dd>Indexed · sitemap: 38 URLs · last verified 2026-08-10</dd>
+      <dt>Test Suite</dt>
+      <dd>65 pass / 0 fail · CI green all week</dd>
+    </dl>
+  </div>
+
+  <h2>🎤 Voice Recording & ASR Overhaul</h2>
+  <p>The entire audio recording pipeline was rebuilt after discovering critical bugs in the Recorder.js library. The team replaced MP3 recording with native <code>AudioContext</code> WAV capture, deployed a custom FunASR paraformer server, and added bilingual (Chinese + English) transcription support.</p>
+
+  <h3>Features</h3>
+  <ul>
+    <li><span class="badge badge-feat">feat</span> <code>ae2ce58</code> Support bilingual FunASR transcription</li>
+    <li><span class="badge badge-feat">feat</span> <code>0d22271</code> Polish voice transcripts before agent input</li>
+  </ul>
+
+  <h3>Performance</h3>
+  <ul>
+    <li><span class="badge badge-perf">perf</span> <code>13eaa52</code> Add local-first FunASR transcription</li>
+    <li><span class="badge badge-perf">perf</span> <code>eefd514</code> Tune FunASR for 2-core 4GB hosts</li>
+    <li><span class="badge badge-perf">perf</span> <code>e1548a1</code> Stream transcripts without TTS playback</li>
+  </ul>
+
+  <h3>Fixes</h3>
+  <ul>
+    <li><span class="badge badge-fix">fix</span> <code>8d08af2</code> Replace Recorder library with native AudioContext WAV capture</li>
+    <li><span class="badge badge-fix">fix</span> <code>bcabbbd</code> Switch to WAV recorder — MP3 takeoffEncodeChunk has known bug</li>
+    <li><span class="badge badge-fix">fix</span> <code>af5db0e</code> Bypass Recorder.stop() callback — use pre-encoded chunks</li>
+    <li><span class="badge badge-fix">fix</span> <code>a240440</code> Add 10s timeout fallback for recorder.stop() hang</li>
+    <li><span class="badge badge-fix">fix</span> <code>efc858d</code> Native recorder — add getUserMedia check + dynamic sample rate</li>
+    <li><span class="badge badge-fix">fix</span> <code>8987290</code> Release cancelled ASR requests between recordings</li>
+    <li><span class="badge badge-fix">fix</span> <code>ec70b11</code> Support paraformer WebSocket transcription</li>
+    <li><span class="badge badge-fix">fix</span> <code>5a0bf06</code> Proper multipart parsing in FunASR server</li>
+    <li><span class="badge badge-fix">fix</span> <code>9109d8e</code> FunASR paraformer custom server + systemd service</li>
+    <li><span class="badge badge-fix">fix</span> <code>1b45d76</code> Keep SenseVoice as FunASR fallback, MiMo as primary ASR</li>
+    <li><span class="badge badge-fix">fix</span> <code>9b551ec</code> Transcribe completed MP3 recordings before send</li>
+    <li><span class="badge badge-fix">fix</span> <code>474dc3c</code> Append ASR results instead of rebuilding the input text</li>
+  </ul>
+
+  <h2>🎨 Visual System Upgrade</h2>
+  <p>The homepage transformed from a static layout into an immersive experience: a wheel-driven 3D scene with CSS-animated hero background, starfield, glassmorphism effects, and custom SVG icons throughout.</p>
+
+  <ul>
+    <li><span class="badge badge-feat">feat</span> <code>5f897ce</code> Add wheel-driven 3D scene homepage</li>
+    <li><span class="badge badge-feat">feat</span> <code>6742736</code> Add wheel-driven scene transition shell</li>
+    <li><span class="badge badge-feat">feat</span> <code>10f1b45</code> Add GTA scene motion system</li>
+    <li><span class="badge badge-feat">feat</span> <code>6f5abf7</code> CSS-animated hero background (video-like breathing effect)</li>
+    <li><span class="badge badge-feat">feat</span> <code>10e534e</code> Lovart AI-generated hero background + favicon</li>
+    <li><span class="badge badge-feat">feat</span> <code>69cae93</code> Visual system upgrade — starfield bg, glassmorphism, neon glow icons</li>
+    <li><span class="badge badge-feat">feat</span> <code>7f9e578</code> Replace emoji icons with custom SVG icons</li>
+    <li><span class="badge badge-fix">fix</span> <code>5eaaa7d</code> Replace emoji icons with clean Feather-style SVG icons</li>
+  </ul>
+
+  <h2>🌐 Internationalization Complete</h2>
+  <p>The app is now fully bilingual. IP-based locale detection picks the right language on first visit, a manual toggle sits in the topbar, and all 167 UI phrases have English equivalents. The Agent now respects the user's locale preference.</p>
+
+  <ul>
+    <li><span class="badge badge-feat">feat</span> <code>9de7e91</code> i18n — auto-detect locale from IP, Chinese/English UI + Agent</li>
+    <li><span class="badge badge-feat">feat</span> <code>dc9d4ab</code> Manual language toggle in topbar + locale override for Agent</li>
+    <li><span class="badge badge-i18n">i18n</span> <code>d0e67ee</code> Extend EN_PHRASES to 167 entries covering toast/text/button/form labels</li>
+    <li><span class="badge badge-fix">fix</span> <code>3ec8030</code> Pass locale prompt through DeepSeek streaming proxy</li>
+    <li><span class="badge badge-fix">fix</span> <code>3ca1ec7</code> Translate DOM text nodes on locale toggle</li>
+  </ul>
+
+  <h2>📝 Blog & SEO Launch</h2>
+  <p>The GAME Signal Lab blog went live at <code>/blog/</code> with 36 bilingual articles (18 topics in Chinese + English), hreflang cross-links, Open Graph metadata, JSON-LD structured data, and a dynamic sitemap.</p>
+
+  <ul>
+    <li><span class="badge badge-feat">feat</span> <code>366aec3</code> Add blog at /blog/ — 10 SEO-optimized articles</li>
+    <li><span class="badge badge-feat">feat</span> <code>14af421</code> 10 English blog articles + bilingual index with hreflang</li>
+    <li><span class="badge badge-docs">refactor</span> <code>7fb37dd</code> Blog routing uses wildcard paths + dynamic sitemap scan</li>
+    <li>seo <code>b75665e</code> Add google-site-verification meta</li>
+    <li>seo <code>c2761d9</code> Absolute canonical/OG tags, JSON-LD graph, og:image, richer crawl text</li>
+    <li><span class="badge badge-docs">docs</span> <code>6338cf5</code> SEO implementation notes incl. search console submission steps</li>
+  </ul>
+
+  <h2>📊 Analytics</h2>
+  <ul>
+    <li><span class="badge badge-feat">feat</span> <code>9180a1b</code> Add Google Analytics GA4 (G-EJD3GEZ83Z)</li>
+  </ul>
+
+  <h2>🔀 Merges</h2>
+  <ul>
+    <li><code>2409cc6</code> PR #4 — bilingual ASR tuning</li>
+    <li><code>5b357ec</code> PR #2 — FunASR Docker deployment + swap + Dockerfile fixes</li>
+    <li><code>7236fd9</code> Fix second recording freeze</li>
+    <li><code>e5e08c1</code> Bilingual ASR update 0d22271</li>
+    <li><code>7744a87</code> Sync latest fullstack updates</li>
+  </ul>
+
+  <h2>🤖 CI Automation</h2>
+  <p>The CI sweeper ran 83 times this week — every result was green (65 pass / 0 fail). Test count climbed from 56 to 65 as new features landed with full coverage. One known issue: GitHub token is expired, so CI status commits are accumulating locally (10 ahead of origin).</p>
+
+  <h2>⚠️ Known Issues</h2>
+  <ul>
+    <li><strong>GitHub Token Expired</strong> — Push blocked (Authentication failed). CI state commits are local-only. Needs token rotation in <code>~/.hermes/secrets/github_tianlongluo.token</code>.</li>
+    <li><strong>Google Search Console</strong> — Inaccessible this week; GSC status was last confirmed as indexed.</li>
+    <li><strong>Baidu Verification</strong> — Not yet submitted.</li>
+    <li><strong>Sitemap</strong> — Missing <code>&lt;lastmod&gt;</code> tags (optional optimization, doesn't block indexing).</li>
+  </ul>
+
+  <div class="back"><a href="/blog/">← Back to Blog</a> · <a href="/blog/changelog.html">中文版</a> · <a href="https://rsdgame.online/">Enter GAME Signal Lab</a></div>
+</body>
+</html>

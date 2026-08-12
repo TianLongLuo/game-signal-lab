@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>本周更新 — 2026年8月10日周报 | GAME Signal Lab</title>
+  <meta name="description" content="GAME Signal Lab 每周更新日志：语音录制重构、视觉系统升级、国际化完成、博客上线、性能优化。" />
+  <meta name="robots" content="noindex"/>
+  <link rel="alternate" hreflang="en" href="https://rsdgame.online/blog/en-changelog.html" />
+  <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans SC",sans-serif;background:#0c0910;color:#c4bfd0;line-height:2;max-width:720px;margin:0 auto;padding:60px 20px}h1{font-size:1.8rem;color:#f5f2fa;margin-bottom:8px;line-height:1.4}.subtitle{color:#6b5e80;font-size:.85rem;margin-bottom:36px}h2{font-size:1.2rem;color:#d4cfe6;margin:36px 0 12px;padding-bottom:6px;border-bottom:1px solid #2a2038}h3{font-size:1rem;color:#b8a8d0;margin:20px 0 8px}ul{margin:8px 0 20px 20px}li{margin-bottom:6px;font-size:.92rem}code{font-family:"SF Mono",Monaco,Menlo,monospace;font-size:.8rem;color:#a855f7;background:#1a1425;padding:1px 6px;border-radius:3px}p{margin-bottom:14px;font-size:.92rem}.badge{display:inline-block;font-size:.7rem;padding:1px 8px;border-radius:4px;margin-right:4px;font-weight:600;text-transform:uppercase}.badge-feat{background:#1a3a2a;color:#4ade80}.badge-fix{background:#3a1a1a;color:#f87171}.badge-perf{background:#1a2a3a;color:#60a5fa}.badge-docs{background:#2a1a3a;color:#c084fc}.badge-i18n{background:#3a2a1a;color:#fbbf24}.stats{background:#14101c;border:1px solid #2a2038;border-radius:6px;padding:16px 20px;margin:20px 0}.stats dt{font-size:.78rem;color:#6b5e80;text-transform:uppercase;letter-spacing:.04em}.stats dd{font-size:1.1rem;color:#d4cfe6;margin-bottom:10px}.stats dd:last-child{margin-bottom:0}.back{margin-top:60px;font-size:.9rem}.back a{color:#a855f7}a{color:#a855f7}</style>
+</head>
+<body>
+  <h1>本周更新 — 2026年8月10日周报</h1>
+  <div class="subtitle">2026年8月3日 – 8月10日 · 107 次提交 · 44 项实质性变更</div>
+
+  <p>这是 GAME Signal Lab 历史上最繁忙的一周。语音管线从头重建，视觉系统大幅升级，完整双语支持上线，博客携 36 篇双语文章发布。</p>
+
+  <div class="stats">
+    <dl>
+      <dt>总提交数</dt>
+      <dd>107（含 CI 自动巡检）</dd>
+      <dt>实质性变更</dt>
+      <dd>44（14 项功能、17 项修复、3 项性能优化、2 项 SEO、1 项国际化、1 项文档、1 项重构、5 次合并）</dd>
+      <dt>博客文章</dt>
+      <dd>18 篇中文 + 18 篇英文 = 36 篇文章已上线</dd>
+      <dt>Google 索引状态</dt>
+      <dd>已索引 · sitemap 包含 38 个 URL · 最后验证 2026-08-10</dd>
+      <dt>测试套件</dt>
+      <dd>65 通过 / 0 失败 · CI 全周绿灯</dd>
+    </dl>
+  </div>
+
+  <h2>🎤 语音录制与 ASR 重构</h2>
+  <p>在发现 Recorder.js 库的关键 Bug 后，整个音频录制管线被重建。团队用原生 <code>AudioContext</code> WAV 录制替代了 MP3 录制，部署了自定义 FunASR paraformer 服务器，并添加了中英双语转录支持。</p>
+
+  <h3>功能</h3>
+  <ul>
+    <li><span class="badge badge-feat">feat</span> <code>ae2ce58</code> 支持中英双语 FunASR 转录</li>
+    <li><span class="badge badge-feat">feat</span> <code>0d22271</code> 语音转录文本在送入 Agent 前进行润色</li>
+  </ul>
+
+  <h3>性能优化</h3>
+  <ul>
+    <li><span class="badge badge-perf">perf</span> <code>13eaa52</code> 添加本地优先的 FunASR 转录</li>
+    <li><span class="badge badge-perf">perf</span> <code>eefd514</code> 针对 2 核 4GB 主机调优 FunASR</li>
+    <li><span class="badge badge-perf">perf</span> <code>e1548a1</code> 流式传输转录文本，跳过 TTS 播放</li>
+  </ul>
+
+  <h3>修复</h3>
+  <ul>
+    <li><span class="badge badge-fix">fix</span> <code>8d08af2</code> 用原生 AudioContext WAV 录制替代 Recorder 库</li>
+    <li><span class="badge badge-fix">fix</span> <code>bcabbbd</code> 切换到 WAV 录制器 — MP3 takeoffEncodeChunk 存在已知 Bug</li>
+    <li><span class="badge badge-fix">fix</span> <code>af5db0e</code> 绕过 Recorder.stop() 回调 — 使用预编码数据块</li>
+    <li><span class="badge badge-fix">fix</span> <code>a240440</code> 为 recorder.stop() 挂起添加 10 秒超时回退</li>
+    <li><span class="badge badge-fix">fix</span> <code>efc858d</code> 原生录制器 — 添加 getUserMedia 检查 + 动态采样率</li>
+    <li><span class="badge badge-fix">fix</span> <code>8987290</code> 录制之间释放已取消的 ASR 请求</li>
+    <li><span class="badge badge-fix">fix</span> <code>ec70b11</code> 支持 paraformer WebSocket 转录</li>
+    <li><span class="badge badge-fix">fix</span> <code>5a0bf06</code> FunASR 服务器中正确的 multipart 解析</li>
+    <li><span class="badge badge-fix">fix</span> <code>9109d8e</code> FunASR paraformer 自定义服务器 + systemd 服务</li>
+    <li><span class="badge badge-fix">fix</span> <code>1b45d76</code> 保留 SenseVoice 作为 FunASR 回退，MiMo 作为主要 ASR</li>
+    <li><span class="badge badge-fix">fix</span> <code>9b551ec</code> 发送前转录已完成的 MP3 录音</li>
+    <li><span class="badge badge-fix">fix</span> <code>474dc3c</code> 追加 ASR 结果而非重建输入文本</li>
+  </ul>
+
+  <h2>🎨 视觉系统升级</h2>
+  <p>首页从静态布局转变为沉浸式体验：滚轮驱动的 3D 场景、CSS 动画 Hero 背景、星空粒子效果、毛玻璃效果以及全站自定义 SVG 图标。</p>
+
+  <ul>
+    <li><span class="badge badge-feat">feat</span> <code>5f897ce</code> 添加滚轮驱动 3D 场景首页</li>
+    <li><span class="badge badge-feat">feat</span> <code>6742736</code> 添加滚轮驱动场景切换框架</li>
+    <li><span class="badge badge-feat">feat</span> <code>10f1b45</code> 添加 GTA 场景动态系统</li>
+    <li><span class="badge badge-feat">feat</span> <code>6f5abf7</code> CSS 动画 Hero 背景（仿视频呼吸效果）</li>
+    <li><span class="badge badge-feat">feat</span> <code>10e534e</code> Lovart AI 生成 Hero 背景 + favicon</li>
+    <li><span class="badge badge-feat">feat</span> <code>69cae93</code> 视觉系统升级 — 星空背景、毛玻璃效果、霓虹发光图标</li>
+    <li><span class="badge badge-feat">feat</span> <code>7f9e578</code> 用自定义 SVG 图标替换 Emoji 图标</li>
+    <li><span class="badge badge-fix">fix</span> <code>5eaaa7d</code> 用简洁 Feather 风格 SVG 图标替换 Emoji 图标</li>
+  </ul>
+
+  <h2>🌐 国际化完成</h2>
+  <p>应用现已支持完整双语。首次访问时基于 IP 自动检测语言，顶栏提供手动切换开关，全部 167 个 UI 短语均已完成英文化。Agent 现在会遵循用户的语言偏好。</p>
+
+  <ul>
+    <li><span class="badge badge-feat">feat</span> <code>9de7e91</code> 国际化 — 基于 IP 自动检测语言，中英文 UI + Agent</li>
+    <li><span class="badge badge-feat">feat</span> <code>dc9d4ab</code> 顶栏手动语言切换 + Agent 语言覆盖</li>
+    <li><span class="badge badge-i18n">i18n</span> <code>d0e67ee</code> 将 EN_PHRASES 扩展至 167 条，覆盖 toast/文本/按钮/表单标签</li>
+    <li><span class="badge badge-fix">fix</span> <code>3ec8030</code> 通过 DeepSeek 流代理传递语言提示</li>
+    <li><span class="badge badge-fix">fix</span> <code>3ca1ec7</code> 语言切换时翻译 DOM 文本节点</li>
+  </ul>
+
+  <h2>📝 博客与 SEO 上线</h2>
+  <p>GAME Signal Lab 博客已在 <code>/blog/</code> 上线，包含 36 篇双语文章（18 个主题 × 中英文），配备 hreflang 交叉链接、Open Graph 元数据、JSON-LD 结构化数据和动态 sitemap。</p>
+
+  <ul>
+    <li><span class="badge badge-feat">feat</span> <code>366aec3</code> 添加博客 /blog/ — 10 篇 SEO 优化文章</li>
+    <li><span class="badge badge-feat">feat</span> <code>14af421</code> 10 篇英文博客文章 + 双语索引含 hreflang</li>
+    <li><span class="badge badge-docs">refactor</span> <code>7fb37dd</code> 博客路由使用通配符路径 + 动态 sitemap 扫描</li>
+    <li>seo <code>b75665e</code> 添加 google-site-verification 元标签</li>
+    <li>seo <code>c2761d9</code> 绝对地址 canonical/OG 标签、JSON-LD 结构化数据、og:image、更丰富的抓取文本</li>
+    <li><span class="badge badge-docs">docs</span> <code>6338cf5</code> SEO 实施笔记（含 Search Console 提交步骤）</li>
+  </ul>
+
+  <h2>📊 数据分析</h2>
+  <ul>
+    <li><span class="badge badge-feat">feat</span> <code>9180a1b</code> 添加 Google Analytics GA4（G-EJD3GEZ83Z）</li>
+  </ul>
+
+  <h2>🔀 合并请求</h2>
+  <ul>
+    <li><code>2409cc6</code> PR #4 — 双语 ASR 调优</li>
+    <li><code>5b357ec</code> PR #2 — FunASR Docker 部署 + swap + Dockerfile 修复</li>
+    <li><code>7236fd9</code> 修复第二次录制卡死</li>
+    <li><code>e5e08c1</code> 双语 ASR 更新 0d22271</li>
+    <li><code>7744a87</code> 同步最新全栈更新</li>
+  </ul>
+
+  <h2>🤖 CI 自动化</h2>
+  <p>CI 巡检本周执行了 83 次——每次均为绿灯（65 通过 / 0 失败）。随着新功能上线，测试数量从 56 增长至 65，且均具备完整覆盖。已知问题：GitHub Token 已过期，CI 状态提交仅保存在本地（领先 origin 10 个 commit）。</p>
+
+  <h2>⚠️ 已知问题</h2>
+  <ul>
+    <li><strong>GitHub Token 过期</strong> — 推送被阻止（认证失败）。CI 状态提交仅保存在本地。需更换 <code>~/.hermes/secrets/github_tianlongluo.token</code>。</li>
+    <li><strong>Google Search Console</strong> — 本周无法访问；上次确认为已索引状态。</li>
+    <li><strong>百度验证</strong> — 尚未提交。</li>
+    <li><strong>Sitemap</strong> — 缺少 <code>&lt;lastmod&gt;</code> 标签（可选优化，不影响收录）。</li>
+  </ul>
+
+  <div class="back"><a href="/blog/">← 返回博客</a> · <a href="/blog/en-changelog.html">English Version</a> · <a href="https://rsdgame.online/">进入 GAME Signal Lab</a></div>
+</body>
+</html>
