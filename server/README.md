@@ -43,6 +43,7 @@ Linux/Node 生产环境还必须配置 Qdrant 向量库：
 | `PORT` | `8787` | 监听端口 |
 | `COOKIE_SECURE` | 生产为 `true` | 生产环境不能关闭 Secure Cookie |
 | `TRUSTED_PROXY_ADDRESSES` | 空 | 逗号分隔的反向代理精确 IP；只有这些对端提供的 `X-Forwarded-For` 才会用于限流 |
+| `GA_MEASUREMENT_ID` | 空 | 可选 GA4 Web 数据流 Measurement ID（`G-...`）；配置后仍需访客明确允许匿名分析才加载 Google Tag |
 
 不要把秘密写进仓库、命令示例、日志或前端运行时配置。首次启动可由部署平台的秘密管理功能临时注入引导密码；数据库已有管理员后，该变量不会重置 `Drac` 密码。
 
@@ -76,7 +77,7 @@ node --test tests/backend.test.mjs
 - API Key 使用 AES-256-GCM 加密后存入 SQLite；管理员读取接口只返回是否已配置。
 - 用户主动发送的 Agent/故事消息及模型回复使用 AES-256-GCM 加密后存入 `conversation_messages`；只有管理员接口可解密读取，且每次读取都会新增审计事件。
 - Agent 仅发送用户本次明确提交的消息。客户端 `system` 消息会被拒绝，服务端固定注入安全提示词。
-- prompt、模型正文与自由文本审批理由均不写入数据库；审计只保存动作、资源、结果、固定 reason code、请求 ID 和时间。
+- 系统提示词、自由文本审批理由与敏感凭据不写入数据库；用户明确发送的 Agent/故事消息和模型回复按上条规则加密存档。审计只保存动作、资源、结果、固定 reason code、请求 ID 和时间。
 - Agent 同时受当前外部 AI 同意、相互独立的 provider 开关与全局开关、会员状态、个人授权、每用户频率与并发、全局并发约束。
 - 个人 RAG 只来自用户显式同步的匿名文档；Node 生产检索走 Qdrant 向量库，
   撤回同意或清空档案会删除该用户的 SQLite 缓存和 Qdrant points。

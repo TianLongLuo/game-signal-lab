@@ -12,6 +12,10 @@ test("built Sites worker serves embedded static assets without an ASSETS binding
   assert.match(home.headers.get("content-security-policy"), /connect-src 'self'/);
   assert.match(await home.text(), /GAME Signal Lab/);
 
+  const englishHome = await worker.fetch(new Request(`${ORIGIN}/en/`), {}, {});
+  assert.equal(englishHome.status, 200);
+  assert.match(await englishHome.text(), /Privacy-First Relationship Journal/);
+
   const script = await worker.fetch(
     new Request(`${ORIGIN}/app.js`, { method: "HEAD" }),
     {},

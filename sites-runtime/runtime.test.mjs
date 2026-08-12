@@ -228,6 +228,19 @@ test("robots and sitemap use the deployed request origin", async () => {
   assert.equal(sitemap.status, 200);
   assert.match(sitemap.headers.get("content-type"), /^application\/xml/);
   assert.match(await sitemap.text(), /<loc>https:\/\/game\.example\/<\/loc>/);
+  const sitemapText = await (await worker.fetch(
+    new Request(`${ORIGIN}/sitemap.xml`),
+    {},
+    ctx
+  )).text();
+  assert.match(sitemapText, /<loc>https:\/\/game\.example\/en\/<\/loc>/);
+
+  const runtimeConfig = await worker.fetch(
+    new Request(`${ORIGIN}/runtime-config.js`),
+    { GA_MEASUREMENT_ID: "G-TEST123456" },
+    ctx
+  );
+  assert.match(await runtimeConfig.text(), /G-TEST123456/);
 });
 
 test("unknown API routes do not fall through to static assets", async () => {

@@ -44,12 +44,12 @@ const translations = {
   },
   en: {
     appName: "GAME Signal Lab",
-    tagline: "Your personal relationship studio",
-    overview: "Dashboard",
-    localMode: "Local mode",
-    startRecord: "New entry",
-    people: "People",
-    thinkTogether: "Reflect",
+    tagline: "A private space to make sense of relationships",
+    overview: "Home",
+    localMode: "On-device",
+    startRecord: "Tell Your Story",
+    people: "People & Stories",
+    thinkTogether: "Think It Through",
     blog: "Blog",
     privacyNote: "Your stories stay where you choose",
     privacySub: "Stored locally by default; AI consent required before use.",
@@ -85,6 +85,9 @@ const translations = {
 
 export function detectLocale() {
   try {
+    if (window.location.pathname === "/en" || window.location.pathname.startsWith("/en/")) {
+      return "en";
+    }
     const stored = localStorage.getItem("game-locale");
     if (stored === "zh" || stored === "en") return stored;
     return window.__GAME_RUNTIME__?.locale === "zh" ? "zh" : "en";
@@ -97,7 +100,9 @@ export function toggleLocale() {
   const current = detectLocale();
   const next = current === "zh" ? "en" : "zh";
   try { localStorage.setItem("game-locale", next); } catch {}
-  localizePage();
+  const target = next === "en" ? "/en/" : "/";
+  if (window.location.pathname !== target) window.location.assign(target);
+  else localizePage();
   return next;
 }
 
@@ -108,6 +113,7 @@ export function t(key, locale) {
 
 export function localizePage() {
   const locale = detectLocale();
+  document.documentElement.lang = locale === "en" ? "en" : "zh-CN";
   // data-i18n attribute-based elements
   for (const el of document.querySelectorAll("[data-i18n]")) {
     const key = el.getAttribute("data-i18n");
@@ -124,8 +130,9 @@ export function localizePage() {
 const EN_PHRASES = {
   "我的空间": "My Space",
   "今日概览": "Dashboard",
-  "开始记录": "New Entry",
-  "对象档案": "People",
+  "开始记录": "Tell Your Story",
+  "对象档案": "People & Stories",
+  "一起想想": "Think It Through",
   "行动复盘": "Review",
   "信号分析": "Analysis",
   "表达设置": "Profile",
@@ -144,7 +151,7 @@ const EN_PHRASES = {
   "对象档案同步失败，请稍后重试。": "Profile sync failed, try again later.",
   "对象档案 · ": "Profile · ",
   "编辑对象档案：": "Edit profile: ",
-  "最近心里挂着什么？": "What's on your mind lately?",
+  "最近心里挂着什么？": "What have you been trying to make sense of?",
   "登出": "Logout",
   "导出数据": "Export Data",
   "导入数据": "Import Data",
@@ -220,7 +227,7 @@ const EN_PHRASES = {
   "我有点分不清了": "I'm a bit confused",
   "帮我说得自然一点": "Help me sound natural",
   "告诉我你的故事": "Tell me your story",
-  "陪我理一理": "Help me sort this out",
+  "陪我理一理": "Help me think it through",
   "先坐下来，": "Take a seat,",
   "我在听，你慢慢说。": "I'm listening. Take your time.",
   "想到哪儿说到哪儿": "Just speak as you think",

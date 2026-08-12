@@ -95,6 +95,7 @@ const STATIC_ASSETS = new Map([
   ["/index.html", ["index.html", "text/html; charset=utf-8"]],
   ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
   ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
+  ["/analytics.js", ["analytics.js", "text/javascript; charset=utf-8"]],
   ["/src/i18n.js", ["src/i18n.js", "text/javascript; charset=utf-8"]],
   ["/src/platform-client.js", ["src/platform-client.js", "text/javascript; charset=utf-8"]],
   ["/src/signal-engine.js", ["src/signal-engine.js", "text/javascript; charset=utf-8"]],
@@ -110,6 +111,8 @@ const STATIC_ASSETS = new Map([
   ["/assets/lovart/hero-bg.webp", ["assets/lovart/hero-bg.webp", "image/webp"]],
   ["/assets/lovart/lovart_2e014588e25e.png", ["assets/lovart/lovart_2e014588e25e.png", "image/png"]],
   ["/blog/", ["blog/index.html", "text/html; charset=utf-8"]],
+  ["/en", ["en/index.html", "text/html; charset=utf-8"]],
+  ["/en/", ["en/index.html", "text/html; charset=utf-8"]],
 ]);
 const GAME_SAFETY_SYSTEM_PROMPT = [
   "你是 GAME 的成年人关系反思助手，只帮助用户区分可观察事实、个人解释与不确定性。",
@@ -139,6 +142,7 @@ export class HttpError extends Error {
 
 export async function createBackend(options = {}) {
   const env = options.env ?? process.env;
+  const gaMeasurementId = normalizeGaMeasurementId(env.GA_MEASUREMENT_ID);
   const masterKey = parseMasterKey(env.CONFIG_MASTER_KEY);
   const databasePath = options.databasePath ?? env.DATABASE_PATH;
   if (!databasePath) {
@@ -330,6 +334,11 @@ export async function createBackend(options = {}) {
           "    <changefreq>weekly</changefreq>",
           "    <priority>1.0</priority>",
           "  </url>",
+          "  <url>",
+          `    <loc>${publicOrigin}/en/</loc>`,
+          "    <changefreq>weekly</changefreq>",
+          "    <priority>1.0</priority>",
+          "  </url>",
           blogEntries,
           "</urlset>",
           "",
@@ -345,7 +354,7 @@ export async function createBackend(options = {}) {
       const locale = clientIp ? (geoip.lookup(clientIp)?.country === "CN" ? "zh" : "en") : "en";
       sendJavaScript(
         response,
-        `window.__GAME_RUNTIME__ = Object.freeze({ apiEnabled: true, locale: "${locale}" });\n`
+        `window.__GAME_RUNTIME__ = Object.freeze({ apiEnabled: true, locale: "${locale}", gaMeasurementId: "${gaMeasurementId}" });\n`
       );
       return;
     }
@@ -3614,17 +3623,27 @@ async function serveStaticAsset(response, pathname, method, publicOrigin, blogWi
     : STATIC_ASSETS.get(pathname);
   let body = await readFile(join(STATIC_ROOT, relativePath));
   const isHtml = contentType.startsWith("text/html");
-  if (isHtml && publicOrigin && pathname === "/") {
+  if (isHtml && publicOrigin && ["/", "/en", "/en/"].includes(pathname)) {
+    const pagePath = pathname.startsWith("/en") ? "/en/" : "/";
     // Absolute canonical/og tags so search engines resolve the right origin.
     body = Buffer.from(
       body
         .toString("utf8")
-        .replaceAll('rel="canonical" href="/"', `rel="canonical" href="${publicOrigin}/"`)
-        .replaceAll('property="og:url" content="/"', `property="og:url" content="${publicOrigin}/"`)
+        .replaceAll(`rel="canonical" href="${pagePath}"`, `rel="canonical" href="${publicOrigin}${pagePath}"`)
+        .replaceAll('hreflang="zh-CN" href="/"', `hreflang="zh-CN" href="${publicOrigin}/"`)
+        .replaceAll('hreflang="en" href="/en/"', `hreflang="en" href="${publicOrigin}/en/"`)
+        .replaceAll('hreflang="x-default" href="/"', `hreflang="x-default" href="${publicOrigin}/"`)
+        .replaceAll(`property="og:url" content="${pagePath}"`, `property="og:url" content="${publicOrigin}${pagePath}"`)
         .replaceAll(
           'property="og:image" content="/assets/og-image.png"',
           `property="og:image" content="${publicOrigin}/assets/og-image.png"`
-        ),
+        )
+        .replaceAll(
+          'name="twitter:image" content="/assets/og-image.png"',
+          `name="twitter:image" content="${publicOrigin}/assets/og-image.png"`
+        )
+        .replaceAll(`"@id": "${pagePath}#`, `"@id": "${publicOrigin}${pagePath}#`)
+        .replaceAll(`"url": "${pagePath}"`, `"url": "${publicOrigin}${pagePath}"`),
       "utf8"
     );
   }
@@ -3632,8 +3651,8 @@ async function serveStaticAsset(response, pathname, method, publicOrigin, blogWi
   response.setHeader("Content-Type", contentType);
   response.setHeader(
     "Content-Security-Policy",
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-      "img-src 'self' data:; connect-src 'self'; font-src 'self' data:; object-src 'none'; " +
+      "default-src 'self'; script-src 'self' https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; " +
+      "img-src 'self' data: https://www.google-analytics.com; connect-src 'self' https://www.google-analytics.com https://region1.google-analytics.com; font-src 'self' data:; object-src 'none'; " +
       "base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
   );
   response.setHeader(
@@ -3743,6 +3762,11 @@ function parseBoolean(value, fallback) {
   if (String(value).toLowerCase() === "true") return true;
   if (String(value).toLowerCase() === "false") return false;
   throw new Error("COOKIE_SECURE must be true or false");
+}
+
+function normalizeGaMeasurementId(value) {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  return /^G-[A-Z0-9]{6,14}$/.test(normalized) ? normalized : "";
 }
 
 export function createFunAsrConfig(env = {}) {

@@ -10,7 +10,10 @@ const staticRoot = join(dist, "static");
 const staticEntries = [
   ["index.html", "index.html"],
   ["app.js", "app.js"],
+  ["analytics.js", "analytics.js"],
   ["styles.css", "styles.css"],
+  ["blog", "blog"],
+  ["en", "en"],
   ["src", "src"],
   ["vendor", "vendor"],
   ["admin/index.html", "admin/index.html"],
