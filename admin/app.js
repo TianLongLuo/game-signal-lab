@@ -28,6 +28,9 @@ const demoSeed = {
       joinedAt: "2026-07-12T08:20:00.000Z",
       membershipEnabled: true,
       agentEnabled: false,
+      aiCallsUsed: 18,
+      aiCallsLimit: 50,
+      aiCallsRemaining: 32,
       version: 1,
     },
     {
@@ -37,6 +40,9 @@ const demoSeed = {
       joinedAt: "2026-07-15T10:05:00.000Z",
       membershipEnabled: true,
       agentEnabled: true,
+      aiCallsUsed: 50,
+      aiCallsLimit: 50,
+      aiCallsRemaining: 0,
       version: 2,
     },
     {
@@ -46,6 +52,9 @@ const demoSeed = {
       joinedAt: "2026-07-18T03:48:00.000Z",
       membershipEnabled: false,
       agentEnabled: false,
+      aiCallsUsed: 7,
+      aiCallsLimit: 50,
+      aiCallsRemaining: 43,
       version: 1,
     },
     {
@@ -55,6 +64,9 @@ const demoSeed = {
       joinedAt: "2026-07-20T12:31:00.000Z",
       membershipEnabled: true,
       agentEnabled: false,
+      aiCallsUsed: 50,
+      aiCallsLimit: 50,
+      aiCallsRemaining: 0,
       version: 3,
     },
     {
@@ -64,6 +76,9 @@ const demoSeed = {
       joinedAt: "2026-07-22T05:17:00.000Z",
       membershipEnabled: false,
       agentEnabled: true,
+      aiCallsUsed: 50,
+      aiCallsLimit: 50,
+      aiCallsRemaining: 0,
       version: 1,
     },
     {
@@ -73,6 +88,9 @@ const demoSeed = {
       joinedAt: "2026-07-24T09:42:00.000Z",
       membershipEnabled: true,
       agentEnabled: true,
+      aiCallsUsed: 50,
+      aiCallsLimit: 50,
+      aiCallsRemaining: 0,
       version: 4,
     },
   ],
@@ -746,6 +764,16 @@ function createUserCard(user) {
     copy.append(email);
   }
   copy.append(joined);
+  const usage = document.createElement("small");
+  const used = Math.max(0, Number(user.aiCallsUsed) || 0);
+  const limit = Math.max(0, Number(user.aiCallsLimit) || 50);
+  const remaining = Math.max(0, Number(user.aiCallsRemaining ?? limit - used) || 0);
+  usage.className = "user-ai-usage";
+  usage.classList.toggle("is-exhausted", !user.agentEnabled && remaining === 0);
+  usage.textContent = user.agentEnabled
+    ? `AI 调用：${used} / ${limit} · 已由管理员开通无限权限`
+    : `AI 调用：${used} / ${limit} · 剩余 ${remaining} 次`;
+  copy.append(usage);
   if (user.expiresAt) {
     const expiry = document.createElement("small");
     expiry.textContent = `会员到期：${formatDateTime(user.expiresAt)}`;
@@ -757,7 +785,7 @@ function createUserCard(user) {
   entitlements.className = "entitlement-group";
   entitlements.append(
     createEntitlementControl(user, "membership", "会员资格", user.membershipEnabled),
-    createEntitlementControl(user, "agent", "Agent 权限", user.agentEnabled)
+    createEntitlementControl(user, "agent", "持续 Agent 权限", user.agentEnabled)
   );
 
   article.append(summary, entitlements);
@@ -796,7 +824,7 @@ function openEntitlementDialog(button) {
   const currentValue =
     entitlement === "membership" ? user.membershipEnabled : user.agentEnabled;
   const nextValue = !currentValue;
-  const label = entitlement === "membership" ? "会员资格" : "Agent 权限";
+  const label = entitlement === "membership" ? "会员资格" : "持续 Agent 权限";
 
   pendingEntitlementChange = {
     userId: user.id,

@@ -68,9 +68,13 @@ async function createHarness() {
     new URL("../drizzle/0001_personal_rag.sql", import.meta.url),
     "utf8"
   );
+  const usageQuotaSchema = await readFile(
+    new URL("../drizzle/0002_agent_usage_quotas.sql", import.meta.url),
+    "utf8"
+  );
   const pending = [];
   return {
-    DB: new TestD1(`${schema}\n${personalRagSchema}`),
+    DB: new TestD1(`${schema}\n${personalRagSchema}\n${usageQuotaSchema}`),
     env: {
       DB: null,
       ADMIN_BOOTSTRAP_USERNAME: "Drac",
@@ -447,7 +451,7 @@ test("admin users use complete cursor pagination and SQL filtering", async () =>
   assert.equal((await invalidCursor.json()).error.code, "INVALID_CURSOR");
 });
 
-test("authorization matrix requires global policy and admin or active unexpired granted member", async () => {
+test("authorization matrix supports 50 included calls before an ongoing admin grant", async () => {
   const harness = await createHarness();
   harness.env.DB = harness.DB;
   const admin = await login(
@@ -527,9 +531,24 @@ test("authorization matrix requires global policy and admin or active unexpired 
   );
   assert.equal(member.response.status, 201);
   me = await api(harness.env, harness.ctx, "/api/me", member);
-  assert.equal((await me.json()).capabilities.agent, false);
+  const includedAccess = (await me.json()).capabilities;
+  assert.equal(includedAccess.agent, true);
+  assert.deepEqual(includedAccess.agentUsage, {
+    used: 0,
+    limit: 50,
+    remaining: 50,
+    unlimited: false,
+    requiresAdminApproval: false,
+  });
 
   const memberId = member.payload.user.id;
+  const quota = await harness.DB.prepare(
+    "SELECT included_limit, used_count FROM agent_usage_quotas WHERE user_id = ?"
+  )
+    .bind(memberId)
+    .first();
+  assert.equal(quota.included_limit, 50);
+  assert.equal(quota.used_count, 0);
   const freeTextReason = await api(
     harness.env,
     harness.ctx,
@@ -661,6 +680,9 @@ test("authorization matrix requires global policy and admin or active unexpired 
   );
   assert.equal(expiredMember.membershipEnabled, false);
   assert.equal(expiredMember.expiresAt, "2020-01-01T00:00:00.000Z");
+  assert.equal(expiredMember.aiCallsUsed, 0);
+  assert.equal(expiredMember.aiCallsLimit, 50);
+  assert.equal(expiredMember.aiCallsRemaining, 50);
 
   await harness.DB.prepare(
     "UPDATE memberships SET expires_at = NULL WHERE user_id = ?"
@@ -965,6 +987,69 @@ test("Agent requires current explicit consent and filters provider SSE", async (
       provider: "deepseek",
     });
     assert.equal(transientAttempts, 3);
+
+    const includedMember = await register(
+      harness.env,
+      harness.ctx,
+      "included-member",
+      "long-test-password",
+      "203.0.113.77"
+    );
+    await api(
+      harness.env,
+      harness.ctx,
+      "/api/me/external-ai-consent",
+      includedMember,
+      { method: "PUT", body: { accepted: true, policyVersion: CONSENT_POLICY } }
+    );
+    const includedResponse = await api(
+      harness.env,
+      harness.ctx,
+      "/api/agent/stream",
+      includedMember,
+      {
+        method: "POST",
+        body: { messages: [{ role: "user", content: "Use one included call." }] },
+      }
+    );
+    assert.equal(includedResponse.status, 200);
+    await includedResponse.text();
+    const includedQuota = await harness.DB.prepare(
+      "SELECT used_count FROM agent_usage_quotas WHERE user_id = ?"
+    )
+      .bind(includedMember.payload.user.id)
+      .first();
+    assert.equal(includedQuota.used_count, 1);
+    const includedMe = await api(harness.env, harness.ctx, "/api/me", includedMember);
+    assert.equal((await includedMe.json()).capabilities.agentUsage.remaining, 49);
+    await harness.DB.prepare(
+      "UPDATE agent_usage_quotas SET used_count = included_limit WHERE user_id = ?"
+    )
+      .bind(includedMember.payload.user.id)
+      .run();
+    const exhaustedMe = await api(harness.env, harness.ctx, "/api/me", includedMember);
+    const exhaustedCapabilities = (await exhaustedMe.json()).capabilities;
+    assert.equal(exhaustedCapabilities.agent, false);
+    assert.equal(exhaustedCapabilities.agentUsage.requiresAdminApproval, true);
+    const ongoingGrant = await api(
+      harness.env,
+      harness.ctx,
+      `/api/admin/v1/users/${encodeURIComponent(includedMember.payload.user.id)}/entitlements`,
+      admin,
+      {
+        method: "PATCH",
+        body: {
+          agentEnabled: true,
+          expectedVersion: 1,
+          reasonCode: "agent_approved",
+        },
+      }
+    );
+    assert.equal(ongoingGrant.status, 200);
+    const grantedMe = await api(harness.env, harness.ctx, "/api/me", includedMember);
+    const grantedCapabilities = (await grantedMe.json()).capabilities;
+    assert.equal(grantedCapabilities.agent, true);
+    assert.equal(grantedCapabilities.agentUsage.unlimited, true);
 
     const providerFailures = [
       [401, 502, "provider_auth_failed"],

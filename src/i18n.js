@@ -294,6 +294,122 @@ const EN_PHRASES = {
   "我的解释": "My Interpretation",
   "你的解释": "Your Interpretation",
   "返回概览": "Back to Overview",
+  "我": "ME",
+  "当前场景：": "Current scene: ",
+  "打开": "Open ",
+  "一间只属于你的关系工作室": "A private space to make sense of relationships",
+  "本地优先 · 尊重边界 · 只保留你愿意留下的部分": "Privacy first · Boundary aware · Keep only what you choose",
+  "滚轮切换场景 · 点击卡片进入": "Scroll to change scenes · Select a card to open it",
+  "主页场景卡片轮播": "Home scene carousel",
+  "场景切换": "Change scene",
+  "上一个场景": "Previous scene",
+  "下一个场景": "Next scene",
+  "归档对象": "Save to profile",
+  "结束后新建匿名对象": "Create a new anonymous profile when finished",
+  "我在听，你慢慢说。": "I'm listening. Take your time.",
+  "不用准备好答案，也不用从头讲起。我会听着你的线索，一次只问一个最有帮助的问题；不想回答，就跳过去。": "You don't need a polished answer or the whole backstory. I'll follow the details and ask one useful question at a time. Skip anything you don't want to answer.",
+  "你可以从这里开始": "Start here",
+  "告诉我你的故事。你们在哪里认识？那天发生了什么？": "Tell me what happened. Where did you meet, and what stood out that day?",
+  "想到哪儿说到哪儿…": "Write whatever comes to mind…",
+  "边说边识别 · 结束后整段校正并整理句读 · 电脑端按 R": "Live transcription · Final cleanup after recording · Press R on desktop",
+  "归档并结束": "Save & Finish",
+  "需要登录并同意外部 AI 处理说明后开始。": "Sign in and accept the AI data notice to begin.",
+  "录音期间只保存在当前设备；结束后 WAV 会发送给语音识别服务，并在进入对话前由 DeepSeek 整理句读。本地 FunASR 优先，失败时回退 MiMo；你点击“发送”后才进入对话。": "Audio stays on this device while recording. When you stop, the WAV file is sent for transcription and DeepSeek cleans up punctuation before it enters the conversation. FunASR is used first, with MiMo as fallback. Nothing is sent to the Agent until you select Send.",
+  "正在录音": "Recording",
+  "边录边识别；手动结束后会用完整 WAV 校正，最长 5 分钟": "Live transcription with a full-WAV correction after you stop · 5-minute maximum",
+  "关系思考": "Relationship Reflection",
+  "已登录": "Signed in",
+  "首次提问时同步匿名档案": "Profiles sync with your first question",
+  "个人档案": "Private profile",
+  "撤回 AI 同意": "Withdraw AI Consent",
+  "清空临时会话": "Clear This Conversation",
+  "当前会话": "Current conversation",
+  "给未来的自己留一句话": "A note to your future self",
+  "写下此刻最想弄清楚的事。": "What do you most want to understand right now?",
+  "发送给关系思考 Agent 的内容": "Message to the relationship reflection Agent",
+  "不用组织得很漂亮。写下必要信息即可，请用代号，不要粘贴姓名、地址、账号或完整聊天记录。": "It doesn't need to sound polished. Include only what matters, use aliases, and don't paste names, addresses, account details, or full chat logs.",
+  "陪我理一理": "Help Me Think It Through",
+  "停止生成": "Stop Response",
+  "发送问题时，当前浏览器里的匿名对象档案会先更新到该账号的隔离知识库，再由 DeepSeek 只检索这个账号的数据。你主动发送的消息与模型回复会在服务端加密存档，并可由授权管理员在审计后台查看；对象档案正文仍保持账户隔离。": "When you send a question, anonymous profiles in this browser are updated in your account's isolated knowledge base. DeepSeek can retrieve only that account's data. Messages you send and model responses are stored encrypted and may be reviewed by authorized administrators for support and auditing; profile content remains isolated by account.",
+  "把一段关系里的困惑交给我一起理一理吧。我会陪你看看发生过什么、你感受到了什么，以及还有哪些地方值得直接问一问。": "Bring me the part of a relationship that feels unclear. We'll look at what happened, what you felt, and what may be worth asking directly.",
+  "我有点分不清了": "Help Me Separate Facts from Assumptions",
+  "帮我说得自然一点": "Help Me Say It Naturally",
+  "我想先确认边界": "Help Me Check the Boundary",
+  "先坐下来，": "Take a moment,",
+  "听听自己真正担心什么。": "and notice what you're really worried about.",
+  "发送之前，": "Before anything is sent,",
+  "先把数据去向说清楚。": "let's be clear about where your data goes.",
+  "登录或打开页面不会上传本地日记。你确认本说明并提交 Agent 问题时，匿名 profile/contact/event 的最少必要字段会更新到账号专属空间，让 Agent 只检索你的资料。": "Signing in or opening this page does not upload your local journal. After you accept this notice and submit an Agent question, only the minimum necessary anonymous profile, contact, and event fields are updated in your private account space so the Agent can retrieve only your information.",
+  "这项同意与会员资格分开。": "This consent is separate from membership.",
+  "处理说明": "Data Processing Notice",
+  "请只使用代号和最少必要上下文，不发送姓名、账号、地址、定位或完整聊天记录。": "Use aliases and only the context that is necessary. Do not send names, account details, addresses, locations, or complete chat logs.",
+  "你主动发送的 Agent/故事消息与模型回复会在 GAME 服务端使用 AES-256-GCM 加密存档，供授权管理员排查服务与处理用户支持；管理员读取会写入审计日志。": "Agent and story messages you actively send, along with model responses, are stored with AES-256-GCM encryption. Authorized administrators may review them only for service troubleshooting and user support, and every review is logged.",
+  "你发起 Agent 提问时，当前匿名档案会同步到自己的隔离知识库，供本次和后续提问检索；不同账户之间不能互相检索。": "When you submit an Agent question, your current anonymous profiles sync to your isolated knowledge base for this and future questions. Accounts can never retrieve one another's data.",
+  "DeepSeek 作为外部模型提供方会接收你明确发送的文字；其处理受相应服务政策约束。": "DeepSeek, the external model provider, receives only the text you explicitly send and processes it under its own service policies.",
+  "你可以随时撤回。撤回后新的 Agent 请求会被服务端拒绝，并清空服务器个人知识库；本地日记不受影响。": "You can withdraw consent at any time. New Agent requests will be blocked and your server-side knowledge base will be cleared; your local journal will remain unchanged.",
+  "我已阅读并同意：发起 Agent 或故事对话时，将我主动发送的文字与模型回复加密存档，并将当前匿名档案同步到账号专属知识库、交给 DeepSeek 处理。": "I understand and agree that when I start an Agent or story conversation, text I send and model responses will be stored encrypted, and my current anonymous profiles will sync to my private knowledge base for DeepSeek processing.",
+  "账户已创建并安全登录": "Account created. You're signed in securely.",
+  "AI 调用额度": "AI call allowance",
+  "外部 AI 处理同意已记录": "AI data-processing consent saved.",
+  "账户与 Agent 授权状态已刷新": "Account and Agent access refreshed.",
+  "同意并继续": "Agree & Continue",
+  "账户已准备，": "Your account is ready,",
+  "Agent 尚未开放。": "but Agent access is currently paused.",
+  "管理员需要同时启用全局 Agent 服务、有效会员资格与此账户的单独授权。当前状态不会影响本地关系记录。": "Your included AI calls have been used, or the service is currently unavailable. An administrator can enable ongoing Agent access. Your local journal is not affected.",
+  "会员状态": "Membership",
+  "外部 AI 同意": "External AI consent",
+  "已确认，可随时撤回。": "Accepted · You can withdraw anytime.",
+  "刷新授权": "Refresh Access",
+  "撤回外部 AI 同意": "Withdraw AI Consent",
+  "把不确定写成": "Turn uncertainty into",
+  "可以讨论的问题。": "a question you can explore.",
+  "登录本身不会上传档案；同意外部 AI 并发起 Agent 提问后，匿名档案才会同步到账号专属空间。": "Signing in does not upload your profiles. After you accept the AI data notice and submit an Agent question, anonymous profiles are synced only to your private account space.",
+  "当前以纯静态方式打开，账号服务不可用；本地记录功能仍可正常使用。请通过 Node 服务启动后再登录。": "Account services are unavailable in this static preview. Local journaling still works. Start the Node service to sign in.",
+  "已有账户": "Already have an account",
+  "创建账户": "Create an account",
+  "从一页空白开始": "Start with a blank page",
+  "密码": "Password",
+  "至少 12 个字符；密码只提交给同源服务。": "At least 12 characters. Your password is sent only to this site.",
+  "两个空间，清楚分开。": "Two spaces, clearly separated.",
+  "本地日记": "Local journal",
+  "匿名档案、事件、分析和复盘保留在浏览器里。": "Anonymous profiles, events, analysis, and reviews stay in your browser.",
+  "显式 Agent 对话": "Messages you explicitly send",
+  "只有你按下发送的内容才进入模型请求；消息与回复会加密存档，并可由授权管理员审计查看。": "Only content you actively send enters a model request. Messages and responses are stored encrypted and may be reviewed by authorized administrators.",
+  "未读取会员状态": "Membership unavailable",
+  "普通账户": "Free account",
+  "有效": "Active",
+  "弱信号": "Weak signal",
+  "中等信号": "Moderate signal",
+  "强信号": "Strong signal",
+  "停止推进": "Stop and respect the boundary",
+  "信息质量有限": "Limited information",
+  "不足": "Insufficient",
+  "初步": "Early",
+  "充分": "Substantial",
+  "仍不确定，信息不足": "Still uncertain · Not enough information",
+  "持续观察": "Keep observing",
+  "等待真实反馈": "Wait for direct feedback",
+  "直接沟通确认": "Ask directly",
+  "尊重边界并停止": "Respect the boundary and stop",
+  "刚认识": "Just met",
+  "第一次见面": "First meeting",
+  "约会中": "Dating",
+  "持续了解": "Getting to know each other",
+  "稳定交往": "In a relationship",
+  "关系降温": "Growing distant",
+  "关系结束": "Relationship ended",
+  "尚无互动": "No interactions yet",
+  "尚未明确": "Not yet clear",
+  "日期未知": "Date unknown",
+  "未命名场景": "Untitled moment",
+  "档案完整度": "Profile completeness",
+  "对象卡片": "Profile Cards",
+  "个匿名对象": "anonymous profiles",
+  "背景、目标、边界和互动记录会在故事结束后归档成匿名卡片，随时可以修正。": "Background, goals, boundaries, and interactions become an anonymous profile you can revise anytime.",
+  "在“开始记录”里结束一段故事，AI 会自动建立匿名档案。": "Finish a story in Tell Your Story and AI will create an anonymous profile.",
+  "这次回应没有完成，请稍后重试。": "The response was interrupted. Please try again.",
+  "生成已由你停止。": "You stopped the response.",
+  "你的 50 次试用额度已用完，请联系管理员开通 Agent 权限。": "You've used all 50 included AI calls. Ask an administrator to enable ongoing Agent access.",
 };
 
 function translateDOM(root, locale) {
@@ -302,6 +418,13 @@ function translateDOM(root, locale) {
       // Skip script/style, inputs, and textareas
       const tag = n.parentElement?.tagName;
       if (tag === "SCRIPT" || tag === "STYLE" || tag === "INPUT" || tag === "TEXTAREA") return NodeFilter.FILTER_REJECT;
+      if (
+        n.parentElement?.closest(
+          "[data-user-content], .story-bubble p, .agent-message p, .event-copy p, .contact-card h2"
+        )
+      ) {
+        return NodeFilter.FILTER_REJECT;
+      }
       return NodeFilter.FILTER_ACCEPT;
     },
   });
@@ -318,4 +441,47 @@ function translateDOM(root, locale) {
     }
     if (changed) node.textContent = text;
   }
+
+  for (const element of root.querySelectorAll?.("[placeholder], [aria-label], [title]") || []) {
+    for (const attribute of ["placeholder", "aria-label", "title"]) {
+      const value = element.getAttribute(attribute);
+      if (!value) continue;
+      const translated = translateText(value, entries);
+      if (translated !== value) element.setAttribute(attribute, translated);
+    }
+  }
+}
+
+function translateText(value, entries) {
+  const exact = EN_PHRASES[value.trim()];
+  if (exact) return value.replace(value.trim(), exact);
+  let translated = value;
+  for (const [zh, en] of entries) translated = translated.replaceAll(zh, en);
+  return translated;
+}
+
+let observer;
+function watchDynamicEnglishUI() {
+  observer?.disconnect();
+  if (detectLocale() !== "en" || !document.body) return;
+  observer = new MutationObserver((mutations) => {
+    observer.disconnect();
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType === Node.TEXT_NODE) translateDOM(node.parentElement || document.body, "en");
+        if (node.nodeType === Node.ELEMENT_NODE) translateDOM(node, "en");
+      }
+      if (mutation.type === "characterData" && mutation.target.parentElement) {
+        translateDOM(mutation.target.parentElement, "en");
+      }
+    }
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+  });
+  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", watchDynamicEnglishUI, { once: true });
+} else {
+  watchDynamicEnglishUI();
 }

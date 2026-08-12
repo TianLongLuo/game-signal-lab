@@ -176,7 +176,13 @@ test("a legacy version-1 database is upgraded without rewriting migration histor
       .prepare("SELECT version FROM schema_migrations ORDER BY version")
       .all()
       .map((row) => row.version),
-    [1, 2, 3, 4]
+    [1, 2, 3, 4, 5]
+  );
+  assert.equal(
+    backend.db
+      .prepare("SELECT COUNT(*) AS value FROM agent_usage_quotas")
+      .get().value,
+    0
   );
   const auditColumns = backend.db
     .prepare("PRAGMA table_info(audit_events)")
@@ -365,6 +371,7 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
   const sitemapText = await sitemap.text();
   assert.match(sitemapText, /<loc>http:\/\/game\.test\/<\/loc>/);
   assert.match(sitemapText, /<loc>http:\/\/game\.test\/en\/<\/loc>/);
+  assert.match(sitemapText, /<loc>http:\/\/game\.test\/en\/blog\/<\/loc>/);
 
   const bootstrapAdmin = backend.db
     .prepare("SELECT username, role, password_hash FROM users WHERE username_norm = 'drac'")
@@ -495,6 +502,11 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
   assert.equal(registration.body.user.role, "member");
   assert.equal(registration.body.membership.status, "active");
   const memberId = registration.body.user.id;
+  const registeredQuota = backend.db
+      .prepare("SELECT included_limit, used_count FROM agent_usage_quotas WHERE user_id = ?")
+      .get(memberId);
+  assert.equal(registeredQuota.included_limit, 50);
+  assert.equal(registeredQuota.used_count, 0);
 
   const me = await requestJson(baseUrl, "/api/me", { jar: memberJar });
   assert.equal(me.response.status, 200);
@@ -502,6 +514,13 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
   assert.equal("password_hash" in me.body.user, false);
   assert.equal(me.body.externalAiConsent.current, false);
   assert.equal(me.body.capabilities.agent, false);
+  assert.deepEqual(me.body.capabilities.agentUsage, {
+    used: 0,
+    limit: 50,
+    remaining: 50,
+    unlimited: false,
+    requiresAdminApproval: false,
+  });
 
   const memberAdminAttemptJar = new CookieJar();
   await primePreAuthCsrf(baseUrl, memberAdminAttemptJar);
@@ -535,6 +554,9 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
   assert.equal(aliceAdminRow.version, 1);
   assert.equal(aliceAdminRow.maskedEmail, "");
   assert.equal(aliceAdminRow.expiresAt, null);
+  assert.equal(aliceAdminRow.aiCallsUsed, 0);
+  assert.equal(aliceAdminRow.aiCallsLimit, 50);
+  assert.equal(aliceAdminRow.aiCallsRemaining, 50);
 
   const freeTextEntitlementReason = await requestJson(
     baseUrl,
@@ -1361,6 +1383,27 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
     }
   );
   assert.equal(revokeGrant.response.status, 200);
+  const usedBeforeIncludedCall = backend.db
+    .prepare("SELECT used_count FROM agent_usage_quotas WHERE user_id = ?")
+    .get(memberId).used_count;
+  const includedCall = await requestText(baseUrl, "/api/agent/stream", {
+    method: "POST",
+    jar: memberJar,
+    csrf: true,
+    body: { messages: [{ role: "user", content: "INCLUDED_QUOTA_TEST" }] },
+  });
+  assert.equal(includedCall.response.status, 200);
+  assert.equal(
+    backend.db
+      .prepare("SELECT used_count FROM agent_usage_quotas WHERE user_id = ?")
+      .get(memberId).used_count,
+    usedBeforeIncludedCall + 1
+  );
+  backend.db
+    .prepare(
+      "UPDATE agent_usage_quotas SET used_count = included_limit, updated_at = ? WHERE user_id = ?"
+    )
+    .run(new Date().toISOString(), memberId);
   const deniedWithoutGrant = await requestJson(baseUrl, "/api/agent/stream", {
     method: "POST",
     jar: memberJar,
@@ -1368,7 +1411,7 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
     body: { messages: [{ role: "user", content: "虚构测试" }] },
   });
   assert.equal(deniedWithoutGrant.response.status, 403);
-  assert.equal(deniedWithoutGrant.body.error.code, "agent_access_denied");
+  assert.equal(deniedWithoutGrant.body.error.code, "agent_quota_exhausted");
   const restoreGrant = await requestJson(
     baseUrl,
     `/api/admin/deepseek/access/members/${memberId}`,

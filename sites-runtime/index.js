@@ -24,6 +24,7 @@ const MAX_STREAM_OUTPUT_BYTES = 512 * 1024;
 const MAX_AUTH_RATE_LIMIT_KEYS = 10_000;
 const DEEPSEEK_TIMEOUT_MS = 120_000;
 const VOICE_ORGANIZE_TIMEOUT_MS = 30_000;
+const DEFAULT_AGENT_CALL_LIMIT = 50;
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com/";
 const DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-flash";
 const DEEPSEEK_MODELS = new Set([
@@ -277,6 +278,11 @@ async function register(request, env) {
         (user_id, plan, status, expires_at, created_at, updated_at)
        VALUES (?, 'free', 'active', NULL, ?, ?)`
     ).bind(id, now, now),
+    env.DB.prepare(
+      `INSERT INTO agent_usage_quotas
+        (user_id, included_limit, used_count, created_at, updated_at)
+       VALUES (?, ?, 0, ?, ?)`
+    ).bind(id, DEFAULT_AGENT_CALL_LIMIT, now, now),
   ]);
 
   const user = await getUser(env, id);
@@ -461,7 +467,10 @@ async function updateConsent(request, env) {
   const refreshed = await getUser(env, auth.id);
   return json({
     externalAiConsent: publicConsent(refreshed),
-    capabilities: { agent: await hasAgentAccess(env, refreshed) },
+    capabilities: {
+      agent: await hasAgentAccess(env, refreshed),
+      agentUsage: await publicAgentUsage(env, refreshed),
+    },
   });
 }
 
@@ -803,7 +812,14 @@ async function streamAgent(request, env, ctx) {
     ctx.waitUntil(
       audit(env, request, auth.id, "agent.stream", "agent", null, "denied")
     );
-    throw new HttpError(403, "agent_access_denied", "当前会员未获得 Agent 使用权限。");
+    const usage = await publicAgentUsage(env, auth);
+    throw new HttpError(
+      403,
+      usage.requiresAdminApproval ? "agent_quota_exhausted" : "agent_access_denied",
+      usage.requiresAdminApproval
+        ? "你的 50 次试用额度已用完，请联系管理员开通 Agent 权限。"
+        : "当前会员未获得 Agent 使用权限。"
+    );
   }
   if (!publicConsent(auth).current) {
     ctx.waitUntil(
@@ -835,6 +851,7 @@ async function streamAgent(request, env, ctx) {
   }
 
   const apiKey = await decryptProviderKey(env, config);
+  await consumeIncludedAgentCall(env, auth);
   const endpoint = new URL("chat/completions", DEEPSEEK_BASE_URL);
   const abortController = new AbortController();
   const abortFromClient = () => abortController.abort();
@@ -981,7 +998,14 @@ async function organizeVoice(request, env, ctx) {
     ctx.waitUntil(
       audit(env, request, auth.id, "voice.organize", "agent", null, "denied")
     );
-    throw new HttpError(403, "agent_access_denied", "当前会员未获得语音整理权限。");
+    const usage = await publicAgentUsage(env, auth);
+    throw new HttpError(
+      403,
+      usage.requiresAdminApproval ? "agent_quota_exhausted" : "agent_access_denied",
+      usage.requiresAdminApproval
+        ? "你的 50 次试用额度已用完，请联系管理员开通 Agent 权限。"
+        : "当前会员未获得语音整理权限。"
+    );
   }
   if (!publicConsent(auth).current) {
     ctx.waitUntil(
@@ -1012,6 +1036,7 @@ async function organizeVoice(request, env, ctx) {
   }
 
   const apiKey = await decryptProviderKey(env, config);
+  await consumeIncludedAgentCall(env, auth);
   const endpoint = new URL("chat/completions", DEEPSEEK_BASE_URL);
   const abortController = new AbortController();
   const abortFromClient = () => abortController.abort();
@@ -1084,7 +1109,14 @@ async function synthesizeVoice(request, env, ctx) {
   const auth = await requireAuth(request, env);
   await requireCsrf(request, auth);
   if (!(await hasAgentAccess(env, auth))) {
-    throw new HttpError(403, "agent_access_denied", "当前账户尚未获得语音 Agent 权限。");
+    const usage = await publicAgentUsage(env, auth);
+    throw new HttpError(
+      403,
+      usage.requiresAdminApproval ? "agent_quota_exhausted" : "agent_access_denied",
+      usage.requiresAdminApproval
+        ? "你的 50 次试用额度已用完，请联系管理员开通 Agent 权限。"
+        : "当前账户尚未获得语音 Agent 权限。"
+    );
   }
   if (!publicConsent(auth).current) {
     throw new HttpError(403, "external_ai_consent_required", "请先确认外部 AI 数据处理说明。");
@@ -1210,7 +1242,14 @@ async function transcribeVoice(request, env, ctx) {
   const auth = await requireAuth(request, env);
   await requireCsrf(request, auth);
   if (!(await hasAgentAccess(env, auth))) {
-    throw new HttpError(403, "agent_access_denied", "当前账户尚未获得语音 Agent 权限。");
+    const usage = await publicAgentUsage(env, auth);
+    throw new HttpError(
+      403,
+      usage.requiresAdminApproval ? "agent_quota_exhausted" : "agent_access_denied",
+      usage.requiresAdminApproval
+        ? "你的 50 次试用额度已用完，请联系管理员开通 Agent 权限。"
+        : "当前账户尚未获得语音 Agent 权限。"
+    );
   }
   if (!publicConsent(auth).current) {
     throw new HttpError(403, "external_ai_consent_required", "请先确认外部 AI 数据处理说明。");
@@ -1698,6 +1737,7 @@ async function adminUsers(env, url, v1 = true) {
      FROM users u
      LEFT JOIN memberships m ON m.user_id = u.id
      LEFT JOIN agent_member_grants g ON g.user_id = u.id
+     LEFT JOIN agent_usage_quotas q ON q.user_id = u.id
      ${where}`
   )
     .bind(...values)
@@ -1717,10 +1757,13 @@ async function adminUsers(env, url, v1 = true) {
   const result = await env.DB.prepare(
     `SELECT u.id, u.username, u.email, u.version, u.created_at, u.disabled_at,
             m.plan, m.status AS membership_status, m.expires_at,
-            COALESCE(g.enabled, 0) AS agent_enabled
+            COALESCE(g.enabled, 0) AS agent_enabled,
+            COALESCE(q.included_limit, ${DEFAULT_AGENT_CALL_LIMIT}) AS agent_call_limit,
+            COALESCE(q.used_count, 0) AS agent_call_used
      FROM users u
      LEFT JOIN memberships m ON m.user_id = u.id
      LEFT JOIN agent_member_grants g ON g.user_id = u.id
+     LEFT JOIN agent_usage_quotas q ON q.user_id = u.id
      ${pageWhere}
      ORDER BY u.created_at DESC, u.id DESC
      LIMIT ?`
@@ -2119,7 +2162,10 @@ async function publicSession(env, auth) {
     user: publicUser(auth),
     membership: publicMembership(auth),
     externalAiConsent: publicConsent(auth),
-    capabilities: { agent: await hasAgentAccess(env, auth) },
+    capabilities: {
+      agent: await hasAgentAccess(env, auth),
+      agentUsage: await publicAgentUsage(env, auth),
+    },
   };
 }
 
@@ -2168,6 +2214,13 @@ function adminPublicUser(user) {
       membershipUnexpired,
     expiresAt,
     agentEnabled: Boolean(user.agent_enabled),
+    aiCallsUsed: Number(user.agent_call_used) || 0,
+    aiCallsLimit: Number(user.agent_call_limit ?? DEFAULT_AGENT_CALL_LIMIT),
+    aiCallsRemaining: Math.max(
+      0,
+      Number(user.agent_call_limit ?? DEFAULT_AGENT_CALL_LIMIT) -
+        (Number(user.agent_call_used) || 0)
+    ),
     version: Number(user.version) || 1,
     disabled: Boolean(user.disabled_at),
   };
@@ -2489,10 +2542,67 @@ async function hasAgentAccess(env, user) {
   ).first();
   if (!policy?.global_enabled) return false;
   if (user.role === "admin") return true;
-  if (user.membership_status !== "active" || !user.agent_enabled) return false;
-  if (!user.expires_at) return true;
-  const expiresAt = Date.parse(user.expires_at);
-  return Number.isFinite(expiresAt) && expiresAt > Date.now();
+  if (user.membership_status !== "active") return false;
+  if (user.expires_at) {
+    const expiresAt = Date.parse(user.expires_at);
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return false;
+  }
+  if (user.agent_enabled) return true;
+  const quota = await getAgentUsageQuota(env, user.id);
+  return quota.used < quota.limit;
+}
+
+async function getAgentUsageQuota(env, userId) {
+  const row = await env.DB.prepare(
+    `SELECT included_limit, used_count
+     FROM agent_usage_quotas WHERE user_id = ?`
+  )
+    .bind(userId)
+    .first();
+  return {
+    limit: Number(row?.included_limit ?? DEFAULT_AGENT_CALL_LIMIT),
+    used: Number(row?.used_count ?? 0),
+  };
+}
+
+async function publicAgentUsage(env, user) {
+  const quota = await getAgentUsageQuota(env, user.id);
+  const unlimited = user.role === "admin" || Boolean(user.agent_enabled);
+  return {
+    used: quota.used,
+    limit: quota.limit,
+    remaining: Math.max(0, quota.limit - quota.used),
+    unlimited,
+    requiresAdminApproval: !unlimited && quota.used >= quota.limit,
+  };
+}
+
+async function consumeIncludedAgentCall(env, user) {
+  if (user.role === "admin" || user.agent_enabled) return publicAgentUsage(env, user);
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO agent_usage_quotas
+      (user_id, included_limit, used_count, created_at, updated_at)
+     VALUES (?, ?, 0, ?, ?)`
+  )
+    .bind(user.id, DEFAULT_AGENT_CALL_LIMIT, now, now)
+    .run();
+  const result = await env.DB.prepare(
+    `UPDATE agent_usage_quotas
+     SET used_count = used_count + 1, updated_at = ?
+     WHERE user_id = ? AND used_count < included_limit`
+  )
+    .bind(now, user.id)
+    .run();
+  const changes = Number(result?.meta?.changes ?? result?.changes ?? 0);
+  if (changes !== 1) {
+    throw new HttpError(
+      403,
+      "agent_quota_exhausted",
+      "你的 50 次试用额度已用完，请联系管理员开通 Agent 权限。"
+    );
+  }
+  return publicAgentUsage(env, user);
 }
 
 async function audit(env, request, actorId, action, resourceType, resourceId, result) {

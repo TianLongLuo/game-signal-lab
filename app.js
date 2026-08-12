@@ -194,6 +194,12 @@ const homeSceneCatalog = [
     subtitle: "把一段关系放回现场。",
     description: "文字或语音都可以。只说你愿意保留的部分，Agent 会一次问一个真正有帮助的问题。",
     cue: "进入记录",
+    en: {
+      title: "Tell Your Story",
+      subtitle: "Revisit what happened, one moment at a time.",
+      description: "Write or record only what you want to keep. The Agent will ask one useful question at a time.",
+      cue: "Start a Story",
+    },
     tone: "signal",
   },
   {
@@ -204,6 +210,12 @@ const homeSceneCatalog = [
     subtitle: "让线索有一个可以回来的地方。",
     description: "背景、目标、边界和互动记录会在故事结束后归档成匿名卡片，随时可以修正。",
     cue: "查看档案",
+    en: {
+      title: "People & Stories",
+      subtitle: "Give every detail a place to return to.",
+      description: "Background, goals, boundaries, and interactions become an anonymous profile you can revise anytime.",
+      cue: "Browse Profiles",
+    },
     tone: "cyan",
   },
   {
@@ -214,6 +226,12 @@ const homeSceneCatalog = [
     subtitle: "把不确定写成可以讨论的问题。",
     description: "只检索你的个人知识库，帮你区分事实、感受与猜测，再决定下一步。",
     cue: "进入 Agent",
+    en: {
+      title: "Think It Through",
+      subtitle: "Turn uncertainty into a question you can explore.",
+      description: "The Agent searches only your private knowledge base, separating facts, feelings, and assumptions before you decide what comes next.",
+      cue: "Open the Agent",
+    },
     tone: "neon",
   },
 ];
@@ -672,7 +690,12 @@ function renderCurrentView() {
 }
 
 function currentHomeScene() {
-  return homeSceneCatalog[homeSceneIndex] || homeSceneCatalog[0];
+  return localizeHomeScene(homeSceneCatalog[homeSceneIndex] || homeSceneCatalog[0]);
+}
+
+function localizeHomeScene(scene) {
+  if (detectLocale() !== "en" || !scene.en) return scene;
+  return { ...scene, ...scene.en };
 }
 
 function setHomeSceneIndex(nextIndex, { announce = true } = {}) {
@@ -778,7 +801,9 @@ function openHomeScene(view) {
     return;
   }
 
-  const target = homeSceneCatalog.find((item) => item.view === view) || currentHomeScene();
+  const target = localizeHomeScene(
+    homeSceneCatalog.find((item) => item.view === view) || currentHomeScene()
+  );
   homeSceneInput.transitioning = true;
   overlay.querySelector("[data-transition-index]").textContent = target.index;
   overlay.querySelector("[data-transition-title]").textContent = target.title;
@@ -941,6 +966,7 @@ function renderAgent() {
           <span>已登录</span>
           <strong>${escapeHTML(platform.user.username)}</strong>
           <small>${escapeHTML(membershipLabel(platform.membership))}</small>
+          <small>${escapeHTML(agentUsageLabel(platform.capabilities?.agentUsage))}</small>
           <small>${platform.knowledge?.documentCount ? `个人档案 ${platform.knowledge.documentCount} 条` : "首次提问时同步匿名档案"}</small>
           <button class="text-button" type="button" data-action="revoke-ai-consent">撤回 AI 同意</button>
           <button class="text-button" type="button" data-action="platform-logout">退出账户</button>
@@ -1044,6 +1070,7 @@ function renderExternalAiConsent() {
 }
 
 function renderAgentAccessPending() {
+  const usage = platform.capabilities?.agentUsage;
   return `
     <div class="page">
       <header class="auth-masthead">
@@ -1056,6 +1083,7 @@ function renderAgentAccessPending() {
         <h2>${escapeHTML(platform.user.username)}</h2>
         <div>
           <p><strong>会员状态</strong> — ${escapeHTML(membershipLabel(platform.membership))}</p>
+          <p><strong>AI 调用额度</strong> — ${escapeHTML(agentUsageLabel(usage))}</p>
           <p><strong>外部 AI 同意</strong> — 已确认，可随时撤回。</p>
           <div class="button-row">
             <button class="button button--quiet" type="button" data-action="refresh-platform">刷新授权</button>
@@ -1164,10 +1192,22 @@ function renderAgentMessage(message, index) {
 }
 
 function membershipLabel(membership) {
-  if (!membership) return "未读取会员状态";
-  const plan = membership.plan === "member" ? "会员" : "普通账户";
-  const status = membership.status === "active" ? "有效" : membership.status || "未知";
+  const english = detectLocale() === "en";
+  if (!membership) return english ? "Membership unavailable" : "未读取会员状态";
+  const plan = membership.plan === "member" ? (english ? "Member" : "会员") : (english ? "Free account" : "普通账户");
+  const status = membership.status === "active" ? (english ? "Active" : "有效") : membership.status || (english ? "Unknown" : "未知");
   return `${plan} · ${status}`;
+}
+
+function agentUsageLabel(usage) {
+  const english = detectLocale() === "en";
+  if (!usage) return english ? "AI usage unavailable" : "AI 调用次数暂不可用";
+  if (usage.unlimited) return english ? "Ongoing AI access enabled" : "已开通持续 AI 权限";
+  const remaining = Math.max(0, Number(usage.remaining) || 0);
+  const limit = Math.max(0, Number(usage.limit) || 50);
+  return english
+    ? `${remaining} of ${limit} included AI calls remaining`
+    : `剩余 ${remaining} / ${limit} 次 AI 调用`;
 }
 
 async function authenticatePlatform(form, mode) {
@@ -1498,7 +1538,9 @@ function renderDashboard() {
             <div class="scene-ring">
               ${homeSceneCatalog
                 .map(
-                  (item, index) => `
+                  (sourceItem, index) => {
+                    const item = localizeHomeScene(sourceItem);
+                    return `
                     <button
                       class="scene-card ${index === homeSceneIndex ? "is-active" : index === (homeSceneIndex + 1) % homeSceneCatalog.length ? "is-next" : "is-prev"}"
                       type="button"
@@ -1516,7 +1558,8 @@ function renderDashboard() {
                       <span class="scene-card-subtitle">${escapeHTML(item.subtitle)}</span>
                       <span class="scene-card-edge" aria-hidden="true">↗</span>
                     </button>
-                  `,
+                  `;
+                  },
                 )
                 .join("")}
             </div>

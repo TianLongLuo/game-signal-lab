@@ -91,6 +91,10 @@ const MIGRATIONS = [
     version: 4,
     apply: migrateToVersion4,
   },
+  {
+    version: 5,
+    apply: migrateToVersion5,
+  },
 ];
 
 export function openDatabase(path) {
@@ -306,6 +310,26 @@ function migrateToVersion4(db) {
     CREATE INDEX conversation_messages_conversation_idx
       ON conversation_messages(conversation_id, id);
   `);
+}
+
+function migrateToVersion5(db) {
+  const now = new Date().toISOString();
+  db.exec(`
+    CREATE TABLE agent_usage_quotas (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      included_limit INTEGER NOT NULL DEFAULT 50 CHECK (included_limit >= 0),
+      used_count INTEGER NOT NULL DEFAULT 0 CHECK (used_count >= 0),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    ) STRICT;
+    CREATE INDEX agent_usage_quotas_remaining_idx
+      ON agent_usage_quotas(used_count, included_limit);
+  `);
+  db.prepare(
+    `INSERT INTO agent_usage_quotas
+      (user_id, included_limit, used_count, created_at, updated_at)
+     SELECT id, 50, 0, ?, ? FROM users WHERE role = 'member'`
+  ).run(now, now);
 }
 
 function tableColumns(db, table) {

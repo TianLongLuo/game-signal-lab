@@ -8,6 +8,20 @@
       "when": 1785412800000,
       "tag": "0000_sites_runtime",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786540000000,
+      "tag": "0001_personal_rag",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786540100000,
+      "tag": "0002_agent_usage_quotas",
+      "breakpoints": true
     }
   ]
 }

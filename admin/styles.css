@@ -845,6 +845,16 @@ select {
   font-size: 11px;
 }
 
+.user-copy .user-ai-usage {
+  color: var(--signal-deep);
+  font-family: var(--font-data);
+  font-weight: 750;
+}
+
+.user-copy .user-ai-usage.is-exhausted {
+  color: #a62f22;
+}
+
 .entitlement-group {
   display: flex;
   flex-wrap: wrap;
