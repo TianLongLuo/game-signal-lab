@@ -131,15 +131,20 @@ consent as the text Agent. Prompts, audio payloads and provider response
 bodies are not persisted or written to audit logs.
 
 `POST /api/voice/asr` accepts a WAV or MP3 data URL in
-`{ "audio": "data:<audio-mime>;base64,..." }`. Add `"stream": true` to
+`{ "audio": "data:<audio-mime>;base64,...", "priority": "live|final",
+"language": "auto|zh|en" }`. Add `"stream": true` to
 receive MiMo's SSE partial text deltas; without it the endpoint returns the
 final JSON response. Browser PCM is downsampled and
 encoded as mono 16 kHz WAV before upload; WebM, OGG and MP4 are rejected because
 the upstream MiMo V2.5 ASR contract does not accept them. The client sends
 small incremental WAV chunks over the streaming ASR contract while recording
 (2.2 second cadence, 1.2 second minimum), then sends the full WAV on stop for
-final correction before the text is organized. A bounded timeout and
-browser-live-text fallback remain in place. The endpoint
+final correction before the text is organized. Final requests preempt a stale
+same-user live request and briefly wait for the single local CPU slot; live
+requests never fall back to the slower cloud provider. The browser adopts its
+already visible live transcript when the bounded final pass runs long, and
+offers an explicit “use current text” action instead of locking the editor.
+The endpoint
 requires the same authentication, Agent entitlement and current external-AI
 consent, and calls the fixed `mimo-v2.5-asr` model with the official
 `input_audio` message shape. It returns `{ "text": string }`; uploaded audio

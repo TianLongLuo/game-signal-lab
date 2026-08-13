@@ -62,6 +62,7 @@ const FUNASR_DEFAULT_WS_MODE = "2pass";
 const FUNASR_WS_MODES = new Set(["online", "offline", "2pass"]);
 const FUNASR_DEFAULT_WS_CHUNK_SIZE = Object.freeze([5, 10, 5]);
 const FUNASR_DEFAULT_WS_CHUNK_INTERVAL = 10;
+const FUNASR_FINAL_SLOT_WAIT_MS = 1_500;
 const MAX_ASR_BODY_BYTES = 12 * 1024 * 1024;
 const MAX_ASR_AUDIO_BYTES = 8 * 1024 * 1024;
 const MEMBERSHIP_STATUSES = new Set(["active", "suspended", "expired"]);
@@ -143,7 +144,8 @@ const GAME_SAFETY_SYSTEM_PROMPT = [
 
 const VOICE_ORGANIZE_SYSTEM_PROMPT = [
   "你是 GAME 的语音转写整理器，只处理用户刚刚主动提交的语音识别文字。",
-  "只做最小必要的文字修正：补充句号、逗号、问号等标点，按语义自然分段，修正明显的同音或近音识别错误。",
+  "优先恢复准确句读：按完整语义单位补充句号、逗号、问号、冒号和引号；避免整段只有逗号，也不要把一个完整意思切成许多短句。每段通常保留 2 至 4 个关联句子。",
+  "只做有上下文依据的错字修正：修正明显的同音字、近音词、重复粘连和口语停顿造成的断词错误；无法唯一判断时保留原词，不得凭空改写。",
   "保留原文的事实、语气、中文和英文混用、专有名词与不确定表达；不要补写没有说过的人名、地点、时间、动机或结论。",
   "无法确认的模糊词保持原样，不要把猜测改成事实。不要回答内容，不要总结，不要建议，不要使用 Markdown，只输出整理后的纯文本。",
 ].join("\n");
@@ -236,6 +238,7 @@ export async function createBackend(options = {}) {
         message: "本地语音识别正忙，将尝试备用服务。",
       })
     : null;
+  const activeLiveAsrControllers = new Map();
 
   let dummyPasswordHash;
   try {
@@ -1321,6 +1324,10 @@ export async function createBackend(options = {}) {
       const body = await readJson(request, MAX_ASR_BODY_BYTES);
       const audio = typeof body.audio === "string" ? body.audio.trim() : "";
       const streamRequested = body.stream === true;
+      const asrPriority = body.priority === "live" ? "live" : "final";
+      const requestedLanguage = FUNASR_LANGUAGES.has(String(body.language || "").toLowerCase())
+        ? String(body.language).toLowerCase()
+        : "auto";
       const match = audio.match(/^data:([^;,]+)(?:;[^,]*)?;base64,([A-Za-z0-9+/=\s]+)$/);
       const mimeType = match?.[1]?.toLowerCase() || "";
       const encoded = match?.[2]?.replaceAll(/\s/g, "") || "";
@@ -1333,6 +1340,13 @@ export async function createBackend(options = {}) {
         throw new HttpError(413, "audio_too_large", "语音文件不能超过 8 MB。");
       }
       const asrController = new AbortController();
+      const asrUserKey = String(auth.id);
+      if (asrPriority === "final") {
+        activeLiveAsrControllers.get(asrUserKey)?.abort(new Error("superseded_by_final_asr"));
+      } else {
+        activeLiveAsrControllers.get(asrUserKey)?.abort(new Error("superseded_by_new_live_asr"));
+        activeLiveAsrControllers.set(asrUserKey, asrController);
+      }
       const abortForDisconnect = () => {
         if (!response.writableEnded && !response.destroyed) {
           asrController.abort(new Error("client_disconnected"));
@@ -1345,9 +1359,13 @@ export async function createBackend(options = {}) {
         if (funAsr) {
           let releaseFunAsrSlot;
           try {
-            releaseFunAsrSlot = funAsrConcurrency.acquire(auth.id);
+            releaseFunAsrSlot = await acquireFunAsrSlot(funAsrConcurrency, auth.id, {
+              priority: asrPriority,
+              signal: asrController.signal,
+            });
             const transcript = await transcribeWithFunAsr({
               ...funAsr,
+              language: funAsr.language === "auto" ? requestedLanguage : funAsr.language,
               bytes,
               mimeType,
               fetchImpl,
@@ -1379,6 +1397,13 @@ export async function createBackend(options = {}) {
           } finally {
             releaseFunAsrSlot?.();
           }
+        }
+        if (asrPriority === "live" && funAsrFailure) {
+          throw new HttpError(
+            503,
+            "asr_live_deferred",
+            "实时识别暂时繁忙，结束录音后会优先完成整段识别。"
+          );
         }
         const config = db
           .prepare(
@@ -1429,7 +1454,9 @@ export async function createBackend(options = {}) {
                 role: "user",
                 content: [{ type: "input_audio", input_audio: { data: audio } }],
               }],
-              asr_options: { language: MIMO_ASR_LANGUAGE },
+              asr_options: {
+                language: requestedLanguage === "auto" ? MIMO_ASR_LANGUAGE : requestedLanguage,
+              },
               ...(streamRequested ? { stream: true } : {}),
             }),
           });
@@ -1529,6 +1556,9 @@ export async function createBackend(options = {}) {
         sendJson(response, 200, { text: transcript });
         return;
       } finally {
+        if (activeLiveAsrControllers.get(asrUserKey) === asrController) {
+          activeLiveAsrControllers.delete(asrUserKey);
+        }
         request.off("aborted", abortForDisconnect);
         response.off("close", abortForDisconnect);
       }
@@ -4588,5 +4618,43 @@ class AgentConcurrencyGate {
       if (remaining <= 0) this.#perUser.delete(key);
       else this.#perUser.set(key, remaining);
     };
+  }
+}
+
+async function acquireFunAsrSlot(gate, userId, { priority = "final", signal } = {}) {
+  const deadline = Date.now() + (priority === "final" ? FUNASR_FINAL_SLOT_WAIT_MS : 0);
+  for (;;) {
+    if (signal?.aborted) {
+      const error = new Error("FunASR request aborted before inference");
+      error.code = "aborted";
+      throw error;
+    }
+    try {
+      return gate.acquire(userId);
+    } catch (error) {
+      if (
+        error?.code !== "funasr_concurrency_limited" ||
+        priority !== "final" ||
+        Date.now() >= deadline
+      ) {
+        throw error;
+      }
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(finish, 75);
+        timer.unref?.();
+        const abort = () => {
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", abort);
+          const aborted = new Error("FunASR request aborted while waiting for priority slot");
+          aborted.code = "aborted";
+          reject(aborted);
+        };
+        function finish() {
+          signal?.removeEventListener("abort", abort);
+          resolve();
+        }
+        signal?.addEventListener("abort", abort, { once: true });
+      });
+    }
   }
 }

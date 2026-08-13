@@ -1147,6 +1147,23 @@ select:focus,
   color: #76500d !important;
 }
 
+.story-use-current {
+  min-height: 38px;
+  padding: 7px 11px;
+  border: 1px solid var(--z-cobalt) !important;
+  background: var(--z-paper-high) !important;
+  color: var(--z-cobalt) !important;
+  font: 700 12px/1.2 var(--z-sans);
+  letter-spacing: .04em;
+  text-decoration: none;
+}
+
+.story-use-current:hover,
+.story-use-current:focus-visible {
+  background: var(--z-cobalt) !important;
+  color: var(--z-paper-high) !important;
+}
+
 .story-voice-button.is-processing,
 #contact-voice-button.is-processing,
 .agent-voice-button.is-processing {

@@ -28,6 +28,9 @@ import {
 
 const STORAGE_KEY = "game-signal-lab:v2";
 const LEGACY_STORAGE_KEYS = ["game-signal-lab:v1"];
+const FINAL_ASR_WITH_PREVIEW_TIMEOUT_MS = 12_000;
+const FINAL_ASR_WITHOUT_PREVIEW_TIMEOUT_MS = 24_000;
+const VOICE_ORGANIZE_CLIENT_TIMEOUT_MS = 10_000;
 const defaultState = createDefaultState();
 
 const viewTitles = {
@@ -129,6 +132,8 @@ const storyIntake = {
   lastAsrChunkIndex: 0,
   recordingBaseText: "",
   recordingAsrText: "",
+  finalizeController: null,
+  finalizeGeneration: 0,
 };
 
 const contactEditor = {
@@ -506,6 +511,10 @@ function bindGlobalEvents() {
       toggleStoryVoice();
     }
 
+    if (actionName === "story-use-current-transcript") {
+      useCurrentStoryTranscript();
+    }
+
     if (actionName === "contact-voice") {
       toggleContactVoice();
     }
@@ -540,6 +549,9 @@ function bindGlobalEvents() {
   });
 
   document.addEventListener("input", (event) => {
+    if (event.target.matches("#story-answer")) {
+      storyIntake.draftInput = clean(event.target.value).slice(0, 2_400);
+    }
     if (event.target.matches("#agent-prompt")) {
       agentVoice.voiceDraft = clean(event.target.value).slice(0, 4_000);
     }
@@ -1923,6 +1935,7 @@ function renderStoryIntake() {
             </button>
             <span class="story-shortcut">边说边识别 · 结束后整段校正并整理句读 · 电脑端按 R</span>
             ${storyIntake.voiceStatus ? `<span class="story-voice-status" role="status" aria-live="polite">${escapeHTML(storyIntake.voiceStatus)}</span>` : ""}
+            ${storyIntake.finalizingVoice && storyIntake.draftInput ? '<button class="text-button story-use-current" type="button" data-action="story-use-current-transcript">立即使用当前文字</button>' : ""}
             <button class="button button--light button--small" type="submit" ${storyIntake.busy || storyIntake.recording || storyIntake.finalizingVoice ? "disabled" : ""}>发送</button>
             <button class="text-button text-button--light" type="button" data-action="story-skip" ${storyIntake.busy || storyIntake.recording || storyIntake.finalizingVoice ? "disabled" : ""}>先跳过</button>
             <button class="text-button text-button--light" type="button" data-action="story-end" ${storyIntake.recording || storyIntake.finalizingVoice ? "disabled" : ""}>归档并结束</button>
@@ -2268,7 +2281,11 @@ function stopStoryVoice() {
     storyIntake.recordingStream = null;
     storyIntake.recording = false;
     storyIntake.finalizingVoice = true;
-    storyIntake.voiceStatus = "正在上传 WAV，并进行本地优先转写…";
+    storyIntake.voiceStatus = "正在完成整段识别 · 通常需要 3–8 秒";
+    storyIntake.finalizeController?.abort();
+    const finalizeController = new AbortController();
+    const generation = ++storyIntake.finalizeGeneration;
+    storyIntake.finalizeController = finalizeController;
     let blob;
     try {
       blob = recorder.stop();
@@ -2279,7 +2296,14 @@ function stopStoryVoice() {
     }
     stream?.getTracks().forEach((track) => track.stop());
     renderStoryViewPreservingScroll();
-    void finalizeStoryRecording(blob, { preview, livePreview, durationMs, liveAsrPromise });
+    void finalizeStoryRecording(blob, {
+      preview,
+      livePreview,
+      durationMs,
+      liveAsrPromise,
+      signal: finalizeController.signal,
+      generation,
+    });
     return;
   }
   storyIntake.recording = false;
@@ -2291,27 +2315,41 @@ async function finalizeStoryRecording(blob, {
   livePreview = "",
   durationMs = 0,
   liveAsrPromise = null,
+  signal,
+  generation,
 }) {
   let transcript = livePreview || preview;
+  let slowStatusTimer = null;
   try {
     // Do not start the final full-WAV request while the last incremental
     // request is still occupying the single local FunASR slot.
     await waitForLiveAsrRequest(liveAsrPromise);
     if (!blob?.size) throw new Error("audio_empty");
+    slowStatusTimer = window.setTimeout(() => {
+      if (storyIntake.finalizingVoice && storyIntake.finalizeGeneration === generation) {
+        updateStoryVoiceStatus("仍在校正 · 已保留当前文字，最迟数秒后自动采用");
+      }
+    }, 5_000);
     const recognized = await streamTranscribeRecordedAudio(blob, {
-      timeoutMs: 90_000,
+      timeoutMs: livePreview ? FINAL_ASR_WITH_PREVIEW_TIMEOUT_MS : FINAL_ASR_WITHOUT_PREVIEW_TIMEOUT_MS,
+      signal,
       onText(partial) {
+        if (storyIntake.finalizeGeneration !== generation) return;
         transcript = appendVoiceTranscript(preview, partial).slice(0, 2400);
         storyIntake.draftInput = transcript;
         const input = document.querySelector("#story-answer");
         if (input) input.value = transcript;
-        updateStoryVoiceStatus("正在校正整段语音…");
+        updateStoryVoiceStatus("整段识别完成 · 正在校正文字");
       },
     });
+    window.clearTimeout(slowStatusTimer);
+    slowStatusTimer = null;
     const organized = await organizeRecognizedVoice(recognized, {
       maxLength: 2_400,
       onStatus: updateStoryVoiceStatus,
+      signal,
     });
+    if (storyIntake.finalizeGeneration !== generation) return;
     transcript = appendVoiceTranscript(preview, organized.text).slice(0, 2400);
     if (transcript && storyIntake.active) {
       storyIntake.draftInput = transcript;
@@ -2327,39 +2365,78 @@ async function finalizeStoryRecording(blob, {
       });
     }
   } catch (error) {
+    if (storyIntake.finalizeGeneration !== generation) return;
     const fallback = livePreview || preview;
     if (fallback && storyIntake.active) {
-      storyIntake.draftInput = fallback;
-      const reason = error instanceof PlatformError ? error.message : "语音识别未完成";
-      showToast(`${reason} 已保留已有文字。`, 4200);
+      const organized = await organizeRecognizedVoice(fallback, {
+        maxLength: 2_400,
+        onStatus: updateStoryVoiceStatus,
+        signal: signal?.aborted ? undefined : signal,
+      });
+      if (storyIntake.finalizeGeneration !== generation) return;
+      storyIntake.draftInput = appendVoiceTranscript(preview, organized.text).slice(0, 2400);
+      storyIntake.voiceStatus = organized.organized
+        ? "已采用实时文字并整理句读 · 请确认后发送"
+        : "已采用实时识别文字 · 请检查可能的错字";
     } else if (storyIntake.active) {
       showToast(error instanceof PlatformError ? error.message : "语音识别未完成，请改用文字输入", 4200);
     }
   } finally {
+    window.clearTimeout(slowStatusTimer);
+    if (storyIntake.finalizeGeneration !== generation) return;
     stopStoryLiveAsr();
     storyIntake.recordingBaseText = "";
     storyIntake.recordingAsrText = "";
     storyIntake.lastAsrChunkIndex = 0;
     storyIntake.finalizingVoice = false;
+    storyIntake.finalizeController = null;
     storyIntake.motionSuppressed = false;
     if (!storyIntake.draftInput) storyIntake.voiceStatus = "";
     renderStoryViewPreservingScroll();
   }
 }
 
-async function organizeRecognizedVoice(text, { maxLength = 2_400, onStatus } = {}) {
+function useCurrentStoryTranscript() {
+  if (!storyIntake.finalizingVoice) return;
+  storyIntake.finalizeGeneration += 1;
+  storyIntake.finalizeController?.abort();
+  storyIntake.finalizeController = null;
+  storyIntake.finalizingVoice = false;
+  storyIntake.recordingBaseText = "";
+  storyIntake.recordingAsrText = "";
+  storyIntake.lastAsrChunkIndex = 0;
+  storyIntake.voiceStatus = storyIntake.draftInput
+    ? "已采用当前文字 · 可编辑并发送"
+    : "";
+  renderStoryViewPreservingScroll();
+  requestAnimationFrame(() => {
+    const input = document.querySelector("#story-answer");
+    input?.focus();
+    input?.setSelectionRange(input.value.length, input.value.length);
+  });
+}
+
+async function organizeRecognizedVoice(text, { maxLength = 2_400, onStatus, signal } = {}) {
   const raw = clean(text).slice(0, maxLength);
   if (!raw) return { text: "", organized: false };
   const canUseAgent = Boolean(
     platform.user && platform.externalAiConsent?.current && platform.capabilities?.agent
   );
   if (!canUseAgent) return { text: raw, organized: false };
-  onStatus?.("正在用 DeepSeek 整理句读与模糊语义…");
+  onStatus?.("正在补全句读并修正明显错字 · 最多 10 秒");
+  const controller = new AbortController();
+  const abortFromCaller = () => controller.abort(signal?.reason);
+  if (signal?.aborted) abortFromCaller();
+  else signal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timeout = window.setTimeout(() => controller.abort(new Error("voice_organize_timeout")), VOICE_ORGANIZE_CLIENT_TIMEOUT_MS);
   try {
-    const organized = clean(await platformClient.organizeVoiceText(raw)).slice(0, maxLength);
+    const organized = clean(await platformClient.organizeVoiceText(raw, { signal: controller.signal })).slice(0, maxLength);
     return { text: organized || raw, organized: Boolean(organized) };
   } catch {
     return { text: raw, organized: false };
+  } finally {
+    window.clearTimeout(timeout);
+    signal?.removeEventListener("abort", abortFromCaller);
   }
 }
 
@@ -2374,7 +2451,7 @@ async function waitForLiveAsrRequest(promise) {
 function updateStoryVoiceStatus(message) {
   storyIntake.voiceStatus = message;
   const status = document.querySelector(".story-voice-status");
-  if (status) status.textContent = message;
+  if (status) status.textContent = t(message);
 }
 
 function updateStoryLiveDraft(text) {
@@ -2431,6 +2508,7 @@ async function refreshStoryLiveAsr() {
       corrected = await streamTranscribeRecordedAudio(snapshot, {
         timeoutMs: 12_000,
         signal: controller.signal,
+        priority: "live",
         onText(partial) {
           if (!storyIntake.recording || storyIntake.liveAsrController !== controller) return;
           streamed = partial;
@@ -2444,6 +2522,7 @@ async function refreshStoryLiveAsr() {
         corrected = await transcribeRecordedAudio(snapshot, {
           timeoutMs: 18_000,
           signal: controller.signal,
+          priority: "live",
         });
       } else throw error;
     }
@@ -2649,14 +2728,22 @@ function canRecordAudio() {
   );
 }
 
-async function transcribeRecordedAudio(blob, { timeoutMs = 25_000, signal } = {}) {
+function voiceRecognitionLanguage() {
+  return detectLocale() === "en" ? "en" : "zh";
+}
+
+async function transcribeRecordedAudio(blob, { timeoutMs = 25_000, signal, priority = "final" } = {}) {
   const controller = new AbortController();
   const abortFromCaller = () => controller.abort();
   if (signal?.aborted) controller.abort();
   else signal?.addEventListener("abort", abortFromCaller, { once: true });
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await platformClient.transcribeVoice(blob, { signal: controller.signal });
+    return await platformClient.transcribeVoice(blob, {
+      signal: controller.signal,
+      priority,
+      language: voiceRecognitionLanguage(),
+    });
   } catch (error) {
     if (controller.signal.aborted) {
       throw new PlatformError("语音识别响应超时，已保留已有文字。", {
@@ -2673,7 +2760,12 @@ async function transcribeRecordedAudio(blob, { timeoutMs = 25_000, signal } = {}
   }
 }
 
-async function streamTranscribeRecordedAudio(blob, { timeoutMs = 12_000, signal, onText } = {}) {
+async function streamTranscribeRecordedAudio(blob, {
+  timeoutMs = 12_000,
+  signal,
+  onText,
+  priority = "final",
+} = {}) {
   const controller = new AbortController();
   const abortFromCaller = () => controller.abort();
   if (signal?.aborted) controller.abort();
@@ -2683,6 +2775,8 @@ async function streamTranscribeRecordedAudio(blob, { timeoutMs = 12_000, signal,
     return await platformClient.streamTranscribeVoice(blob, {
       signal: controller.signal,
       onText,
+      priority,
+      language: voiceRecognitionLanguage(),
     });
   } catch (error) {
     if (controller.signal.aborted) {
@@ -3055,7 +3149,7 @@ async function finalizeContactRecording(blob, {
     if (blob?.size) {
       try {
         recognized = await streamTranscribeRecordedAudio(blob, {
-          timeoutMs: 90_000,
+          timeoutMs: livePreview ? FINAL_ASR_WITH_PREVIEW_TIMEOUT_MS : FINAL_ASR_WITHOUT_PREVIEW_TIMEOUT_MS,
           onText(partial) {
             const live = appendVoiceTranscript(preview, partial).slice(0, 2400);
             contactEditor.voiceDraft = live;
@@ -3066,11 +3160,8 @@ async function finalizeContactRecording(blob, {
           },
         });
       } catch (error) {
-        if (error?.code === "asr_stream_failed" || error?.code === "asr_stream_incomplete" || error?.code === "asr_timeout") {
-          recognized = await transcribeRecordedAudio(blob, { timeoutMs: 45_000 });
-        } else {
-          throw error;
-        }
+        if (!livePreview) throw error;
+        recognized = livePreview;
       }
     }
     if (recognized) {
@@ -3239,7 +3330,7 @@ async function finalizeAgentRecording(blob, {
     let recognized = "";
     try {
       recognized = await streamTranscribeRecordedAudio(blob, {
-        timeoutMs: 90_000,
+        timeoutMs: livePreview ? FINAL_ASR_WITH_PREVIEW_TIMEOUT_MS : FINAL_ASR_WITHOUT_PREVIEW_TIMEOUT_MS,
         onText(partial) {
           if (agentVoice.generation !== generation) return;
           updateAgentVoiceDraft(appendVoiceTranscript(preview, partial));
@@ -3247,11 +3338,8 @@ async function finalizeAgentRecording(blob, {
         },
       });
     } catch (error) {
-      if (error?.code === "asr_stream_failed" || error?.code === "asr_stream_incomplete" || error?.code === "asr_timeout") {
-        recognized = await transcribeRecordedAudio(blob, { timeoutMs: 45_000 });
-      } else {
-        throw error;
-      }
+      if (!livePreview) throw error;
+      recognized = livePreview;
     }
     const organized = await organizeRecognizedVoice(recognized, {
       maxLength: 4_000,
@@ -3346,6 +3434,7 @@ async function refreshAgentLiveAsr() {
       corrected = await streamTranscribeRecordedAudio(snapshot, {
         timeoutMs: 12_000,
         signal: controller.signal,
+        priority: "live",
         onText(partial) {
           if (!agentVoice.recording || agentVoice.liveAsrController !== controller) return;
           streamed = partial;
@@ -3359,6 +3448,7 @@ async function refreshAgentLiveAsr() {
         corrected = await transcribeRecordedAudio(snapshot, {
           timeoutMs: 18_000,
           signal: controller.signal,
+          priority: "live",
         });
       } else {
         throw error;
@@ -3446,6 +3536,7 @@ async function refreshContactLiveAsr() {
       corrected = await streamTranscribeRecordedAudio(snapshot, {
         timeoutMs: 12_000,
         signal: controller.signal,
+        priority: "live",
         onText(partial) {
           if (!contactEditor.recording || contactEditor.liveAsrController !== controller) return;
           streamed = partial;
@@ -3458,7 +3549,11 @@ async function refreshContactLiveAsr() {
       });
     } catch (error) {
       if (error?.code === "asr_stream_failed" || error?.code === "asr_stream_incomplete") {
-        corrected = await transcribeRecordedAudio(snapshot, { timeoutMs: 18_000, signal: controller.signal });
+        corrected = await transcribeRecordedAudio(snapshot, {
+          timeoutMs: 18_000,
+          signal: controller.signal,
+          priority: "live",
+        });
       } else throw error;
     }
     corrected = corrected.slice(0, 2400);
