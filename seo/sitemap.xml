@@ -4,4 +4,10 @@
   <url>
     <loc>PUBLIC_ORIGIN/</loc>
   </url>
+  <url>
+    <loc>PUBLIC_ORIGIN/privacy/</loc>
+  </url>
+  <url>
+    <loc>PUBLIC_ORIGIN/en/privacy/</loc>
+  </url>
 </urlset>
