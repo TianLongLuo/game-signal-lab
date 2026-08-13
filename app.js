@@ -195,6 +195,7 @@ const homeSceneCatalog = [
     subtitle: "把一段关系放回现场。",
     description: "文字或语音都可以。只说你愿意保留的部分，Agent 会一次问一个真正有帮助的问题。",
     cue: "进入记录",
+    art: "/assets/zine/scene-intake-dual-silhouette.webp",
     en: {
       title: "Tell Your Story",
       subtitle: "Revisit what happened, one moment at a time.",
@@ -211,6 +212,7 @@ const homeSceneCatalog = [
     subtitle: "让线索有一个可以回来的地方。",
     description: "背景、目标、边界和互动记录会在故事结束后归档成匿名卡片，随时可以修正。",
     cue: "查看档案",
+    art: "/assets/zine/scene-archive-woman-silhouette.webp",
     en: {
       title: "People & Stories",
       subtitle: "Give every detail a place to return to.",
@@ -227,6 +229,7 @@ const homeSceneCatalog = [
     subtitle: "把不确定写成可以讨论的问题。",
     description: "只检索你的个人知识库，帮你区分事实、感受与猜测，再决定下一步。",
     cue: "进入 Agent",
+    art: "/assets/zine/scene-agent-beach-silhouette.webp",
     en: {
       title: "Think It Through",
       subtitle: "Turn uncertainty into a question you can explore.",
@@ -706,6 +709,10 @@ function renderCurrentView() {
       main.innerHTML = renderDashboard();
   }
   localizePage();
+  document.body.classList.toggle(
+    "agent-conversation-active",
+    Boolean(main.querySelector(".agent-page")),
+  );
 
   if (currentView === "dashboard") {
     requestAnimationFrame(() => setHomeSceneIndex(homeSceneIndex, { announce: false }));
@@ -1709,8 +1716,9 @@ function renderDashboard() {
                       aria-current="${index === homeSceneIndex ? "true" : "false"}"
                       aria-label="打开${escapeAttribute(item.title)}"
                       tabindex="${index === homeSceneIndex ? "0" : "-1"}"
-                      style="--scene-tone:var(--${item.tone})"
+                      style="--scene-tone:var(--${item.tone});--scene-art:url('${escapeAttribute(item.art)}')"
                     >
+                      <span class="scene-card-art" aria-hidden="true"></span>
                       <span class="scene-card-index">${item.index}</span>
                       <span class="scene-card-kicker">${escapeHTML(item.kicker)}</span>
                       <span class="scene-card-title">${renderSceneLetters(item.title)}</span>
