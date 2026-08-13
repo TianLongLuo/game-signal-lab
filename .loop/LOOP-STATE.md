@@ -7,16 +7,16 @@
 
 | Loop ID | 名称 | 类型 | 节奏 | 状态 | 上次运行 |
 |---------|------|------|------|------|----------|
-| blog-daily | 每日博客发布 | 内容生成 | 每天 9:00 | active | 2026-08-11 |
+| blog-daily | 每日博客发布 | 内容生成 | 每天 9:00 | active | 2026-08-13 |
 | seo-weekly | SEO 健康监控 | 监控 | 每周一 10:00 | active | 2026-08-10 |
 | ci-sweeper | CI 失败修复 | 修复 | 每 15 分钟 | active | 2026-08-10 16:08 |
 | changelog-weekly | 更新日志 | 文档 | 每周一 11:00 | active | 2026-08-10 |
 
 ## 每日博客 Loop 状态
 
-- **当前文章编号**: 20（已发布 20 篇中文 + 20 篇英文）
-- **上次主题**: 关系中最大的成熟：学会与不确定性共存（The Greatest Maturity in Relationships: Learning to Live with Uncertainty）— 将不确定感拆解为可记录的事实单元，用观察模式替代情绪模式
-- **下次主题候选**: 关系中权力与平等的边界、关系中冲突修复的节奏
+- **当前文章编号**: 21（已发布 21 篇中文 + 21 篇英文）
+- **上次主题**: 关系中权力与平等的边界：谁在掌握这段关系的节奏（Power and Equality in Relationships: Who Sets the Pace?）— 将权力拆解为发起、决定、表达三个可记录维度，区分失衡与不匹配
+- **下次主题候选**: 关系中冲突修复的节奏、依恋焦虑下的"过度解读"信号
 - **待验证**: -
 - **人工干预**: -
 
@@ -53,4 +53,4 @@
 
 ---
 
-*最后更新：2026-08-12 (blog-daily loop 执行) · Loop Engineering framework*
+*最后更新：2026-08-13 (blog-daily loop 执行) · Loop Engineering framework*
