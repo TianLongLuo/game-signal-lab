@@ -732,11 +732,13 @@ function localizeHomeScene(scene) {
 }
 
 function setHomeSceneIndex(nextIndex, { announce = true } = {}) {
+  const previousIndex = homeSceneIndex;
   homeSceneIndex = (nextIndex + homeSceneCatalog.length) % homeSceneCatalog.length;
   const scene = document.querySelector(".scene-home");
   if (!scene) return;
 
   scene.dataset.sceneIndex = String(homeSceneIndex);
+  scene.dataset.sceneDirection = String(nextIndex === previousIndex ? 0 : nextIndex > previousIndex ? 1 : -1);
   scene.style.setProperty("--scene-rotation", `${homeSceneIndex * -120}deg`);
   const activeScene = currentHomeScene();
   const status = scene.querySelector("[data-scene-current]");
@@ -747,6 +749,9 @@ function setHomeSceneIndex(nextIndex, { announce = true } = {}) {
   if (announce && liveStatus) liveStatus.textContent = `已切换到${activeScene.title}：${activeScene.subtitle}`;
   scene.querySelectorAll(".scene-home-dots i").forEach((dot, dotIndex) => {
     dot.classList.toggle("is-active", dotIndex === homeSceneIndex);
+  });
+  scene.querySelectorAll("[data-scene-atmosphere]").forEach((layer, layerIndex) => {
+    layer.classList.toggle("is-active", layerIndex === homeSceneIndex);
   });
 
   scene.querySelectorAll("[data-home-scene-open]").forEach((card, cardIndex) => {
@@ -1686,6 +1691,7 @@ function renderDashboard() {
     <div class="page scene-home-page">
       ${renderStorageRecoveryNotice()}
       <section class="scene-home" data-scene-index="${homeSceneIndex}" style="--scene-rotation:${homeSceneIndex * -120}deg" aria-labelledby="scene-home-title">
+        ${renderSceneAtmosphere()}
         <div class="scene-home-noise" aria-hidden="true"></div>
         <div class="scene-home-glow scene-home-glow--one" aria-hidden="true"></div>
         <div class="scene-home-glow scene-home-glow--two" aria-hidden="true"></div>
@@ -1765,6 +1771,84 @@ function renderDashboard() {
         <p class="visually-hidden" data-scene-live aria-live="polite">当前场景：${escapeHTML(activeScene.title)}</p>
       </section>
     </div>
+  `;
+}
+
+function renderSceneAtmosphere() {
+  return `
+    <svg class="scene-atmosphere" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">
+      <defs>
+        <linearGradient id="scene-intake-wash" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#f8f1e4" />
+          <stop offset=".5" stop-color="#eadfd3" />
+          <stop offset="1" stop-color="#d8e4e2" />
+        </linearGradient>
+        <linearGradient id="scene-archive-wash" x1="0" y1="1" x2="1" y2="0">
+          <stop offset="0" stop-color="#e8eee9" />
+          <stop offset=".55" stop-color="#d9e5e7" />
+          <stop offset="1" stop-color="#eee7d8" />
+        </linearGradient>
+        <linearGradient id="scene-agent-wash" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#e6e1ea" />
+          <stop offset=".48" stop-color="#d7dce9" />
+          <stop offset="1" stop-color="#e9dfd3" />
+        </linearGradient>
+        <pattern id="scene-archive-grid" width="54" height="54" patternUnits="userSpaceOnUse">
+          <path d="M54 0H0V54" fill="none" stroke="#1749c6" stroke-opacity=".13" stroke-width="1" />
+          <circle cx="0" cy="0" r="2" fill="#1749c6" fill-opacity=".25" />
+        </pattern>
+        <pattern id="scene-agent-dots" width="42" height="42" patternUnits="userSpaceOnUse">
+          <circle cx="4" cy="4" r="1.5" fill="#422d72" fill-opacity=".22" />
+        </pattern>
+      </defs>
+
+      <g class="scene-atmosphere-layer scene-atmosphere-layer--intake ${homeSceneIndex === 0 ? "is-active" : ""}" data-scene-atmosphere>
+        <rect width="1600" height="900" fill="url(#scene-intake-wash)" />
+        <g class="scene-svg-enter">
+          <path class="scene-svg-flow scene-svg-flow--one" d="M-120 610C210 390 420 720 715 490S1190 190 1730 400" pathLength="1" />
+          <path class="scene-svg-flow scene-svg-flow--two" d="M-80 680C260 500 470 810 785 555S1250 295 1700 475" pathLength="1" />
+          <path class="scene-svg-wave" d="M0 355C72 355 72 315 144 315S216 405 288 405 360 275 432 275 504 410 576 410 648 332 720 332 792 370 864 370 936 300 1008 300 1080 390 1152 390 1224 338 1296 338 1368 364 1440 364 1512 326 1600 326" pathLength="1" />
+          <g class="scene-svg-dialog scene-svg-dialog--a"><rect x="150" y="120" width="300" height="122" rx="4" /><path d="M192 242l-18 35 62-35" /></g>
+          <g class="scene-svg-dialog scene-svg-dialog--b"><rect x="1120" y="610" width="320" height="130" rx="4" /><path d="M1350 740l34 38-82-38" /></g>
+          <g class="scene-svg-pulse" transform="translate(800 455)"><circle r="118" /><circle r="72" /><circle r="12" /></g>
+        </g>
+      </g>
+
+      <g class="scene-atmosphere-layer scene-atmosphere-layer--archive ${homeSceneIndex === 1 ? "is-active" : ""}" data-scene-atmosphere>
+        <rect width="1600" height="900" fill="url(#scene-archive-wash)" />
+        <rect width="1600" height="900" fill="url(#scene-archive-grid)" />
+        <g class="scene-svg-enter">
+          <g class="scene-svg-file scene-svg-file--one"><rect x="150" y="95" width="360" height="510" /><path d="M205 165h190M205 205h248M205 245h218M205 488h126" /><circle cx="420" cy="490" r="38" /></g>
+          <g class="scene-svg-file scene-svg-file--two"><rect x="1080" y="250" width="350" height="475" /><path d="M1135 330h180M1135 370h232M1135 410h205M1135 590h150" /><path d="M1324 612l45 45 88-118" /></g>
+          <path class="scene-svg-route" d="M460 690C660 510 668 248 900 230S1260 400 1420 120" pathLength="1" />
+          <g class="scene-svg-node scene-svg-node--a" transform="translate(648 498)"><circle r="44" /><circle r="8" /></g>
+          <g class="scene-svg-node scene-svg-node--b" transform="translate(920 232)"><circle r="58" /><circle r="9" /></g>
+          <g class="scene-svg-scan"><line x1="-200" y1="0" x2="540" y2="900" /><line x1="-150" y1="0" x2="590" y2="900" /></g>
+        </g>
+      </g>
+
+      <g class="scene-atmosphere-layer scene-atmosphere-layer--agent ${homeSceneIndex === 2 ? "is-active" : ""}" data-scene-atmosphere>
+        <rect width="1600" height="900" fill="url(#scene-agent-wash)" />
+        <rect width="1600" height="900" fill="url(#scene-agent-dots)" />
+        <g class="scene-svg-enter">
+          <g transform="translate(800 450)"><g class="scene-svg-orbit">
+              <ellipse rx="420" ry="205" />
+              <ellipse rx="300" ry="330" transform="rotate(57)" />
+              <ellipse rx="180" ry="410" transform="rotate(-48)" />
+              <circle cx="420" cy="0" r="12" />
+              <circle cx="-212" cy="235" r="9" />
+              <circle cx="88" cy="-355" r="7" />
+          </g></g>
+          <g class="scene-svg-network">
+            <path d="M250 620L445 470 625 565 800 370 1010 500 1250 300 1430 410" />
+            <path d="M300 250L520 360 740 210 990 330 1210 190 1400 270" />
+            <g><circle cx="250" cy="620" r="8" /><circle cx="445" cy="470" r="11" /><circle cx="625" cy="565" r="7" /><circle cx="800" cy="370" r="14" /><circle cx="1010" cy="500" r="8" /><circle cx="1250" cy="300" r="12" /><circle cx="1430" cy="410" r="7" /></g>
+          </g>
+          <g class="scene-svg-core" transform="translate(800 450)"><circle r="116" /><circle r="74" /><path d="M-34 0h68M0-34v68" /></g>
+          <path class="scene-svg-thought" d="M170 760C390 650 510 790 690 680S1010 550 1180 680 1430 760 1640 620" pathLength="1" />
+        </g>
+      </g>
+    </svg>
   `;
 }
 
