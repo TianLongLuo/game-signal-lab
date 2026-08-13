@@ -1798,6 +1798,251 @@ html[lang="en"] .auth-masthead h1 {
   }
 }
 
+/* 20. Minimal-zine navigation rail -------------------------------------
+   Closed state reads as a deliberate archival spine: folio mark, numbered
+   paper tabs and one vertical colophon instead of four orphaned circles. */
+@media (min-width: 981px) and (hover: hover) and (pointer: fine) {
+  .app-shell {
+    grid-template-columns: 84px minmax(0, 1fr);
+  }
+
+  .sidebar {
+    --sidebar-open-width: 296px;
+    --sidebar-rail-width: 84px;
+    --sidebar-shift: calc(var(--sidebar-open-width) - var(--sidebar-rail-width));
+    counter-reset: zine-rail;
+    width: var(--sidebar-open-width);
+    padding: 18px 16px 20px;
+    box-shadow: 12px 0 0 rgba(23, 73, 198, 0);
+    transition:
+      transform 420ms cubic-bezier(.16, 1, .3, 1),
+      box-shadow 260ms ease,
+      border-color 220ms ease;
+  }
+
+  .sidebar::before {
+    position: fixed;
+    right: 18px;
+    bottom: 20px;
+    color: rgba(248, 242, 230, 0.44);
+    content: "SIGNAL / ARCHIVE";
+    font-family: var(--z-mono);
+    font-size: 8px;
+    letter-spacing: 0.22em;
+    opacity: 1;
+    pointer-events: none;
+    text-orientation: mixed;
+    transform: rotate(180deg);
+    transition: opacity 140ms ease, transform 320ms cubic-bezier(.16, 1, .3, 1);
+    writing-mode: vertical-rl;
+  }
+
+  .sidebar:hover::before,
+  .sidebar:focus-within::before {
+    opacity: 0;
+    transform: translateX(-10px) rotate(180deg);
+  }
+
+  .sidebar::after {
+    top: auto;
+    right: 0;
+    bottom: 19%;
+    width: 4px;
+    height: 46px;
+    background: var(--z-cobalt);
+    transform: none;
+    transition: opacity 180ms ease, transform 320ms cubic-bezier(.16, 1, .3, 1);
+  }
+
+  .sidebar:hover::after,
+  .sidebar:focus-within::after {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+
+  .sidebar > .brand,
+  .sidebar .nav-item {
+    transform: translate3d(var(--sidebar-shift), 0, 0);
+    transition:
+      transform 420ms cubic-bezier(.16, 1, .3, 1),
+      color 180ms ease,
+      background-color 180ms ease,
+      border-color 180ms ease,
+      box-shadow 220ms ease;
+  }
+
+  .sidebar:hover > .brand,
+  .sidebar:focus-within > .brand,
+  .sidebar:hover .nav-item,
+  .sidebar:focus-within .nav-item {
+    transform: translate3d(0, 0, 0);
+  }
+
+  .sidebar > .brand {
+    position: relative;
+    min-height: 76px;
+    padding: 8px 10px 15px;
+    border-bottom-color: rgba(248, 242, 230, 0.2);
+  }
+
+  .sidebar > .brand::after {
+    position: absolute;
+    right: 12px;
+    bottom: 7px;
+    color: rgba(248, 242, 230, 0.45);
+    content: "G / 00";
+    font-family: var(--z-mono);
+    font-size: 7px;
+    letter-spacing: 0.12em;
+  }
+
+  .sidebar .brand-mark {
+    width: 44px;
+    height: 52px;
+    flex: 0 0 44px;
+    border: 1px solid var(--z-paper-high);
+    border-radius: 0;
+    background:
+      linear-gradient(90deg, var(--z-cobalt) 0 7px, transparent 7px),
+      rgba(248, 242, 230, 0.04);
+  }
+
+  .sidebar .brand-mark span:nth-child(1) {
+    width: 24px;
+    height: 24px;
+    border-width: 1px;
+  }
+
+  .sidebar .brand-mark span:nth-child(2) {
+    width: 12px;
+    height: 12px;
+  }
+
+  .sidebar .brand-mark span:nth-child(3) {
+    width: 4px;
+    height: 4px;
+  }
+
+  .sidebar .nav-list {
+    gap: 8px;
+    margin-top: 22px;
+  }
+
+  .sidebar .nav-item {
+    position: relative;
+    min-height: 60px;
+    counter-increment: zine-rail;
+    gap: 14px;
+    padding: 8px 10px;
+  }
+
+  .sidebar .nav-item::after {
+    position: absolute;
+    top: 8px;
+    left: 55px;
+    color: rgba(248, 242, 230, 0.46);
+    content: "0" counter(zine-rail);
+    font-family: var(--z-mono);
+    font-size: 7px;
+    letter-spacing: 0.08em;
+    line-height: 1;
+    transition: color 180ms ease, opacity 180ms ease;
+  }
+
+  .sidebar .nav-item.is-active::after {
+    color: var(--z-cobalt);
+  }
+
+  .sidebar .nav-icon {
+    width: 42px;
+    height: 42px;
+    flex-basis: 42px;
+    border-color: rgba(248, 242, 230, 0.36);
+    border-radius: 0;
+    background: rgba(248, 242, 230, 0.025);
+    box-shadow: 3px 3px 0 rgba(23, 73, 198, 0.16);
+  }
+
+  .sidebar .nav-icon svg {
+    width: 21px;
+    height: 21px;
+  }
+
+  .sidebar .nav-item.is-active {
+    border-color: transparent !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .sidebar .nav-item.is-active .nav-icon {
+    border-color: var(--z-paper-high);
+    background: var(--z-paper-high);
+    box-shadow: 5px 5px 0 var(--z-cobalt);
+    color: var(--z-ink);
+  }
+
+  .sidebar:hover .nav-item.is-active,
+  .sidebar:focus-within .nav-item.is-active {
+    border-color: var(--z-paper-high) !important;
+    background: var(--z-paper-high) !important;
+    box-shadow: 5px 5px 0 var(--z-cobalt) !important;
+    color: var(--z-ink) !important;
+  }
+
+  .sidebar:hover .nav-item.is-active .nav-icon,
+  .sidebar:focus-within .nav-item.is-active .nav-icon {
+    border-color: var(--z-cobalt);
+    background: var(--z-cobalt);
+    box-shadow: none;
+    color: #fff;
+  }
+
+  .sidebar:hover .nav-item::after,
+  .sidebar:focus-within .nav-item::after {
+    right: 10px;
+    left: auto;
+  }
+
+  .sidebar .brand-copy,
+  .sidebar .nav-item > span:last-child,
+  .sidebar .sidebar-note {
+    transition:
+      opacity 160ms ease,
+      transform 300ms cubic-bezier(.16, 1, .3, 1);
+  }
+
+  .sidebar:hover .brand-copy,
+  .sidebar:focus-within .brand-copy,
+  .sidebar:hover .nav-item > span:last-child,
+  .sidebar:focus-within .nav-item > span:last-child,
+  .sidebar:hover .sidebar-note,
+  .sidebar:focus-within .sidebar-note {
+    transition-delay: 100ms;
+  }
+}
+
+/* 21. Face-forward carousel --------------------------------------------
+   Each card keeps its natural ring angle. Rotating the parent by the inverse
+   angle brings the selected folio to 0deg, so every selected scene is fully
+   frontal instead of inheriting a permanent side-facing correction. */
+.scene-ring {
+  transition: transform 780ms cubic-bezier(.16, 1, .3, 1);
+}
+
+.scene-card {
+  backface-visibility: hidden;
+  transform: rotateY(var(--ring-angle)) translateZ(250px) scale(var(--ring-scale));
+  transition:
+    transform 780ms cubic-bezier(.16, 1, .3, 1),
+    opacity 360ms ease,
+    filter 420ms ease,
+    box-shadow 420ms ease;
+}
+
+.scene-card-art {
+  transition: filter 420ms ease, transform 780ms cubic-bezier(.16, 1, .3, 1);
+}
+
 @media (max-width: 700px) {
   body.scene-home-active {
     overflow-x: hidden;
