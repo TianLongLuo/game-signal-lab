@@ -133,8 +133,8 @@
     const copy = document.createElement("p");
     copy.style.cssText = "margin:0 0 14px";
     copy.textContent = english
-      ? "Help us improve GAME with privacy-conscious Google Analytics. We collect anonymous usage events only—never journal text, profile content, recordings, or AI messages."
-      : "帮助我们通过 Google Analytics 改进 GAME。这里只收集匿名使用事件，不收集日记正文、对象档案、录音或 AI 消息。";
+      ? "Help us improve GAME with privacy-conscious Google Analytics. It measures pages, feature completion, approximate region, and browser/device information—never journal text, profile content, recordings, AI messages, usernames, or GAME user IDs."
+      : "帮助我们通过 Google Analytics 改进 GAME。它会统计页面、功能完成、粗略地区和浏览器/设备信息，但不收集日记正文、对象档案、录音、AI 消息、用户名或站内用户 ID。";
     const actions = document.createElement("div");
     actions.style.cssText = "display:flex;justify-content:flex-end;gap:10px";
     const decline = document.createElement("button");
