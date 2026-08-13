@@ -3031,6 +3031,8 @@ async function serveStatic(request, env, path) {
   if (path === "/admin") target.pathname = "/admin/index.html";
   if (path === "/") target.pathname = "/index.html";
   if (path === "/en") target.pathname = "/en/index.html";
+  if (path === "/privacy") target.pathname = "/privacy/index.html";
+  if (path === "/en/privacy") target.pathname = "/en/privacy/index.html";
   let response;
   if (env.ASSETS?.fetch) {
     response = await env.ASSETS.fetch(new Request(target, request));
@@ -3099,6 +3101,8 @@ function publicSitemap(origin) {
   const publicPaths = [
     "/",
     "/en/",
+    "/privacy/",
+    "/en/privacy/",
     ...Object.keys(EMBEDDED_STATIC_ASSETS || {})
       .filter((path) => path === "/blog/index.html" || /^\/blog\/[^/]+\.html$/.test(path))
       .map((path) => path === "/blog/index.html" ? "/blog/" : path),

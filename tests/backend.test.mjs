@@ -371,7 +371,14 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
   const sitemapText = await sitemap.text();
   assert.match(sitemapText, /<loc>http:\/\/game\.test\/<\/loc>/);
   assert.match(sitemapText, /<loc>http:\/\/game\.test\/en\/<\/loc>/);
+  assert.match(sitemapText, /<loc>http:\/\/game\.test\/privacy\/<\/loc>/);
+  assert.match(sitemapText, /<loc>http:\/\/game\.test\/en\/privacy\/<\/loc>/);
   assert.match(sitemapText, /<loc>http:\/\/game\.test\/en\/blog\/<\/loc>/);
+
+  const privacyPage = await fetch(`${baseUrl}/privacy/`);
+  assert.equal(privacyPage.status, 200);
+  assert.match(privacyPage.headers.get("content-type"), /^text\/html/);
+  assert.match(await privacyPage.text(), /隐私保护说明/);
 
   const bootstrapAdmin = backend.db
     .prepare("SELECT username, role, password_hash FROM users WHERE username_norm = 'drac'")

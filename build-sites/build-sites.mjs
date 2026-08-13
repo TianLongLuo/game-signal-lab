@@ -16,6 +16,7 @@ const staticEntries = [
   ["assets", "assets"],
   ["blog", "blog"],
   ["en", "en"],
+  ["privacy", "privacy"],
   ["src", "src"],
   ["vendor", "vendor"],
   ["admin/index.html", "admin/index.html"],

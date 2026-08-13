@@ -238,6 +238,8 @@ test("robots and sitemap use the deployed request origin", async () => {
     ctx
   )).text();
   assert.match(sitemapText, /<loc>https:\/\/game\.example\/en\/<\/loc>/);
+  assert.match(sitemapText, /<loc>https:\/\/game\.example\/privacy\/<\/loc>/);
+  assert.match(sitemapText, /<loc>https:\/\/game\.example\/en\/privacy\/<\/loc>/);
 
   const runtimeConfig = await worker.fetch(
     new Request(`${ORIGIN}/runtime-config.js`),

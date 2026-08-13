@@ -708,6 +708,9 @@ function renderCurrentView() {
     default:
       main.innerHTML = renderDashboard();
   }
+  if (currentView !== "dashboard") {
+    main.insertAdjacentHTML("beforeend", renderSitePolicyFooter());
+  }
   localizePage();
   document.body.classList.toggle(
     "agent-conversation-active",
@@ -1678,6 +1681,7 @@ async function submitAgentPrompt(form, formData) {
 
 function renderDashboard() {
   const activeScene = currentHomeScene();
+  const english = detectLocale() === "en";
   return `
     <div class="page scene-home-page">
       ${renderStorageRecoveryNotice()}
@@ -1753,11 +1757,24 @@ function renderDashboard() {
             <button type="button" class="scene-arrow" data-action="home-scene-next" aria-label="下一个场景">→</button>
           </div>
           <p class="scene-home-wheel-hint"><span>SCROLL</span> 滚轮切换场景 · 点击卡片进入</p>
-          <p class="scene-home-safety">本地优先 · 尊重边界 · 只保留你愿意留下的部分</p>
+          <p class="scene-home-safety">
+            ${english ? "On-device first · Respect boundaries" : "本地优先 · 尊重边界"}
+            · <a href="${english ? "/en/privacy/" : "/privacy/"}">${english ? "Privacy notice" : "隐私保护说明"}</a>
+          </p>
         </footer>
         <p class="visually-hidden" data-scene-live aria-live="polite">当前场景：${escapeHTML(activeScene.title)}</p>
       </section>
     </div>
+  `;
+}
+
+function renderSitePolicyFooter() {
+  const english = detectLocale() === "en";
+  return `
+    <footer class="site-policy-footer" aria-label="${english ? "Legal and privacy" : "隐私与法律信息"}">
+      <span>© 2026 GAME Signal Lab · ${english ? "Beta" : "测试版"}</span>
+      <a href="${english ? "/en/privacy/" : "/privacy/"}">${english ? "Privacy notice" : "隐私保护说明"} →</a>
+    </footer>
   `;
 }
 

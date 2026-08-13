@@ -102,6 +102,9 @@
       window.gameAnalytics.preferences();
     }
     if (target.matches('a[href^="/blog/"]')) event("blog_link_opened");
+    if (target.matches('a[href^="/privacy/"], a[href^="/en/privacy/"]')) {
+      event("privacy_notice_opened", { from: location.pathname });
+    }
   });
 
   document.addEventListener("submit", (submitEvent) => {
@@ -164,7 +167,12 @@
   if (readConsent() === "granted") {
     initialize();
     window.addEventListener("DOMContentLoaded", () => {
-      if (!initialPageSent) page("home", document.title);
+      const initialScreen = location.pathname.includes("/privacy/")
+        ? "privacy_notice"
+        : location.pathname.includes("/blog")
+          ? "blog"
+          : "home";
+      if (!initialPageSent) page(initialScreen, document.title);
     }, { once: true });
   } else if (readConsent() === null) {
     if (document.readyState === "loading") {
