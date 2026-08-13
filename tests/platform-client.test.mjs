@@ -109,6 +109,8 @@ test("streaming ASR requests short audio chunks and emits cumulative text", asyn
     assert.equal(options.headers.Accept, "text/event-stream");
     const payload = JSON.parse(options.body);
     assert.equal(payload.stream, true);
+    assert.equal(payload.priority, "live");
+    assert.equal(payload.language, "zh");
     assert.match(payload.audio, /^data:audio\/wav;base64,/);
     return new Response(
       'data: {"choices":[{"delta":{"content":"你好"}}]}\n\n' +
@@ -122,6 +124,8 @@ test("streaming ASR requests short audio chunks and emits cumulative text", asyn
   const client = new PlatformClient();
   client.setCsrfToken("csrf-test");
   const result = await client.streamTranscribeVoice(source, {
+    priority: "live",
+    language: "zh",
     onText(text) { partials.push(text); },
   });
   assert.equal(result, "你好，继续。");

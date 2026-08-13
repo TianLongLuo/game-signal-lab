@@ -306,7 +306,7 @@ export class PlatformClient {
     return audioChunks;
   }
 
-  async transcribeVoice(blob, { signal } = {}) {
+  async transcribeVoice(blob, { signal, priority = "final", language = "auto" } = {}) {
     if (!(blob instanceof Blob) || !blob.size) {
       throw new PlatformError("没有可识别的语音内容。", { code: "audio_empty" });
     }
@@ -316,7 +316,7 @@ export class PlatformClient {
       credentials: "same-origin",
       cache: "no-store",
       headers: this.#writeHeaders({ Accept: "application/json" }),
-      body: JSON.stringify({ audio }),
+      body: JSON.stringify({ audio, priority, language }),
       signal,
     });
     if (!response.ok) throw await responseError(response);
@@ -328,7 +328,7 @@ export class PlatformClient {
     return text;
   }
 
-  async streamTranscribeVoice(blob, { signal, onText } = {}) {
+  async streamTranscribeVoice(blob, { signal, onText, priority = "final", language = "auto" } = {}) {
     if (!(blob instanceof Blob) || !blob.size) {
       throw new PlatformError("没有可识别的语音内容。", { code: "audio_empty" });
     }
@@ -338,7 +338,7 @@ export class PlatformClient {
       credentials: "same-origin",
       cache: "no-store",
       headers: this.#writeHeaders({ Accept: "text/event-stream" }),
-      body: JSON.stringify({ audio, stream: true }),
+      body: JSON.stringify({ audio, stream: true, priority, language }),
       signal,
     });
     if (!response.ok) throw await responseError(response);
