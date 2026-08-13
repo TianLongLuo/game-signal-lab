@@ -2090,3 +2090,184 @@ html[lang="en"] .auth-masthead h1 {
     forced-color-adjust: auto;
   }
 }
+
+/* 17. Viewport-fit home -------------------------------------------------
+   The home scene is an application canvas, not a document page.  Keep the
+   entire folio between the sticky masthead and the viewport edge so the
+   primary action/footer never lives below an unreachable page fold. */
+body.scene-home-active {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+body.scene-home-active .app-shell {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+body.scene-home-active .workspace {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+body.scene-home-active main {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding-block: clamp(10px, 1.8vh, 22px);
+  overflow: hidden;
+}
+
+body.scene-home-active .scene-home-page,
+body.scene-home-active .scene-home {
+  height: 100%;
+  min-height: 0;
+}
+
+body.scene-home-active .scene-home {
+  padding-block: clamp(16px, 2.7vh, 30px) clamp(12px, 2vh, 22px);
+}
+
+body.scene-home-active .scene-home-stage {
+  min-height: 0;
+  padding-block: clamp(10px, 2vh, 24px) clamp(8px, 1.4vh, 16px);
+}
+
+body.scene-home-active .scene-ring-wrap {
+  width: min(100%, 62vh, 640px);
+  max-height: 100%;
+}
+
+body.scene-home-active .scene-home-copy h1 {
+  font-size: clamp(48px, min(6.2vw, 10vh), 92px);
+}
+
+@media (max-height: 800px) and (min-width: 701px) {
+  body.scene-home-active .scene-home {
+    padding-block: 14px 10px;
+  }
+
+  body.scene-home-active .scene-home-stage {
+    padding-block: 8px 6px;
+  }
+
+  body.scene-home-active .scene-ring-wrap {
+    width: min(100%, 55vh, 520px);
+  }
+
+  body.scene-home-active .scene-home-copy h1,
+  html[lang="en"] body.scene-home-active .scene-home-copy h1 {
+    font-size: clamp(42px, min(5.4vw, 9vh), 72px);
+  }
+
+  body.scene-home-active .scene-home-description {
+    margin-block: 12px;
+  }
+}
+
+@media (max-width: 700px) {
+  body.scene-home-active,
+  html[lang="en"] body.scene-home-active {
+    height: 100dvh;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  body.scene-home-active main {
+    padding: 8px 10px 10px;
+  }
+
+  body.scene-home-active .scene-home-page,
+  body.scene-home-active .scene-home,
+  html[lang="en"] body.scene-home-active .scene-home-page,
+  html[lang="en"] body.scene-home-active .scene-home {
+    height: 100%;
+    min-height: 0;
+  }
+
+  body.scene-home-active .scene-home {
+    padding: 12px 12px 10px;
+  }
+
+  body.scene-home-active .scene-home-stage,
+  html[lang="en"] body.scene-home-active .scene-home-stage {
+    display: grid;
+    min-height: 0;
+    flex: 1 1 auto;
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(150px, 0.9fr) minmax(0, 1.1fr);
+    align-items: center;
+    gap: 4px;
+    padding: 5px 0 4px;
+    overflow: hidden;
+  }
+
+  body.scene-home-active .scene-ring-wrap {
+    width: min(58vw, 27vh, 250px);
+    max-height: 27vh;
+  }
+
+  body.scene-home-active .scene-home-copy {
+    align-self: center;
+  }
+
+  body.scene-home-active .scene-home-copy h1,
+  html[lang="en"] body.scene-home-active .scene-home-copy h1 {
+    margin-block: 6px;
+    font-size: clamp(34px, min(11vw, 6.5vh), 54px);
+    line-height: 0.92;
+  }
+
+  body.scene-home-active .scene-home-subtitle {
+    margin-top: 7px;
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  body.scene-home-active .scene-home-description {
+    margin: 7px 0 9px;
+    font-size: 11px;
+    line-height: 1.4;
+  }
+
+  body.scene-home-active .scene-home-footer {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+  }
+
+  body.scene-home-active .scene-home-safety {
+    overflow: hidden;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  body.scene-home-active .scene-home-wheel-hint {
+    display: none;
+  }
+}
+
+@media (max-height: 620px) {
+  body.scene-home-active .scene-home-intro,
+  body.scene-home-active .scene-home-description,
+  body.scene-home-active .scene-home-safety {
+    display: none;
+  }
+
+  body.scene-home-active .scene-home-stage,
+  html[lang="en"] body.scene-home-active .scene-home-stage {
+    grid-template-rows: minmax(118px, 0.8fr) minmax(0, 1fr);
+  }
+
+  body.scene-home-active .scene-ring-wrap {
+    width: min(46vw, 22vh, 190px);
+    max-height: 22vh;
+  }
+}
