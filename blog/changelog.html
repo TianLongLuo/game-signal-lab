@@ -3,108 +3,61 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>本周更新 — 2026年8月17日周报 | GAME Signal Lab</title>
-  <meta name="description" content="GAME Signal Lab 每周更新日志：档案杂志重塑、英文界面本地化、隐私合规、语音转录修复、新增 14 篇博客文章。" />
+  <title>本周更新 — 2026年8月24日周报 | GAME Signal Lab</title>
+  <meta name="description" content="GAME Signal Lab 每周更新日志：本周为纯内容周，新增 7 篇「识别操控」系列双语博客文章（主题 26–32），博客扩展至 64 篇。产品代码无新变更。" />
   <meta name="robots" content="noindex"/>
   <link rel="alternate" hreflang="en" href="https://rsdgame.online/blog/en-changelog.html" />
   <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans SC",sans-serif;background:#0c0910;color:#c4bfd0;line-height:2;max-width:720px;margin:0 auto;padding:60px 20px}h1{font-size:1.8rem;color:#f5f2fa;margin-bottom:8px;line-height:1.4}.subtitle{color:#6b5e80;font-size:.85rem;margin-bottom:36px}h2{font-size:1.2rem;color:#d4cfe6;margin:36px 0 12px;padding-bottom:6px;border-bottom:1px solid #2a2038}h3{font-size:1rem;color:#b8a8d0;margin:20px 0 8px}ul{margin:8px 0 20px 20px}li{margin-bottom:6px;font-size:.92rem}code{font-family:"SF Mono",Monaco,Menlo,monospace;font-size:.8rem;color:#a855f7;background:#1a1425;padding:1px 6px;border-radius:3px}p{margin-bottom:14px;font-size:.92rem}.badge{display:inline-block;font-size:.7rem;padding:1px 8px;border-radius:4px;margin-right:4px;font-weight:600;text-transform:uppercase}.badge-feat{background:#1a3a2a;color:#4ade80}.badge-fix{background:#3a1a1a;color:#f87171}.badge-perf{background:#1a2a3a;color:#60a5fa}.badge-docs{background:#2a1a3a;color:#c084fc}.badge-i18n{background:#3a2a1a;color:#fbbf24}.stats{background:#14101c;border:1px solid #2a2038;border-radius:6px;padding:16px 20px;margin:20px 0}.stats dt{font-size:.78rem;color:#6b5e80;text-transform:uppercase;letter-spacing:.04em}.stats dd{font-size:1.1rem;color:#d4cfe6;margin-bottom:10px}.stats dd:last-child{margin-bottom:0}.back{margin-top:60px;font-size:.9rem}.back a{color:#a855f7}a{color:#a855f7}</style>
 </head>
 <body>
-  <h1>本周更新 — 2026年8月17日周报</h1>
-  <div class="subtitle">2026年8月10日 – 8月17日 · 40 次提交 · 28 项实质性变更</div>
+  <h1>本周更新 — 2026年8月24日周报</h1>
+  <div class="subtitle">2026年8月17日 – 8月24日 · 1 次提交 · 新增 14 篇博客文章</div>
 
-  <p>本周 GAME Signal Lab 褪去工具化的外壳，重塑为一部「档案杂志」——以主题化 SVG 场景背景与杂志剪影营造叙事驱动的视觉体验。英文界面实现完整对齐，隐私合规落地（隐私声明 + 可选的埋点披露），博客扩展至 50 篇双语文章。</p>
+  <p>本周是一个 <em>纯内容周</em>。产品代码保持安静——没有新的功能、修复或重构落地——但发布引擎持续运转：七篇新的双语文章延续了博客的「识别操控」系列，将档案库扩展到 <strong>64 篇文章</strong>（32 篇中文 + 32 篇英文）。</p>
 
   <div class="stats">
     <dl>
       <dt>总提交数</dt>
-      <dd>40（含 4 次 CI 自动巡检 + 8 次合并）</dd>
+      <dd>1（即上一期 changelog 运行本身；无新增代码变更）</dd>
       <dt>实质性变更</dt>
-      <dd>28（8 项功能、18 项修复、1 项文档、1 项 SEO）</dd>
+      <dd>0 功能 / 0 修复 / 0 文档——本周开发侧安静</dd>
       <dt>博客文章</dt>
-      <dd>25 篇中文 + 25 篇英文 = 50 篇文章已上线（本周 +14 篇）</dd>
+      <dd>32 篇中文 + 32 篇英文 = 64 篇文章已上线（本周 +14 篇：主题 26–32）</dd>
       <dt>Google 索引状态</dt>
-      <dd>已索引 · sitemap 包含 58 个 URL · 最后验证 2026-08-17（无新 GSC 信号）</dd>
+      <dd>已索引 · sitemap 包含 72 个 URL（+14）· 无新 GSC 信号（凭据不可用）</dd>
       <dt>测试套件</dt>
       <dd>65 通过 / 0 失败 · CI 绿灯</dd>
     </dl>
   </div>
 
-  <h2>🎨 产品重塑 —「档案杂志」</h2>
-  <p>本周最大的转变：产品被重塑为一部 <em>档案杂志</em>——杂志式的编辑呈现，配以主题化 SVG 场景背景、杂志剪影与专注模式 Agent 聊天。随后的一系列修复让首页场景适配视口，并修复了 404 的杂志资源。</p>
-
-  <h3>功能</h3>
-  <ul>
-    <li><span class="badge badge-feat">feat</span> <code>0b660c9</code> 将产品重塑为档案杂志</li>
-    <li><span class="badge badge-feat">feat</span> <code>f15ba8b</code> 添加杂志剪影与专注 Agent 聊天</li>
-    <li><span class="badge badge-feat">feat</span> <code>93d910f</code> 添加主题化 SVG 场景背景</li>
-  </ul>
-
-  <h3>修复</h3>
-  <ul>
-    <li><span class="badge badge-fix">fix</span> <code>9f34952</code> 首页场景适配视口</li>
-    <li><span class="badge badge-fix">fix</span> <code>8c3a54f</code> 细化侧边栏轨道与面部轮播卡片</li>
-    <li><span class="badge badge-fix">fix</span> <code>2696421</code> 将 3 个新杂志场景 webp 资源加入 STATIC_ASSETS</li>
-    <li><span class="badge badge-fix">fix</span> <code>f5c1374</code> 将杂志资源加入 STATIC_ASSETS（此前 404）</li>
-  </ul>
-
-  <h2>🌐 英文界面本地化与布局</h2>
-  <p>英文界面与中文体验实现完整对齐。英文布局重新设计，加入可折叠侧边栏，AI 调用配额按语言分别显示。</p>
+  <h2>📝 新增博客文章 —「识别操控」系列</h2>
+  <p>本周产出是一个聚焦的七篇系列，围绕「识别操控与不健康关系动态」——延续博客将真实、复杂的关系信号转化为可读、可操作指导的模式。每篇均以中英文双语发布。</p>
 
   <ul>
-    <li><span class="badge badge-feat">feat</span> <code>e8857d8</code> 英文界面本地化并添加 AI 调用配额</li>
-    <li><span class="badge badge-feat">feat</span> <code>79a982b</code> 重新设计英文布局与可折叠侧边栏</li>
+    <li><span class="badge badge-feat">26</span> <a href="/blog/26-compromise-without-losing-yourself.html">如何在不失去自我的前提下学会妥协</a> <em>（英文：<a href="/blog/en-26-compromise-without-losing-yourself.html">en-26</a>）</em></li>
+    <li><span class="badge badge-feat">27</span> <a href="/blog/27-silent-treatment.html">如何应对关系中的冷暴力：当对方用沉默惩罚你</a> <em>（英文：<a href="/blog/en-27-silent-treatment.html">en-27</a>）</em></li>
+    <li><span class="badge badge-feat">28</span> <a href="/blog/28-gaslighting.html">如何识别关系中的「煤气灯效应」：当你开始怀疑自己的记忆和感受</a> <em>（英文：<a href="/blog/en-28-gaslighting.html">en-28</a>）</em></li>
+    <li><span class="badge badge-feat">29</span> <a href="/blog/29-intermittent-reinforcement.html">如何识别关系中的「间歇性强化」：为什么忽冷忽热让你越来越离不开</a> <em>（英文：<a href="/blog/en-29-intermittent-reinforcement.html">en-29</a>）</em></li>
+    <li><span class="badge badge-feat">30</span> <a href="/blog/30-love-bombing.html">如何识别关系中的「爱情轰炸」：为什么一开始的过度热情可能是危险信号</a> <em>（英文：<a href="/blog/en-30-love-bombing.html">en-30</a>）</em></li>
+    <li><span class="badge badge-feat">31</span> <a href="/blog/31-emotional-blackmail.html">如何识别关系中的「情感勒索」：当「如果你爱我，你就会……」成为一种控制</a> <em>（英文：<a href="/blog/en-31-emotional-blackmail.html">en-31</a>）</em></li>
+    <li><span class="badge badge-feat">32</span> <a href="/blog/32-fake-apology.html">如何识别关系中的「煤气灯式道歉」：为什么「对不起，但都是因为你……」不是真正的道歉</a> <em>（英文：<a href="/blog/en-32-fake-apology.html">en-32</a>）</em></li>
   </ul>
 
-  <h2>🔒 隐私与合规</h2>
-  <p>隐私工作本周落地：独立隐私声明（中英文）、GA4 隐私披露、Beta 增长计划，以及更清晰的可选埋点文案。</p>
+  <h2>🧑‍💻 代码变更</h2>
+  <p>本周无代码变更。窗口期内唯一的提交（<code>c1cdc11</code>）是上一期 changelog 运行本身。继上周大规模的「档案杂志」重塑与本地化推进后，开发侧保持安静。</p>
 
-  <ul>
-    <li><span class="badge badge-feat">feat</span> <code>63ed1cd</code> 发布隐私声明与 Beta 增长计划</li>
-    <li><span class="badge badge-fix">merge</span> <code>e342047</code> 隐私页面（中英文）+ GA4 隐私披露</li>
-    <li><span class="badge badge-docs">docs</span> <code>6a72ade</code> 澄清可选埋点数据</li>
-  </ul>
-
-  <h2>🎤 语音转录</h2>
-  <p>来自双语 ASR 调优分支的一项针对性修复，确保送入 Agent 时优先采用最终语音转录而非中间结果。</p>
-
-  <ul>
-    <li><span class="badge badge-fix">fix</span> <code>c1ff71c</code> 优先采用最终语音转录</li>
-  </ul>
-
-  <h2>🛠️ 管理后台与账号</h2>
-  <p>账号访问改为在弹窗中打开，不再使用独立路由；管理员登录的 403 问题定位为原生表单 POST，已移除。用户消息现可归档供管理员复核。</p>
-
-  <ul>
-    <li><span class="badge badge-feat">feat</span> <code>b555f36</code> 在弹窗中打开账号访问</li>
-    <li><span class="badge badge-fix">fix</span> <code>a93bfd7</code> 管理员登录 — 移除导致 403 的原生表单 POST</li>
-    <li><span class="badge badge-fix">fix</span> <code>9cced30</code> 归档用户消息供管理员复核 <em>（×11 次重复提交，同一逻辑变更）</em></li>
-  </ul>
-
-  <h2>📊 数据分析与 SEO</h2>
-  <p>重塑过程中丢失的 GA4 埋点已恢复，并改进 SEO，为不支持 JavaScript 的爬虫添加 noscript 落地页回退。</p>
-
-  <ul>
-    <li><span class="badge badge-feat">feat</span> <code>f815ee2</code> 改进 GA4 埋点 SEO 与英文语言环境</li>
-    <li><span class="badge badge-fix">fix</span> <code>2294e8b</code> 恢复 GA4 埋点代码（G-EJD3GEZ83Z）</li>
-    <li>seo <code>f89f762</code> 添加 noscript 落地页 + 增强 meta 描述</li>
-  </ul>
-
-  <h2>🔀 合并请求</h2>
-  <ul>
-    <li><code>19b2a0d</code> 解决 index.html 冲突 — 采用 PR 的 SEO/i18n 版本</li>
-    <li><code>be136e7</code> 会话消息表 v4</li>
-    <li><code>ef571b9</code>、<code>26dcee2</code>、<code>71ec921</code>、<code>21bc4ef</code>、<code>29afc02</code> — 合并 <code>codex/bilingual-asr-tuning</code> 分支（×5）</li>
-  </ul>
+  <h2>🔍 SEO 与索引</h2>
+  <p>sitemap 从 58 个 URL 增长到 <strong>72 个</strong>（+14），与七篇新增双语文章同步。本周 SEO 健康检查中，全部 72 个 URL 均返回 HTTP 200。Google 索引状态沿用上次验证的「已索引」结论；本周无新的 Search Console 数据可用。</p>
 
   <h2>🤖 CI 自动化</h2>
-  <p>CI 巡检本周执行了 4 次，全部绿灯（65 通过 / 0 失败）。此前 GitHub Token 问题似已解决——工作分支已与 origin 重新同步（0 领先 / 0 落后）。</p>
+  <p>CI 巡检持续绿灯（65 通过 / 0 失败）。GitHub 推送权限已确认可用——本周一次临时分支探测返回 exit 0。</p>
 
   <h2>⚠️ 已知问题</h2>
   <ul>
     <li><strong>Google Search Console</strong> — 本周无凭据可用；索引状态上次确认为已索引，无新信号。</li>
     <li><strong>百度验证</strong> — 仍未提交。</li>
     <li><strong>Sitemap</strong> — 缺少 <code>&lt;lastmod&gt;</code> 标签（可选优化，不影响收录）。</li>
+    <li><strong>博客文件未提交</strong> — 文章 22–32（双语）已发布到磁盘但尚未提交到 git；blog-daily loop 写文件但不提交，建议做一次整理。</li>
   </ul>
 
   <div class="back"><a href="/blog/">← 返回博客</a> · <a href="/blog/en-changelog.html">English Version</a> · <a href="https://rsdgame.online/">进入 GAME Signal Lab</a></div>
