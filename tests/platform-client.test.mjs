@@ -54,82 +54,17 @@ test("Agent history preserves a contiguous newest suffix within 64 KiB", () => {
   );
 });
 
-test("TTS client requests the configured Chinese voice and returns audio", async (t) => {
-  const originalFetch = globalThis.fetch;
-  t.after(() => { globalThis.fetch = originalFetch; });
-  globalThis.fetch = async (url, options) => {
-    assert.equal(url, "/api/voice/tts");
-    assert.equal(options.method, "POST");
-    assert.equal(options.headers.Accept, "audio/mpeg");
-    assert.deepEqual(JSON.parse(options.body), { text: "请继续说。", voice: "茉莉" });
-    return new Response(new Uint8Array([82, 73, 70, 70]), {
-      status: 200,
-      headers: { "content-type": "audio/wav" },
-    });
-  };
-  const client = new PlatformClient();
-  client.setCsrfToken("csrf-test");
-  const blob = await client.synthesizeVoice("请继续说。");
-  assert.equal(blob.type, "audio/wav");
-  assert.equal(blob.size, 4);
-});
-
-test("streaming TTS requests pcm16 and emits audio deltas", async (t) => {
-  const originalFetch = globalThis.fetch;
-  t.after(() => { globalThis.fetch = originalFetch; });
-  globalThis.fetch = async (url, options) => {
-    assert.equal(url, "/api/voice/tts");
-    assert.equal(options.headers.Accept, "text/event-stream");
-    assert.deepEqual(JSON.parse(options.body), {
-      text: "请继续说。",
-      voice: "茉莉",
-      stream: true,
-    });
-    return new Response(
-      'data: {"choices":[{"delta":{"audio":{"data":"AQI="}}}]}\n\n' +
-      "data: [DONE]\n\n",
-      { status: 200, headers: { "content-type": "text/event-stream" } }
-    );
-  };
-  const chunks = [];
-  const client = new PlatformClient();
-  client.setCsrfToken("csrf-test");
-  const count = await client.streamVoice("请继续说。", {
-    onAudio(chunk) { chunks.push(chunk); },
-  });
-  assert.equal(count, 1);
-  assert.deepEqual(chunks, ["AQI="]);
-});
-
-test("streaming ASR requests short audio chunks and emits cumulative text", async (t) => {
-  const originalFetch = globalThis.fetch;
-  t.after(() => { globalThis.fetch = originalFetch; });
-  globalThis.fetch = async (url, options) => {
-    assert.equal(url, "/api/voice/asr");
-    assert.equal(options.headers.Accept, "text/event-stream");
-    const payload = JSON.parse(options.body);
-    assert.equal(payload.stream, true);
-    assert.equal(payload.priority, "live");
-    assert.equal(payload.language, "zh");
-    assert.match(payload.audio, /^data:audio\/wav;base64,/);
-    return new Response(
-      'data: {"choices":[{"delta":{"content":"你好"}}]}\n\n' +
-      'data: {"choices":[{"delta":{"content":"，继续。"}}]}\n\n' +
-      "data: [DONE]\n\n",
-      { status: 200, headers: { "content-type": "text/event-stream" } }
-    );
-  };
-  const source = new Blob([new Uint8Array([82, 73, 70, 70])], { type: "audio/wav" });
-  const partials = [];
-  const client = new PlatformClient();
-  client.setCsrfToken("csrf-test");
-  const result = await client.streamTranscribeVoice(source, {
-    priority: "live",
-    language: "zh",
-    onText(text) { partials.push(text); },
-  });
-  assert.equal(result, "你好，继续。");
-  assert.deepEqual(partials, ["你好", "你好，继续。"]);
+test("voice compatibility wrapper emits only one completed JSON transcript",async t=>{
+ const original=globalThis.fetch;t.after(()=>globalThis.fetch=original);
+ globalThis.fetch=async(url,options)=>{
+  assert.equal(url,'/api/voice/asr');assert.equal(options.headers.Accept,'application/json');
+  const payload=JSON.parse(options.body);assert.equal(payload.stream,undefined);
+  return Response.json({text:'你好，继续。'});
+ };
+ const client=new PlatformClient();client.setCsrfToken('csrf-test');const chunks=[];
+ assert.equal(await client.streamTranscribeVoice(new Blob(['wav'],{type:'audio/wav'}),{onText:t=>chunks.push(t)}),'你好，继续。');
+ assert.deepEqual(chunks,['你好，继续。']);
+ assert.equal(client.synthesizeVoice,undefined);assert.equal(client.streamVoice,undefined);
 });
 
 test("voice organizer sends the final transcript to the same-origin DeepSeek route", async (t) => {

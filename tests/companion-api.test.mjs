@@ -1,8 +1,9 @@
+import { createRelationship } from "../server/companion-events.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { createBackend } from "../server/app.js";
-import { encryptSecret } from "../server/security.js";
+import { encryptSecret, decryptSecret } from "../server/security.js";
 const character = {
   name: "Alex",
   age: 25,
@@ -106,6 +107,27 @@ async function setup(t, { image = false } = {}) {
       try {
         json = JSON.parse(text);
       } catch {}
+      // HTTP scenarios exercise permissions/replay, not random plot outcomes.
+      if (
+        path === "/api/companion/stories" &&
+        method === "POST" &&
+        response.status === 201
+      ) {
+        const row = backend.db
+          .prepare(
+            "SELECT id,user_id,data FROM companion_stories ORDER BY rowid DESC LIMIT 1",
+          )
+          .get();
+        const aad = `companion:${row.user_id}:v1`;
+        const data = JSON.parse(decryptSecret(JSON.parse(row.data), KEY, aad));
+        data.relationship = createRelationship("fixture-0");
+        backend.db
+          .prepare("UPDATE companion_stories SET data=? WHERE id=?")
+          .run(
+            JSON.stringify(encryptSecret(JSON.stringify(data), KEY, aad)),
+            row.id,
+          );
+      }
       return { status: response.status, json, text, headers: response.headers };
     };
     await request("/api/auth/csrf");
@@ -161,6 +183,21 @@ test("companion HTTP: root, consent, owner/CSRF gates, draft, stream, quota last
     await fetch(h.base + "/").then((r) => r.text()),
     /companion\/app.js/,
   );
+  for (const path of [
+    "/src/companion-stage.js",
+    "/src/companion-scenes.js",
+    "/companion/guide/",
+    "/companion/scenes/cafe.jpg",
+    "/companion/scenes/rain.jpg",
+    "/companion/scenes/home.jpg",
+    "/companion/scenes/coast.jpg",
+    "/companion/scenes/garden.jpg",
+  ]) {
+    const response = await fetch(h.base + path);
+    assert.equal(response.status, 200, path);
+    if (path.endsWith(".jpg"))
+      assert.match(response.headers.get("content-type"), /image\/jpeg/);
+  }
   assert.equal((await fetch(h.base + "/api/companion")).status, 401);
   assert.equal(
     (

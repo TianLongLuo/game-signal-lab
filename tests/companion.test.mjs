@@ -24,7 +24,12 @@ function setup(t) {
     db.prepare(
       "INSERT INTO users(id,username,username_norm,password_hash,role,created_at,updated_at) VALUES (?,?,?,'test','member','now','now')",
     ).run(id, `fiction${id}`, `fiction${id}`);
-  return { db, store: new CompanionStore(db, randomBytes(32)) };
+  return {
+    db,
+    store: new CompanionStore(db, randomBytes(32), {
+      randomSeed: () => "fixture-0",
+    }),
+  };
 }
 test("adult character schema is strict and drops injected owner/state", () => {
   assert.throws(() => validateCharacter({ ...character, age: 17 }));
@@ -212,4 +217,35 @@ test("unknown preset is rejected before creating a story", (t) => {
     /invalid_portrait_preset/,
   );
   assert.equal(store.current(1), null);
+});
+
+test("relationship events commit with dialogue only and endings remain readable", (t) => {
+  const { store } = setup(t);
+  let s = store.create(1, character, "en");
+  const input = {
+    clientTurnId: "end-chapter",
+    text: "I would like to part ways.",
+    choiceId: "end-relationship",
+    expectedVersion: 0,
+  };
+  const planned = store.planTurn(1, s.id, input);
+  assert.equal(planned.relationship.ended, true);
+  assert.equal(store.get(1, s.id).relationship.ended, false);
+  s = store.commitTurn(1, s.id, input, "I understand. Take care.");
+  assert.equal(s.relationship.ended, true);
+  assert.equal(s.choices.length, 0);
+  assert.ok(s.turns[1].narration.includes("end the relationship"));
+  assert.equal(s.turns[0].role, "user");
+  assert.equal(s.turns[1].role, "assistant");
+  assert.throws(
+    () =>
+      store.checkTurn(1, s.id, {
+        text: "again",
+        clientTurnId: "next",
+        expectedVersion: 1,
+      }),
+    /story_ended/,
+  );
+  assert.equal(store.replay(1, s.id, input).reply, "I understand. Take care.");
+  assert.equal(store.get(1, s.id).relationship.seed, undefined);
 });

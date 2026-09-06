@@ -20,7 +20,6 @@ import { detectLocale, localizePage, t, toggleLocale } from "./src/i18n.js";
 import {
   appendVoiceTranscript,
   encodeMonoWav,
-  extractCompletedSpeechChunks,
   extractNewTranscript,
   normalizeAssistantText,
   reconcileCumulativeAsrText,
@@ -28,8 +27,8 @@ import {
 
 const STORAGE_KEY = "game-signal-lab:v2";
 const LEGACY_STORAGE_KEYS = ["game-signal-lab:v1"];
-const FINAL_ASR_WITH_PREVIEW_TIMEOUT_MS = 12_000;
-const FINAL_ASR_WITHOUT_PREVIEW_TIMEOUT_MS = 24_000;
+const FINAL_ASR_WITH_PREVIEW_TIMEOUT_MS = 35_000;
+const FINAL_ASR_WITHOUT_PREVIEW_TIMEOUT_MS = 35_000;
 const VOICE_ORGANIZE_CLIENT_TIMEOUT_MS = 10_000;
 const defaultState = createDefaultState();
 
@@ -169,21 +168,6 @@ const agentVoice = {
   lastAsrChunkIndex: 0,
   recordingBaseText: "",
   recordingAsrText: "",
-};
-
-const ttsState = {
-  queue: [],
-  playing: false,
-  controller: null,
-  currentAudio: null,
-  currentUrl: "",
-  streamBuffer: "",
-  generation: 0,
-  audioContext: null,
-  currentSource: null,
-  sources: new Set(),
-  nextAudioTime: 0,
-  errorNotified: false,
 };
 
 const STORY_SCROLL_BOTTOM_THRESHOLD = 72;
@@ -1611,7 +1595,6 @@ async function ensurePersonalKnowledgeForAgent() {
 }
 
 async function submitAgentPrompt(form, formData) {
-  cancelStorySpeech();
   if (!platform.user || platform.agentBusy) return;
   const prompt = clean(formData.get("prompt"));
   const errorNode = form.querySelector("#agent-error");
@@ -1672,7 +1655,6 @@ async function submitAgentPrompt(form, formData) {
       target.content = complete || "这次没有收到可显示的文本，请稍后再试。";
     }
   } catch (error) {
-    cancelStorySpeech();
     const target = platform.agentMessages.at(-1);
     if (target?.role === "assistant") {
       target.content =
@@ -1950,7 +1932,7 @@ function renderStoryIntake() {
           ${!canUseAgent ? '<small class="story-access-note">需要登录并同意外部 AI 处理说明后开始。</small>' : ""}
         </div>
       `}
-      <small class="story-privacy">录音期间只保存在当前设备；结束后 WAV 会发送给语音识别服务，并在进入对话前由 DeepSeek 整理句读。本地 FunASR 优先，失败时回退 MiMo；你点击“发送”后才进入对话。</small>
+      <small class="story-privacy">录音期间只保存在当前设备；结束后 WAV 会发送给语音识别服务，可自行选择 DeepSeek 整理句读。仅使用本地 FunASR，失败直接提示重试，不向云端发送录音；你点击“发送”后才进入对话。</small>
     </section>
   `;
 }
@@ -1987,7 +1969,6 @@ function formatRecordingDuration(milliseconds = 0) {
 }
 
 function startStoryIntake({ beginVoice = false } = {}) {
-  cancelStorySpeech();
   if (!platform.user) {
     showToast("请先登录，再开始故事记录", 3600);
     openPlatformAuthDialog();
@@ -2026,7 +2007,6 @@ async function endStoryIntake() {
     showToast("请先结束录音并确认转写文字，再归档故事", 3600);
     return;
   }
-  cancelStorySpeech();
   window.clearInterval(storyIntake.timer);
   storyIntake.active = false;
   const pendingInput = clean(storyIntake.draftInput).slice(0, 2400);
@@ -2145,7 +2125,6 @@ async function summarizeStoryForArchive(storyText) {
 
 async function submitStoryAnswer(answer) {
   if (!storyIntake.active || storyIntake.busy) return;
-  cancelStorySpeech();
   const normalized = clean(answer).slice(0, 2400);
   storyIntake.draftInput = "";
   if (!normalized) {
@@ -2195,7 +2174,6 @@ async function submitStoryAnswer(answer) {
       target.content = normalizeAssistantText(complete) || "你还想补充哪一个具体片段？";
     }
   } catch (error) {
-    cancelStorySpeech();
     storyIntake.messages.push({
       role: "assistant",
       content: error instanceof PlatformError ? error.message : "这次没有接上回应，你可以继续写下去。",
@@ -2249,7 +2227,7 @@ async function startStoryAudioRecording() {
   storyIntake.waveformLevels = [];
   storyIntake.voiceStatus = "实时识别中 · 结束后校正最终文字";
   renderStoryViewPreservingScroll();
-  startStoryLiveAsr();
+  // Transcribe only after Stop; no repeated offline inference while recording.
   return true;
 }
 
@@ -2327,7 +2305,7 @@ async function finalizeStoryRecording(blob, {
     if (!blob?.size) throw new Error("audio_empty");
     slowStatusTimer = window.setTimeout(() => {
       if (storyIntake.finalizingVoice && storyIntake.finalizeGeneration === generation) {
-        updateStoryVoiceStatus("仍在校正 · 已保留当前文字，最迟数秒后自动采用");
+        updateStoryVoiceStatus("本地识别中 · 当前文字已保留，可取消后重试短录音");
       }
     }, 5_000);
     const recognized = await streamTranscribeRecordedAudio(blob, {
@@ -2344,19 +2322,12 @@ async function finalizeStoryRecording(blob, {
     });
     window.clearTimeout(slowStatusTimer);
     slowStatusTimer = null;
-    const organized = await organizeRecognizedVoice(recognized, {
-      maxLength: 2_400,
-      onStatus: updateStoryVoiceStatus,
-      signal,
-    });
     if (storyIntake.finalizeGeneration !== generation) return;
-    transcript = appendVoiceTranscript(preview, organized.text).slice(0, 2400);
+    transcript = appendVoiceTranscript(preview, recognized).slice(0, 2400);
     if (transcript && storyIntake.active) {
       storyIntake.draftInput = transcript;
       storyIntake.recordingDurationMs = durationMs;
-      storyIntake.voiceStatus = organized.organized
-        ? "句读整理完成 · 请确认文字后点击发送"
-        : "已保留识别文字 · 请确认后点击发送";
+      storyIntake.voiceStatus = "识别完成 · 可直接发送，或选择整理标点";
       renderStoryViewPreservingScroll();
       requestAnimationFrame(() => {
         const input = document.querySelector("#story-answer");
@@ -2368,16 +2339,8 @@ async function finalizeStoryRecording(blob, {
     if (storyIntake.finalizeGeneration !== generation) return;
     const fallback = livePreview || preview;
     if (fallback && storyIntake.active) {
-      const organized = await organizeRecognizedVoice(fallback, {
-        maxLength: 2_400,
-        onStatus: updateStoryVoiceStatus,
-        signal: signal?.aborted ? undefined : signal,
-      });
-      if (storyIntake.finalizeGeneration !== generation) return;
-      storyIntake.draftInput = appendVoiceTranscript(preview, organized.text).slice(0, 2400);
-      storyIntake.voiceStatus = organized.organized
-        ? "已采用实时文字并整理句读 · 请确认后发送"
-        : "已采用实时识别文字 · 请检查可能的错字";
+      storyIntake.draftInput = fallback.slice(0, 2400);
+      storyIntake.voiceStatus = "已保留原文字 · 可编辑后发送";
     } else if (storyIntake.active) {
       showToast(error instanceof PlatformError ? error.message : "语音识别未完成，请改用文字输入", 4200);
     }
@@ -2393,6 +2356,11 @@ async function finalizeStoryRecording(blob, {
     storyIntake.motionSuppressed = false;
     if (!storyIntake.draftInput) storyIntake.voiceStatus = "";
     renderStoryViewPreservingScroll();
+    offerVoicePunctuation("#story-answer", {
+      isCurrent: () => storyIntake.active && storyIntake.finalizeGeneration === generation && !storyIntake.recording && !storyIntake.finalizingVoice,
+      apply: text => { storyIntake.draftInput = text; },
+      maxLength: 2400,
+    });
   }
 }
 
@@ -2414,6 +2382,36 @@ function useCurrentStoryTranscript() {
     input?.focus();
     input?.setSelectionRange(input.value.length, input.value.length);
   });
+}
+
+function offerVoicePunctuation(selector, {isCurrent, apply, maxLength}) {
+  const input = document.querySelector(selector);
+  if (!input || !input.value.trim()) return;
+  document.querySelector(`[data-punctuation-for="${selector}"]`)?.remove();
+  const button = document.createElement("button");
+  button.type = "button";
+  button.dataset.punctuationFor = selector;
+  button.textContent = detectLocale() === "en" ? "Tidy punctuation (optional)" : "整理标点（可选）";
+  input.after(button);
+  button.onclick = async () => {
+    if (button.disabled || !input.isConnected || !isCurrent()) return;
+    const base = input.value;
+    const controller = new AbortController();
+    let edited = false;
+    const edit = () => { edited = true; controller.abort(); };
+    input.addEventListener("input", edit);
+    button.disabled = true;
+    try {
+      const result = await organizeRecognizedVoice(base, {maxLength, signal:controller.signal});
+      if (!edited && input.isConnected && isCurrent() && input.value === base) {
+        input.value = result.text;
+        apply(result.text);
+      }
+    } finally {
+      input.removeEventListener("input", edit);
+      button.disabled = false;
+    }
+  };
 }
 
 async function organizeRecognizedVoice(text, { maxLength = 2_400, onStatus, signal } = {}) {
@@ -2732,7 +2730,7 @@ function voiceRecognitionLanguage() {
   return detectLocale() === "en" ? "en" : "zh";
 }
 
-async function transcribeRecordedAudio(blob, { timeoutMs = 25_000, signal, priority = "final" } = {}) {
+async function transcribeRecordedAudio(blob, { timeoutMs = 35_000, signal, priority = "final" } = {}) {
   const controller = new AbortController();
   const abortFromCaller = () => controller.abort();
   if (signal?.aborted) controller.abort();
@@ -2761,7 +2759,7 @@ async function transcribeRecordedAudio(blob, { timeoutMs = 25_000, signal, prior
 }
 
 async function streamTranscribeRecordedAudio(blob, {
-  timeoutMs = 12_000,
+  timeoutMs = 35_000,
   signal,
   onText,
   priority = "final",
@@ -3090,7 +3088,7 @@ async function startContactAudioRecording() {
     () => stopContactVoice({ autoOrganize: true }),
     30_000
   );
-  startContactLiveAsr();
+  // Transcribe only after Stop; no repeated offline inference while recording.
   updateContactVoiceButton();
   return true;
 }
@@ -3255,7 +3253,7 @@ async function startAgentAudioRecording() {
   agentVoice.recording = true;
   agentVoice.voiceStatus = "实时识别中 · 结束后校正并整理句读";
   updateAgentVoiceButton();
-  startAgentLiveAsr();
+  // Transcribe only after Stop; no repeated offline inference while recording.
   return true;
 }
 
@@ -3341,18 +3339,12 @@ async function finalizeAgentRecording(blob, {
       if (!livePreview) throw error;
       recognized = livePreview;
     }
-    const organized = await organizeRecognizedVoice(recognized, {
-      maxLength: 4_000,
-      onStatus: updateAgentVoiceStatus,
-    });
     if (agentVoice.generation !== generation) return;
-    transcript = appendVoiceTranscript(preview, organized.text).slice(0, 4_000);
+    transcript = appendVoiceTranscript(preview, recognized).slice(0, 4_000);
     if (transcript) {
       updateAgentVoiceDraft(transcript);
       updateAgentVoiceStatus(
-        organized.organized
-          ? "句读整理完成 · 确认文字后再发送"
-          : "已保留识别文字 · 确认后再发送"
+        "识别完成 · 可直接发送，或选择整理标点"
       );
       requestAnimationFrame(() => {
         const input = document.querySelector("#agent-prompt");
@@ -3374,6 +3366,11 @@ async function finalizeAgentRecording(blob, {
       agentVoice.recordingAsrText = "";
       agentVoice.finalizingVoice = false;
       updateAgentVoiceButton();
+      offerVoicePunctuation("#agent-prompt", {
+        isCurrent: () => agentVoice.generation === generation && !agentVoice.recording && !agentVoice.finalizingVoice,
+        apply: text => { agentVoice.voiceDraft = text; },
+        maxLength: 4000,
+      });
     }
   }
 }
@@ -4627,273 +4624,6 @@ function reanalyzeState(targetState) {
     };
   });
   return targetState;
-}
-
-function canSpeakStoryText() {
-  return Boolean(
-    platform.user
-    && platform.externalAiConsent?.current
-    && platform.capabilities?.agent
-  );
-}
-
-function beginStreamingStorySpeech() {
-  cancelStorySpeech();
-  ttsState.streamBuffer = "";
-  ttsState.errorNotified = false;
-}
-
-function queueStreamingStorySpeech(rawChunk) {
-  if (!canSpeakStoryText() || typeof rawChunk !== "string" || !rawChunk) return;
-  ttsState.streamBuffer += rawChunk;
-  const result = extractCompletedSpeechChunks(ttsState.streamBuffer);
-  ttsState.streamBuffer = result.remainder;
-  enqueueStorySpeechChunks(result.chunks);
-}
-
-function flushStreamingStorySpeech() {
-  if (!canSpeakStoryText()) return;
-  const result = extractCompletedSpeechChunks(ttsState.streamBuffer, { flush: true });
-  ttsState.streamBuffer = "";
-  enqueueStorySpeechChunks(result.chunks);
-}
-
-function speakCompleteStoryText(text) {
-  beginStreamingStorySpeech();
-  ttsState.streamBuffer = text || "";
-  flushStreamingStorySpeech();
-}
-
-function enqueueStorySpeechChunks(chunks) {
-  for (const chunk of chunks) {
-    const text = normalizeAssistantText(chunk).slice(0, 220);
-    if (text) ttsState.queue.push(text);
-  }
-  if (!ttsState.playing && ttsState.queue.length) {
-    void playStorySpeechQueue(ttsState.generation);
-  }
-}
-
-async function playStorySpeechQueue(generation) {
-  if (ttsState.playing || generation !== ttsState.generation) return;
-  ttsState.playing = true;
-  document.body.classList.add("is-agent-speaking");
-  try {
-    while (generation === ttsState.generation && ttsState.queue.length) {
-      const text = ttsState.queue.shift();
-      const controller = new AbortController();
-      ttsState.controller = controller;
-      let url = "";
-      try {
-        const blob = await platformClient.synthesizeVoice(text, {
-          voice: "茉莉",
-          signal: controller.signal,
-        });
-        if (generation !== ttsState.generation) break;
-        if (!(await playStoryAudioBlob(blob, controller.signal))) {
-          url = URL.createObjectURL(blob);
-          const audio = new Audio(url);
-          ttsState.currentAudio = audio;
-          ttsState.currentUrl = url;
-          await playAudioToEnd(audio, controller.signal);
-        }
-      } catch (error) {
-        if (controller.signal.aborted || generation !== ttsState.generation) break;
-        console.info("story_tts_unavailable", { code: error?.code || error?.name || "request_failed" });
-        if (!ttsState.errorNotified) {
-          ttsState.errorNotified = true;
-          showToast(
-            error instanceof PlatformError
-              ? `AI 语音未播放：${error.message}`
-              : "AI 语音被浏览器阻止，请点击一次输入区后继续",
-            4600
-          );
-        }
-        ttsState.queue = [];
-        break;
-      } finally {
-        if (url) URL.revokeObjectURL(url);
-        if (ttsState.currentUrl === url) {
-          ttsState.currentAudio = null;
-          ttsState.currentUrl = "";
-        }
-        if (ttsState.controller === controller) ttsState.controller = null;
-      }
-    }
-  } finally {
-    if (generation === ttsState.generation) {
-      ttsState.playing = false;
-      document.body.classList.remove("is-agent-speaking");
-    }
-  }
-}
-
-async function unlockStoryAudio() {
-  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContextClass) return false;
-  try {
-    if (!ttsState.audioContext || ttsState.audioContext.state === "closed") {
-      ttsState.audioContext = new AudioContextClass();
-    }
-    if (ttsState.audioContext.state !== "running") {
-      await ttsState.audioContext.resume();
-    }
-    return ttsState.audioContext.state === "running";
-  } catch {
-    return false;
-  }
-}
-
-function decodePcm16Base64(base64) {
-  const binary = atob(String(base64 || "").replaceAll(/\s/g, ""));
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  return bytes;
-}
-
-function schedulePcm16Audio(base64) {
-  const context = ttsState.audioContext;
-  if (!context || context.state !== "running") return false;
-  const bytes = decodePcm16Base64(base64);
-  const frameCount = Math.floor(bytes.byteLength / 2);
-  if (!frameCount) return false;
-  const buffer = context.createBuffer(1, frameCount, 24_000);
-  const channel = buffer.getChannelData(0);
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  for (let index = 0; index < frameCount; index += 1) {
-    channel[index] = view.getInt16(index * 2, true) / 32768;
-  }
-  const source = context.createBufferSource();
-  source.buffer = buffer;
-  source.connect(context.destination);
-  const startAt = Math.max(context.currentTime + 0.03, ttsState.nextAudioTime || 0);
-  ttsState.nextAudioTime = startAt + buffer.duration;
-  source.onended = () => {
-    ttsState.sources.delete(source);
-    if (ttsState.currentSource === source) ttsState.currentSource = null;
-  };
-  ttsState.sources.add(source);
-  ttsState.currentSource = source;
-  source.start(startAt);
-  return true;
-}
-
-async function playStreamingStoryText(text, signal) {
-  const unlocked = await unlockStoryAudio();
-  if (!unlocked || !ttsState.audioContext) return 0;
-  let scheduledChunks = 0;
-  try {
-    await platformClient.streamVoice(text, {
-      voice: "茉莉",
-      signal,
-      onAudio(audio) {
-        if (schedulePcm16Audio(audio)) scheduledChunks += 1;
-      },
-    });
-  } catch (error) {
-    if (signal.aborted) throw error;
-    if (scheduledChunks) return scheduledChunks;
-    throw error;
-  }
-  if (!scheduledChunks) return 0;
-  const waitUntil = Math.max(ttsState.nextAudioTime, ttsState.audioContext.currentTime);
-  await new Promise((resolve) => {
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener("abort", finish);
-      resolve();
-    };
-    const tick = () => {
-      if (signal.aborted) return finish();
-      if (ttsState.audioContext.currentTime >= waitUntil - 0.01) return finish();
-      window.setTimeout(tick, 30);
-    };
-    signal.addEventListener("abort", finish, { once: true });
-    tick();
-  });
-  return scheduledChunks;
-}
-
-async function playStoryAudioBlob(blob, signal) {
-  const unlocked = await unlockStoryAudio();
-  const context = ttsState.audioContext;
-  if (!unlocked || !context) return false;
-  const bytes = await blob.arrayBuffer();
-  if (signal.aborted) return true;
-  let buffer;
-  try {
-    buffer = await context.decodeAudioData(bytes.slice(0));
-  } catch {
-    return false;
-  }
-  if (signal.aborted) return true;
-  await new Promise((resolve) => {
-    let settled = false;
-    const source = context.createBufferSource();
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener("abort", abort);
-      if (ttsState.currentSource === source) ttsState.currentSource = null;
-      resolve();
-    };
-    const abort = () => {
-      try { source.stop(); } catch { /* source may not have started */ }
-      finish();
-    };
-    source.buffer = buffer;
-    source.connect(context.destination);
-    source.onended = finish;
-    signal.addEventListener("abort", abort, { once: true });
-    ttsState.currentSource = source;
-    source.start();
-  });
-  return true;
-}
-
-function playAudioToEnd(audio, signal) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (error = null) => {
-      if (settled) return;
-      settled = true;
-      audio.onended = null;
-      audio.onerror = null;
-      signal.removeEventListener("abort", abort);
-      if (error) reject(error);
-      else resolve();
-    };
-    const abort = () => {
-      audio.pause();
-      finish();
-    };
-    audio.onended = finish;
-    audio.onerror = () => finish(new Error("audio_decode_failed"));
-    signal.addEventListener("abort", abort, { once: true });
-    audio.play().catch((error) => finish(error));
-  });
-}
-
-function cancelStorySpeech() {
-  ttsState.generation += 1;
-  ttsState.controller?.abort();
-  for (const source of ttsState.sources) {
-    try { source.stop(); } catch { /* source may already be stopped */ }
-  }
-  ttsState.sources.clear();
-  ttsState.currentAudio?.pause();
-  if (ttsState.currentUrl) URL.revokeObjectURL(ttsState.currentUrl);
-  ttsState.queue = [];
-  ttsState.playing = false;
-  ttsState.controller = null;
-  ttsState.currentAudio = null;
-  ttsState.currentSource = null;
-  ttsState.nextAudioTime = 0;
-  ttsState.currentUrl = "";
-  ttsState.streamBuffer = "";
-  document.body.classList.remove("is-agent-speaking");
 }
 
 async function copyText(text) {

@@ -23,8 +23,7 @@
       <h2>哪些服务会处理内容？</h2>
       <p>
         DeepSeek 接收本次输入、必要的人物设定、近期故事和相关记忆。WAV
-        录音由部署的本地 FunASR 优先识别，失败时可交给已配置的 MiMo
-        识别；句读整理使用
+        录音仅由部署的本地 FunASR 识别，失败直接返回错误，不向云端发送录音；句读整理使用
         DeepSeek。仅点击生成插画时，外貌或世界描述才会发送给单独配置的图像服务（当前适配
         OpenAI
         Images）。这些服务适用各自的数据处理条款。网站不声称能控制上游服务的保留周期。
@@ -60,8 +59,7 @@
         </p>
         <p>
           DeepSeek receives your input and the character, recent story and
-          relevant memories needed to respond. Local FunASR handles audio first
-          where configured; MiMo may be used as a fallback. DeepSeek cleans up
+          relevant memories needed to respond. Only local FunASR handles audio; failures return an error with no cloud fallback. DeepSeek cleans up
           punctuation. Image descriptions go to the configured image provider
           (currently the OpenAI Images adapter) only when you request artwork.
           Each provider has its own data terms and retention practices.

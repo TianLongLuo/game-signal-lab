@@ -15,7 +15,7 @@
 
 ## 必须知道的边界
 
-1. **图片需要独立服务凭据**。已有 DeepSeek/MiMo Key 不具备绘图能力。当前适配器固定调用官方 OpenAI `gpt-image-1` Images API，服务可用性及账户权限取决于部署环境。未配置时保持文字故事可用，并明确标注装饰背景不是生成插画。
+1. **图片需要独立服务凭据**。已有 DeepSeek Key 不具备绘图能力。当前适配器固定调用官方 OpenAI `gpt-image-1` Images API，服务可用性及账户权限取决于部署环境。未配置时保持文字故事可用，并明确标注装饰背景不是生成插画。
 2. 这版先交付中性人物和场景。四表情参考图一致性生成、场景重访、保留旧版本的重开故事、人物草稿跨设备暂存、丰富章节是后续工作。当前「删除故事」是明确的永久删除操作，不是归档重开。
 3. 场景状态机负责确定分支；自然语言剧情仍由模型即兴生成。没有声称无限预制故事、角色心理诊断或真实人类身份。
 4. 当前通过用户选择与手动保留生成可靠记忆，**不自动把每条模型叙述认作事实**。删除记忆同时排除其来源回合对的模型上下文；原对话仍留在用户可见历史，删除整个故事可一并删除。
@@ -50,7 +50,7 @@ sudo systemctl status game-signal-lab --no-pager
 curl -fsS https://YOUR_DOMAIN/api/health
 ```
 
-首次重启自动执行 **SQLite migration 6**，只增加 companion 表，不改变旧档案或旧会话表。健康接口应返回 `capabilities.companion: true`。首页加载 `/companion/app.js`；仍看到旧界面时检查 Nginx 是否代理给新的 Node 进程，而不是继续托管旧 `dist/index.html`。新版入口也可直接访问 `/companion/`。
+首次重启自动执行 **SQLite migration 7**，migration 6 增加 companion 表，migration 7 清除旧云语音配置，不改变旧档案或旧会话表。健康接口应返回 `capabilities.companion: true`。首页加载 `/companion/app.js`；仍看到旧界面时检查 Nginx 是否代理给新的 Node 进程，而不是继续托管旧 `dist/index.html`。新版入口也可直接访问 `/companion/`。
 
 Nginx 保持同源代理、`proxy_buffering off`、`proxy_read_timeout 150s`；语音 POST 建议 `client_max_body_size 12m`。TLS 是浏览器麦克风权限的前提。
 
@@ -74,7 +74,7 @@ COMPANION_IMAGE_LIMIT=8
 - 删除故事同步删除 SQLite 回合、记忆、任务和私有图片；Qdrant 清理进入持久队列，服务不可用时每30秒重试。请求不带正文日志。备份中的旧内容不会自动同步删除，应按运营方公布的备份保留周期处理。
 - SQLite 文件、备份、Qdrant 和 ASR 都不能暴露为公网静态目录。Qdrant payload 含记忆正文，须配置内部访问保护和磁盘/备份保护。
 - 2核4G主机只做代理、SQLite和既有ASR；不运行图像模型。现有FunASR资源限制继续生效。
-- 回滚界面用 `COMPANION_ENABLED=false` 并重启，保留新数据。旧版本程序会拒绝新的 schema 6；**不要直接将旧程序指向已迁移数据库**。真正回滚数据库需要停服并恢复迁移前备份，会丢失备份后的写入，应另行确认。
+- 回滚界面用 `COMPANION_ENABLED=false` 并重启，保留新数据。旧版本程序会拒绝新的 schema 7；**不要直接将旧程序指向已迁移数据库**。真正回滚数据库需要停服并恢复迁移前备份，会丢失备份后的写入，应另行确认。
 
 ## 验证与尚待部署实测
 

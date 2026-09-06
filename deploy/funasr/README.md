@@ -2,7 +2,7 @@
 
 该目录将官方 [modelscope/FunASR](https://github.com/modelscope/FunASR) 的
 OpenAI-compatible HTTP API 作为独立容器运行。服务只绑定 Linux 回环地址，
-浏览器不能直接访问；GAME Node 后端负责鉴权、大小限制、审计和 MiMo 回退。
+浏览器不能直接访问；GAME Node 后端负责鉴权、大小限制、审计；本地失败直接返回错误，不向云端外发录音。
 
 GAME 同时兼容两种本地 FunASR 传输方式：
 
@@ -38,7 +38,7 @@ curl -fsS http://127.0.0.1:8000/v1/models
 FUNASR_BASE_URL=http://127.0.0.1:8000
 FUNASR_MODEL=sensevoice
 FUNASR_LANGUAGE=auto
-FUNASR_TIMEOUT_MS=30000
+FUNASR_TIMEOUT_MS=20000
 FUNASR_MAX_CONCURRENCY=1
 ```
 
@@ -56,7 +56,7 @@ FUNASR_WS_URL=ws://127.0.0.1:10095
 FUNASR_WS_MODE=2pass
 FUNASR_WS_CHUNK_SIZE=5,10,5
 FUNASR_WS_CHUNK_INTERVAL=10
-FUNASR_TIMEOUT_MS=30000
+FUNASR_TIMEOUT_MS=20000
 FUNASR_MAX_CONCURRENCY=1
 ```
 
@@ -69,7 +69,7 @@ FUNASR_MAX_CONCURRENCY=1
 FunASR，也不需要把 10095 暴露到公网。
 
 重启 GAME 后端后，语音请求会优先走 FunASR；FunASR 超时、离线或返回错误时，
-后端自动使用管理员后台已经配置的 MiMo ASR。不要把 FunASR 的 8000 端口绑定
+后端直接返回可重试的错误，不使用云端回退。不要把 FunASR 的 8000 端口绑定
 到 `0.0.0.0`，也不要通过 Nginx 将它直接暴露给公网。
 
 ## 2 核 4G 注意事项
@@ -77,10 +77,20 @@ FunASR，也不需要把 10095 暴露到公网。
 - 建议给 Linux 配置至少 2G swap，并用 `free -h` 确认已生效；swap 是防止首次
   模型加载 OOM 的保险，不代表可以提高并发。
 - `FUNASR_MAX_CONCURRENCY=1` 会让 GAME 后端只向本地模型发送一路推理；本地正忙
-  时自动回退 MiMo，避免第二路请求把机器拖死。
+  时第二路请求返回繁忙，避免叠加推理把机器拖死。
 - 当前容器提供 OpenAI-compatible HTTP API。官方 ONNX WebSocket runtime 的
   `--decoder-thread-num` 不适用于这个入口，不要直接追加到 `funasr-server` 命令。
 - 如果使用已有 WebSocket runtime，先用 `ss -ltnp | grep 10095` 确认真实端口，
   再把 `FUNASR_WS_URL` 改成对应的 loopback 地址。
 - 不要放行 8000、10095 或 30035 安全组端口。浏览器只访问 GAME 的 HTTPS
   域名，Node 通过 loopback 调用 FunASR。
+
+## 本次录音修复与验证边界
+
+识别结果完整返回 JSON；没有把完成全文拆字伪装实时识别。默认 20 秒超时，浏览器允许 35 秒含上传；长录音在 2 核 4G 上可能超过限时，请先测试 5–15 秒语音。Node 断连立即取消上游连接并释放槽位，但离线 CPU 模型可能继续完成已开始的计算，不能声称硬中断推理。连续第二次录音、取消后重试、中文/英文标点、HTTP/WS 真实协议和峰值内存仍需在目标服务器实测。
+
+默认 Docker 使用官方 funasr-server。server.py 是可选离线适配器，不是 compose 启动入口；使用时应显式配置并自行安装依赖。
+
+### WebSocket 完整性要求
+
+`is_final` 只代表 VAD 分段完成，不能当作整段录音完成。Node 会累计所有离线分段，等待独立 `is_end: true` 确认后才返回全文；缺少确认会超时报错而不是静默截断。旧 WS 服务若没有该结束确认，需要适配服务端协议，或切到本目录推荐的完整 HTTP 返回接口；不要用第一段 final 冒充全文。

@@ -44,23 +44,13 @@ const KNOWLEDGE_MAX_RETRIEVED_DOCUMENTS = 8;
 const KNOWLEDGE_MAX_CONTEXT_BYTES = 24 * 1024;
 const DEEPSEEK_TIMEOUT_MS = 120_000;
 const VOICE_ORGANIZE_TIMEOUT_MS = 30_000;
-const MIMO_TTS_BASE_URL = String(process.env.MIMO_BASE_URL ?? "https://token-plan-cn.xiaomimimo.com/v1/").trim() || "https://token-plan-cn.xiaomimimo.com/v1/";
-const MIMO_TTS_BASE_URL_NORMALIZED = MIMO_TTS_BASE_URL.endsWith("/") ? MIMO_TTS_BASE_URL : `${MIMO_TTS_BASE_URL}/`;
-const MIMO_TTS_DEFAULT_MODEL = "mimo-v2.5-tts";
-const MIMO_TTS_MODELS = new Set([MIMO_TTS_DEFAULT_MODEL, "mimo-v2-tts"]);
-const MIMO_TTS_VOICES = new Set(["冰糖", "茉莉", "苏打", "白桦", "Mia", "Chloe", "Milo", "Dean"]);
-const MIMO_TTS_TIMEOUT_MS = 45_000;
-const MIMO_ASR_MODEL = "mimo-v2.5-asr";
-const MIMO_ASR_LANGUAGE = "auto";
-const MIMO_ASR_TIMEOUT_MS = 60_000;
-// SenseVoiceSmall is the balanced bilingual default for this 2-core host.
 // Use FUNASR_MODEL=paraformer with FUNASR_LANGUAGE=zh for Chinese-only final
 // accuracy, or FUNASR_MODEL=paraformer-en with FUNASR_LANGUAGE=en for English.
 const FUNASR_DEFAULT_MODEL = "sensevoice";
 const FUNASR_MODELS = new Set(["sensevoice", "paraformer", "paraformer-en", "fun-asr-nano"]);
 const FUNASR_DEFAULT_LANGUAGE = "auto";
 const FUNASR_LANGUAGES = new Set(["auto", "zh", "en", "yue", "ja", "ko"]);
-const FUNASR_DEFAULT_TIMEOUT_MS = 30_000;
+const FUNASR_DEFAULT_TIMEOUT_MS = 20_000;
 const FUNASR_DEFAULT_WS_MODE = "2pass";
 const FUNASR_WS_MODES = new Set(["online", "offline", "2pass"]);
 const FUNASR_DEFAULT_WS_CHUNK_SIZE = Object.freeze([5, 10, 5]);
@@ -96,6 +86,10 @@ const MAX_SSE_FRAME_BYTES = 128 * 1024;
 const REQUEST_ID = Symbol("gameRequestId");
 const STATIC_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const STATIC_ASSETS = new Map([
+  ["/src/companion-stage.js", ["src/companion-stage.js", "text/javascript; charset=utf-8"]],
+  ["/src/companion-scenes.js", ["src/companion-scenes.js", "text/javascript; charset=utf-8"]],
+  ["/companion/guide/", ["companion/guide.html", "text/html; charset=utf-8"]],
+  ...["cafe", "rain", "home", "coast", "garden"].map(name => [`/companion/scenes/${name}.jpg`, [`companion/scenes/${name}.jpg`, "image/jpeg"]]),
   ["/src/companion-presets.js", ["src/companion-presets.js", "text/javascript; charset=utf-8"]],
   ...PORTRAIT_PRESETS.flatMap(p => [p.url, p.thumbnail].map(url => [url, [url.slice(1), "image/jpeg"]])),
   ["/", ["index.html", "text/html; charset=utf-8"]],
@@ -1158,205 +1152,6 @@ export async function createBackend(options = {}) {
       return;
     }
 
-    if (method === "POST" && pathname === "/api/voice/tts") {
-      const auth = requireAuthentication(request);
-      requireCsrf(request, auth);
-      if (!hasCurrentExternalAiConsent(auth)) {
-        throw new HttpError(
-          403,
-          "external_ai_consent_required",
-          "发送前需要明确同意当前版本的外部 AI 数据处理说明。"
-        );
-      }
-      requireAgentAuthorization(db, auth, "当前账户尚未获得语音 Agent 权限。");
-      const body = await readJson(request, 24 * 1024);
-      const text = typeof body.text === "string" ? body.text.trim() : "";
-      const streamRequested = body.stream === true;
-      if (!text || text.length > 1_200) {
-        throw new HttpError(400, "invalid_tts_text", "语音文本不能为空且不能超过 1200 个字符。");
-      }
-      const voice = typeof body.voice === "string" && MIMO_TTS_VOICES.has(body.voice)
-        ? body.voice
-        : "茉莉";
-      const config = db
-        .prepare(
-          `SELECT enabled, model, ciphertext, iv, auth_tag, algorithm, key_version
-           FROM provider_configs WHERE provider = 'mimo_tts'`
-        )
-        .get();
-      if (!config?.enabled || !config.ciphertext || !config.iv || !MIMO_TTS_MODELS.has(config.model)) {
-        throw new HttpError(503, "tts_not_configured", "语音服务尚未在后台配置。");
-      }
-      let apiKey;
-      try {
-        apiKey = decryptSecret(config, masterKey);
-      } catch {
-        writeAudit(db, request, masterKey, {
-          actorUserId: auth.id,
-          action: "voice.tts",
-          targetType: "provider",
-          targetId: "mimo_tts",
-          outcome: "failure",
-          reasonCode: "config_decryption_failed",
-        });
-        throw new HttpError(503, "tts_config_unavailable", "语音服务配置无法解密。");
-      }
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(new Error("upstream_timeout")), MIMO_TTS_TIMEOUT_MS);
-      timeout.unref?.();
-      let upstream;
-      try {
-        upstream = await fetch(new URL("chat/completions", MIMO_TTS_BASE_URL_NORMALIZED), {
-          method: "POST",
-          redirect: "error",
-          signal: controller.signal,
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify({
-            model: config.model,
-            messages: [
-              { role: "user", content: "自然、清晰、温和地朗读，语速稍快；只读正文，不添加开场白。" },
-              { role: "assistant", content: text },
-            ],
-            audio: { format: streamRequested ? "pcm16" : "wav", voice },
-            ...(streamRequested ? { stream: true } : {}),
-          }),
-        });
-      } catch (error) {
-        clearTimeout(timeout);
-        writeAudit(db, request, masterKey, {
-          actorUserId: auth.id,
-          action: "voice.tts",
-          targetType: "provider",
-          targetId: "mimo_tts",
-          outcome: "failure",
-          reasonCode: controller.signal.aborted ? "timeout" : "network_error",
-        });
-        throw new HttpError(
-          error?.name === "AbortError" ? 504 : 502,
-          error?.name === "AbortError" ? "tts_timeout" : "tts_network_error",
-          error?.name === "AbortError" ? "语音生成超时，请稍后重试。" : "暂时无法连接语音服务，请稍后重试。"
-        );
-      }
-      clearTimeout(timeout);
-      if (!upstream.ok) {
-        await upstream.body?.cancel();
-        writeAudit(db, request, masterKey, {
-          actorUserId: auth.id,
-          action: "voice.tts",
-          targetType: "provider",
-          targetId: "mimo_tts",
-          outcome: "failure",
-          reasonCode: `upstream_http_${upstream.status}`,
-        });
-        const status = upstream.status;
-        throw new HttpError(
-          status === 401 || status === 403
-            ? 502
-            : status === 429
-              ? 503
-              : status >= 500
-                ? 503
-                : 502,
-          status === 401 || status === 403
-            ? "tts_auth_failed"
-            : status === 429
-              ? "tts_rate_limited"
-              : status >= 500
-                ? "tts_provider_unavailable"
-                : "tts_provider_rejected",
-          status === 401 || status === 403
-            ? "语音服务 Key 无效或无权访问当前模型，请在后台重新配置。"
-            : status === 429
-              ? "语音服务请求过于频繁，请稍后重试。"
-              : status >= 500
-                ? "语音服务暂时繁忙，请稍后重试。"
-                : "语音服务未接受本次请求，请检查后台模型配置。"
-        );
-      }
-      if (streamRequested) {
-        writeAudit(db, request, masterKey, {
-          actorUserId: auth.id,
-          action: "voice.tts",
-          targetType: "provider",
-          targetId: "mimo_tts",
-        });
-        response.statusCode = 200;
-        response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-        response.setHeader("Cache-Control", "no-store, no-transform");
-        response.setHeader("Connection", "keep-alive");
-        response.setHeader("X-Accel-Buffering", "no");
-        await streamBody(upstream.body, response);
-        return;
-      }
-      const contentType = String(upstream.headers.get("content-type") || "").toLowerCase();
-      if (contentType.startsWith("audio/")) {
-        writeAudit(db, request, masterKey, {
-          actorUserId: auth.id,
-          action: "voice.tts",
-          targetType: "provider",
-          targetId: "mimo_tts",
-        });
-        response.statusCode = 200;
-        response.setHeader("Content-Type", contentType.split(";")[0] || "audio/mpeg");
-        response.setHeader("Cache-Control", "no-store");
-        await streamBody(upstream.body, response);
-        return;
-      }
-      let payload;
-      try {
-        payload = await upstream.json();
-      } catch {
-        writeAudit(db, request, masterKey, {
-          actorUserId: auth.id,
-          action: "voice.tts",
-          targetType: "provider",
-          targetId: "mimo_tts",
-          outcome: "failure",
-          reasonCode: "protocol_error",
-        });
-        throw new HttpError(502, "tts_protocol_error", "语音服务返回了无法识别的响应。");
-      }
-      const audioData = payload?.choices?.[0]?.message?.audio?.data;
-      if (typeof audioData !== "string" || !audioData) {
-        writeAudit(db, request, masterKey, {
-          actorUserId: auth.id,
-          action: "voice.tts",
-          targetType: "provider",
-          targetId: "mimo_tts",
-          outcome: "failure",
-          reasonCode: "missing_audio",
-        });
-        throw new HttpError(502, "tts_protocol_error", "语音服务没有返回音频。");
-      }
-      const bytes = Buffer.from(audioData, "base64");
-      if (!bytes.length) {
-        writeAudit(db, request, masterKey, {
-          actorUserId: auth.id,
-          action: "voice.tts",
-          targetType: "provider",
-          targetId: "mimo_tts",
-          outcome: "failure",
-          reasonCode: "invalid_audio",
-        });
-        throw new HttpError(502, "tts_protocol_error", "语音服务返回的音频格式无法识别。");
-      }
-      writeAudit(db, request, masterKey, {
-        actorUserId: auth.id,
-        action: "voice.tts",
-        targetType: "provider",
-        targetId: "mimo_tts",
-      });
-      response.statusCode = 200;
-      response.setHeader("Content-Type", "audio/wav");
-      response.setHeader("Cache-Control", "no-store");
-      response.end(bytes);
-      return;
-    }
-
     if (method === "POST" && pathname === "/api/voice/asr") {
       const auth = requireAuthentication(request);
       requireCsrf(request, auth);
@@ -1370,8 +1165,7 @@ export async function createBackend(options = {}) {
       requireAgentAuthorization(db, auth, "当前账户尚未获得语音 Agent 权限。");
       const body = await readJson(request, MAX_ASR_BODY_BYTES);
       const audio = typeof body.audio === "string" ? body.audio.trim() : "";
-      const streamRequested = body.stream === true;
-      const asrPriority = body.priority === "live" ? "live" : "final";
+            const asrPriority = body.priority === "live" ? "live" : "final";
       const requestedLanguage = FUNASR_LANGUAGES.has(String(body.language || "").toLowerCase())
         ? String(body.language).toLowerCase()
         : "auto";
@@ -1395,7 +1189,7 @@ export async function createBackend(options = {}) {
         activeLiveAsrControllers.set(asrUserKey, asrController);
       }
       const abortForDisconnect = () => {
-        if (!response.writableEnded && !response.destroyed) {
+        if (!response.writableEnded) {
           asrController.abort(new Error("client_disconnected"));
         }
       };
@@ -1424,11 +1218,8 @@ export async function createBackend(options = {}) {
               targetType: "provider",
               targetId: "funasr",
             });
-            if (streamRequested) {
-              await streamTranscriptAsSse(response, transcript);
-            } else {
-              sendJson(response, 200, { text: transcript, provider: "funasr" });
-            }
+            asrController.signal.throwIfAborted();
+            sendJson(response, 200, { text: transcript, provider: "funasr" });
             return;
           } catch (error) {
             if (error?.code === "aborted" || asrController.signal.aborted) throw error;
@@ -1445,163 +1236,11 @@ export async function createBackend(options = {}) {
             releaseFunAsrSlot?.();
           }
         }
-        if (asrPriority === "live" && funAsrFailure) {
-          throw new HttpError(
-            503,
-            "asr_live_deferred",
-            "实时识别暂时繁忙，结束录音后会优先完成整段识别。"
-          );
-        }
-        const config = db
-          .prepare(
-            `SELECT enabled, ciphertext, iv, auth_tag, algorithm, key_version
-             FROM provider_configs WHERE provider = 'mimo_tts'`
-          )
-          .get();
-        if (!config?.enabled || !config.ciphertext || !config.iv) {
-          throw new HttpError(
-            503,
-            funAsrFailure ? "asr_provider_unavailable" : "asr_not_configured",
-            funAsrFailure
-              ? "本地 FunASR 暂时不可用，MiMo 回退也尚未配置。"
-              : "语音识别服务尚未配置。"
-          );
-        }
-        let apiKey;
-        try {
-          apiKey = decryptSecret(config, masterKey);
-        } catch {
-          writeAudit(db, request, masterKey, {
-            actorUserId: auth.id,
-            action: "voice.asr",
-            targetType: "provider",
-            targetId: "mimo_asr",
-            outcome: "failure",
-            reasonCode: "config_decryption_failed",
-          });
-          throw new HttpError(503, "asr_config_unavailable", "语音识别服务配置无法解密。");
-        }
-        const controller = asrController;
-        const timeout = setTimeout(() => controller.abort(new Error("upstream_timeout")), MIMO_ASR_TIMEOUT_MS);
-        timeout.unref?.();
-        let upstream;
-        try {
-          upstream = await fetch(new URL("chat/completions", MIMO_TTS_BASE_URL_NORMALIZED), {
-            method: "POST",
-            redirect: "error",
-            signal: controller.signal,
-            headers: {
-              Authorization: `Bearer ${apiKey}`,
-              "Content-Type": "application/json",
-              Accept: "application/json",
-            },
-            body: JSON.stringify({
-              model: MIMO_ASR_MODEL,
-              messages: [{
-                role: "user",
-                content: [{ type: "input_audio", input_audio: { data: audio } }],
-              }],
-              asr_options: {
-                language: requestedLanguage === "auto" ? MIMO_ASR_LANGUAGE : requestedLanguage,
-              },
-              ...(streamRequested ? { stream: true } : {}),
-            }),
-          });
-        } catch (error) {
-          clearTimeout(timeout);
-          writeAudit(db, request, masterKey, {
-            actorUserId: auth.id,
-            action: "voice.asr",
-            targetType: "provider",
-            targetId: "mimo_asr",
-            outcome: "failure",
-            reasonCode: controller.signal.aborted ? "timeout" : "network_error",
-          });
-          throw new HttpError(
-            error?.name === "AbortError" ? 504 : 502,
-            error?.name === "AbortError" ? "asr_timeout" : "asr_network_error",
-            error?.name === "AbortError" ? "语音识别超时，请稍后重试。" : "暂时无法连接语音识别服务，请稍后重试。"
-          );
-        }
-        clearTimeout(timeout);
-        if (!upstream.ok) {
-          await upstream.body?.cancel();
-          writeAudit(db, request, masterKey, {
-            actorUserId: auth.id,
-            action: "voice.asr",
-            targetType: "provider",
-            targetId: "mimo_asr",
-            outcome: "failure",
-            reasonCode: `upstream_http_${upstream.status}`,
-          });
-          const status = upstream.status;
-          throw new HttpError(
-            status === 401 || status === 403 ? 502 : status === 429 ? 503 : status >= 500 ? 503 : 502,
-            status === 401 || status === 403
-              ? "asr_auth_failed"
-              : status === 429
-                ? "asr_rate_limited"
-                : status >= 500
-                  ? "asr_provider_unavailable"
-                  : "asr_provider_rejected",
-            status === 401 || status === 403
-              ? "语音识别服务 Key 无效，请在后台重新配置。"
-              : status === 429
-                ? "语音识别请求过于频繁，请稍后重试。"
-                : status >= 500
-                  ? "语音识别服务暂时繁忙，请稍后重试。"
-                  : "语音识别服务未接受本次请求。"
-          );
-        }
-        if (streamRequested) {
-          writeAudit(db, request, masterKey, {
-            actorUserId: auth.id,
-            action: "voice.asr",
-            targetType: "provider",
-            targetId: "mimo_asr",
-          });
-          response.statusCode = 200;
-          response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-          response.setHeader("Cache-Control", "no-store, no-transform");
-          response.setHeader("Connection", "keep-alive");
-          response.setHeader("X-Accel-Buffering", "no");
-          await streamBody(upstream.body, response);
-          return;
-        }
-        let payload;
-        try {
-          payload = await upstream.json();
-        } catch {
-          writeAudit(db, request, masterKey, {
-            actorUserId: auth.id,
-            action: "voice.asr",
-            targetType: "provider",
-            targetId: "mimo_asr",
-            outcome: "failure",
-            reasonCode: "protocol_error",
-          });
-          throw new HttpError(502, "asr_protocol_error", "语音识别服务返回了无法识别的响应。");
-        }
-        const transcript = payload?.choices?.[0]?.message?.content;
-        if (typeof transcript !== "string") {
-          writeAudit(db, request, masterKey, {
-            actorUserId: auth.id,
-            action: "voice.asr",
-            targetType: "provider",
-            targetId: "mimo_asr",
-            outcome: "failure",
-            reasonCode: "missing_transcript",
-          });
-          throw new HttpError(502, "asr_protocol_error", "语音识别服务没有返回文本。");
-        }
-        writeAudit(db, request, masterKey, {
-          actorUserId: auth.id,
-          action: "voice.asr",
-          targetType: "provider",
-          targetId: "mimo_asr",
-        });
-        sendJson(response, 200, { text: transcript });
-        return;
+        const code = funAsrFailure ? funAsrFailureReason(funAsrFailure) : 'not_configured';
+        throw new HttpError(code === 'timeout' ? 504 : 503, `asr_${code}`,
+          code === 'timeout' ? '本地语音识别超时，请缩短录音后重试；录音未发送至云端。' :
+          code === 'funasr_concurrency_limited' ? '本地语音识别正在处理其他录音，请稍后重试。' :
+          '本地 FunASR 未配置或暂时不可用，请检查本地服务后重试；录音未发送至云端。');
       } finally {
         if (activeLiveAsrControllers.get(asrUserKey) === asrController) {
           activeLiveAsrControllers.delete(asrUserKey);
@@ -2085,84 +1724,6 @@ export async function createBackend(options = {}) {
       return;
     }
 
-    if (subpath === "/integrations/mimo-tts" && method === "GET") {
-      sendJson(response, 200, publicAdminMimoTtsConfig(db));
-      return;
-    }
-
-    if (subpath === "/integrations/mimo-tts" && method === "PATCH") {
-      requireCsrf(request, auth);
-      const body = await readJson(request);
-      if (typeof body.enabled !== "boolean") {
-        throw new HttpError(400, "INVALID_ENABLED", "enabled 必须是布尔值。");
-      }
-      const model = typeof body.model === "string" && MIMO_TTS_MODELS.has(body.model.trim())
-        ? body.model.trim()
-        : null;
-      if (!model) throw new HttpError(400, "INVALID_MODEL", "语音模型名称格式不正确。");
-      const existing = db
-        .prepare(
-          `SELECT ciphertext, iv, auth_tag, algorithm, key_version, created_at
-           FROM provider_configs WHERE provider = 'mimo_tts'`
-        )
-        .get();
-      let secret = existing
-        ? {
-            ciphertext: existing.ciphertext,
-            iv: existing.iv,
-            authTag: existing.auth_tag,
-            algorithm: existing.algorithm,
-            keyVersion: existing.key_version,
-          }
-        : { ciphertext: null, iv: null, authTag: null, algorithm: "AES-256-GCM", keyVersion: 1 };
-      if (typeof body.apiKey === "string" && body.apiKey.trim()) {
-        if (body.apiKey.length > 1024) {
-          throw new HttpError(400, "INVALID_API_KEY", "API Key 长度不正确。");
-        }
-        secret = encryptSecret(body.apiKey.trim(), masterKey);
-      }
-      if (body.enabled && !secret.ciphertext) {
-        throw new HttpError(422, "API_KEY_REQUIRED", "启用前需要配置 MIMO API Key。");
-      }
-      const now = new Date().toISOString();
-      runTransaction(db, () => {
-        db.prepare(
-          `INSERT INTO provider_configs
-            (provider, ciphertext, iv, auth_tag, algorithm, key_version, model, enabled,
-             created_at, updated_at, updated_by)
-           VALUES ('mimo_tts', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(provider) DO UPDATE SET
-             ciphertext = excluded.ciphertext,
-             iv = excluded.iv,
-             auth_tag = excluded.auth_tag,
-             algorithm = excluded.algorithm,
-             key_version = excluded.key_version,
-             model = excluded.model,
-             enabled = excluded.enabled,
-             updated_at = excluded.updated_at,
-             updated_by = excluded.updated_by`
-        ).run(
-          secret.ciphertext,
-          secret.iv,
-          secret.authTag,
-          secret.algorithm ?? "AES-256-GCM",
-          secret.keyVersion ?? 1,
-          model,
-          body.enabled ? 1 : 0,
-          existing?.created_at ?? now,
-          now,
-          auth.id
-        );
-        writeAudit(db, request, masterKey, {
-          actorUserId: auth.id,
-          action: "mimo_tts.configuration.update",
-          targetType: "integration",
-          targetId: "mimo_tts",
-        });
-      });
-      sendJson(response, 200, publicAdminMimoTtsConfig(db));
-      return;
-    }
 
     throw new HttpError(404, "ADMIN_NOT_FOUND", "管理接口不存在。");
   }
@@ -2962,22 +2523,6 @@ function publicAdminDeepSeekConfig(db) {
     enabled: row?.enabled === 1,
     baseUrl: DEEPSEEK_PUBLIC_BASE_URL,
     model: row?.model ?? DEFAULT_DEEPSEEK_MODEL,
-    apiKeyConfigured: Boolean(row?.ciphertext),
-    updatedAt: row?.updated_at ?? null,
-  };
-}
-
-function publicAdminMimoTtsConfig(db) {
-  const row = db
-    .prepare(
-      `SELECT model, ciphertext, enabled, updated_at
-       FROM provider_configs WHERE provider = 'mimo_tts'`
-    )
-    .get();
-  return {
-    enabled: row?.enabled === 1,
-    baseUrl: MIMO_TTS_BASE_URL,
-    model: row?.model ?? MIMO_TTS_DEFAULT_MODEL,
     apiKeyConfigured: Boolean(row?.ciphertext),
     updatedAt: row?.updated_at ?? null,
   };
@@ -4167,6 +3712,8 @@ async function transcribeWithFunAsrHttp({
       body: form,
     });
   } catch (error) {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", abortFromCaller);
     const callerAborted = Boolean(signal?.aborted);
     const wrapped = new Error(
       callerAborted
@@ -4193,7 +3740,7 @@ async function transcribeWithFunAsrHttp({
       payload = await upstream.json();
     } catch (cause) {
       const error = new Error("FunASR returned invalid JSON");
-      error.code = "protocol_error";
+      error.code = signal?.aborted ? "aborted" : controller.signal.aborted ? "timeout" : "protocol_error";
       error.cause = cause;
       throw error;
     }
@@ -4328,7 +3875,8 @@ async function transcribeWithFunAsrWebSocket({
             onlineText = mergeFunAsrOnlineText(onlineText, text);
           }
         }
-        if (payload?.is_end) {
+        // is_final finalizes a VAD segment, not necessarily the recording.
+        if (payload?.is_end === true) {
           if (payload.is_final === false) {
             fail(payload.error || "FunASR WebSocket did not finalize the recording", "provider_error");
           } else {
@@ -4473,39 +4021,6 @@ function funAsrFailureReason(error) {
     return code;
   }
   return "provider_error";
-}
-
-async function streamTranscriptAsSse(response, transcript) {
-  response.statusCode = 200;
-  response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-  response.setHeader("Cache-Control", "no-store, no-transform");
-  response.setHeader("Connection", "keep-alive");
-  response.setHeader("X-Accel-Buffering", "no");
-  response.flushHeaders?.();
-  for (const content of splitTranscriptForStreaming(transcript)) {
-    if (response.destroyed || response.writableEnded) return;
-    response.write(`data: ${JSON.stringify({
-      choices: [{ index: 0, delta: { content }, finish_reason: null }],
-    })}\n\n`);
-    await new Promise((resolve) => setImmediate(resolve));
-  }
-  if (!response.destroyed && !response.writableEnded) {
-    response.end("data: [DONE]\n\n");
-  }
-}
-
-export function splitTranscriptForStreaming(value, maximumCharacters = 18) {
-  const chunks = [];
-  let current = "";
-  for (const character of String(value ?? "")) {
-    current += character;
-    if (current.length >= maximumCharacters || /[，。！？；：,.!?;:\n]/u.test(character)) {
-      chunks.push(current);
-      current = "";
-    }
-  }
-  if (current) chunks.push(current);
-  return chunks;
 }
 
 function normalizeDeepSeekBaseUrl(value, allowInsecure) {

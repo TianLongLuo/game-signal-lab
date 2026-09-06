@@ -225,3 +225,7 @@ Agent 不得：
 - CSP、Cookie、Origin/CSRF、加密或密钥管理。
 
 任何新增网络数据流都必须说明：数据来源、目的、最小字段、处理方、保留、删除、同意、撤回、权限和失败策略。
+
+
+## Companion visual-novel dialogue and voice update (2026-09-06)
+Server-owned seeded events may portray fictional adult disagreement, sadness, repair or endings. They do not depend on payment, absence or login frequency and never erase history automatically. The model writes companion speech only; engine narration and player speech have distinct labels. Retry/cancel does not reroll or commit plot state. No real-person data is imported into companion context. Voice now uses only the configured FunASR endpoint; optional punctuation never blocks manual Send or overwrites newer edits. See docs/VISUAL_NOVEL_RELEASE.md for protocol and regression scope.

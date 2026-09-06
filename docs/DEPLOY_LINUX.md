@@ -47,13 +47,13 @@ VECTOR_DIMENSIONS=384
 EMBEDDING_API_URL=http://127.0.0.1:11434/v1/embeddings
 EMBEDDING_API_KEY=<optional-embedding-api-key>
 EMBEDDING_MODEL=<embedding-model-name>
-# Optional local-first ASR. Keep the endpoint on loopback; MiMo remains the fallback.
+# Optional local-only ASR. Keep the endpoint on loopback; no cloud fallback.
 # The default below is the OpenAI-compatible funasr-server container.
 FUNASR_TRANSPORT=http
 FUNASR_BASE_URL=http://127.0.0.1:8000
 FUNASR_MODEL=sensevoice
 FUNASR_LANGUAGE=auto
-FUNASR_TIMEOUT_MS=30000
+FUNASR_TIMEOUT_MS=20000
 FUNASR_MAX_CONCURRENCY=1
 # If the host already runs paraformer-online instead, comment out the HTTP
 # block above and use this WebSocket block (usually port 10095). This path is
@@ -65,7 +65,7 @@ FUNASR_MAX_CONCURRENCY=1
 # FUNASR_WS_CHUNK_INTERVAL=10
 ```
 
-`CONFIG_MASTER_KEY` 用于加密 DeepSeek/MiMo Key，必须长期保管并单独备份；
+`CONFIG_MASTER_KEY` 用于加密 DeepSeek Key，必须长期保管并单独备份；
 `ADMIN_BOOTSTRAP_PASSWORD` 只用于第一次创建管理员，首次成功登录后应从
 运行时环境移除并改用管理员密码。不要把任何真实 Key 或密码写入 GitHub、
 systemd 文件、构建产物、日志或 issue。
@@ -73,7 +73,7 @@ systemd 文件、构建产物、日志或 issue。
 ## 3. 启动本地 FunASR（推荐）
 
 仓库包含固定版本的 FunASR 容器定义。默认的 `SenseVoiceSmall + CPU` 支持中文和
-英语自动识别，比把完整语音片段发往外部 API 少一段公网往返，并保留 MiMo 作为故障回退：
+英语自动识别，比把完整语音片段发往外部 API 少一段公网往返，本地失败直接返回错误，不外发录音：
 
 ```bash
 cd /opt/game-signal-lab/current/deploy/funasr
@@ -91,14 +91,13 @@ Docker volume `funasr-cache`，更新 GAME release 不会重复下载。FunASR �
 应用只在配置 `FUNASR_BASE_URL` 或 `FUNASR_WS_URL` 时启用本地识别，并且只接受
 loopback HTTP/WebSocket URL。HTTP `8000` 和旧版 WebSocket `10095` 是不同协议，
 不能混填。需要中文和英语时使用 HTTP `sensevoice + language=auto`，不要把
-中文 `paraformer-online` 当作英语模型。FunASR 不可用、超时或拒绝音频时，应用会自动回退到后台配置的 MiMo
-ASR；两者都不可用时才向用户返回错误。
+中文 `paraformer-online` 当作英语模型。FunASR 不可用、超时或拒绝音频时，应用直接返回错误，录音不会交给外部供应商。
 
 GA4 使用 Basic Consent Mode：访客允许匿名分析前不会加载 Google Tag。只记录页面、功能入口和完成状态等无正文事件，不发送日记、档案、录音、AI 消息、用户名或用户 ID。部署后请在 GA4 DebugView/Realtime 验证首页、`/en/`、博客和应用内页面切换的 `page_view`。
 
 对于 2 核 4G 轻量服务器，仓库默认把 FunASR 限制为 1.75 核、2.5G 内存、
 2 个计算线程和单并发。建议额外配置至少 2G swap，并确保 Node、Qdrant、FunASR
-合计仍有余量。这里不能使用“高并发”配置：第二路本地 ASR 会自动回退 MiMo。
+合计仍有余量。这里不能使用“高并发”配置：第二路本地 ASR 将返回繁忙错误。
 官方 ONNX WebSocket runtime 支持 `--decoder-thread-num`，但它与
 OpenAI-compatible HTTP 入口是两套协议；使用已有 `paraformer-online` 时配置
 `FUNASR_TRANSPORT=websocket`，不要把它的端口当作 HTTP 入口。
@@ -171,12 +170,12 @@ server {
 只把明确的代理地址加入 `TRUSTED_PROXY_ADDRESSES`；不要盲目信任任意
 `X-Forwarded-For`。
 
-## 6. 后台配置 DeepSeek 与 MiMo
+## 6. 后台配置 DeepSeek 与本地语音
 
 1. 使用一次性管理员秘密登录 `/admin/`。
 2. 在“DeepSeek 配置”中输入 Key、选择允许的模型并启用 provider。
 3. 在“Agent 访问”中打开全局总闸。每个新注册用户默认包含 50 次 DeepSeek AI 调用；后台“用户与授权”会显示 `已用 / 50 / 剩余`。用户用完后，再为该账户启用 Agent 权限，即可转为持续可用。
-4. 在“语音配置”中输入 Token Plan MiMo V2.5 Key、选择声音并启用语音服务。Node 默认使用 `https://token-plan-cn.xiaomimimo.com/v1/`；如需覆盖，设置运行时环境变量 `MIMO_BASE_URL`，不要把密钥写入 `.env` 示例、代码或 Git。启用本地 FunASR 后，MiMo ASR 只在本地服务失败时回退使用。
+4. 在服务器环境中设置本地 FunASR 的 HTTP 或 WebSocket 回环地址。后台语音页面仅说明本地配置，不接受云语音密钥。
 5. 普通用户注册后仍必须单独确认外部 AI 数据处理说明；50 次额度不会绕过同意、全局开关或 provider 配置。
 
 两种 Key 都只在服务端使用 AES-256-GCM 加密保存；接口只返回是否已配置，
@@ -272,7 +271,7 @@ sudo chmod 600 /var/backups/game-signal-lab-*.sqlite
 
 恢复前停止服务、保留旧数据库副本，并确认 `CONFIG_MASTER_KEY` 与备份时相同；
 否则已加密的 provider Key 无法解密。密钥轮换需要先安排停机/迁移窗口，重新
-保存 DeepSeek 与 MiMo Key，再删除旧主密钥备份；不要在日志中打印解密材料。
+保存 DeepSeek Key，再删除旧主密钥备份；不要在日志中打印解密材料。
 
 ## 10. 排障检查
 
@@ -287,3 +286,5 @@ docker compose -f /opt/game-signal-lab/current/deploy/funasr/compose.yml logs --
 
 若 Agent 返回“尚未配置”，检查后台 provider 开关、全局总闸、会员 grant、
 外部 AI 同意和 `CONFIG_MASTER_KEY`；不要把 Key 粘贴到 shell 历史或日志中。
+
+本次升级追加 migration 7，仅清除已撤销的旧云语音供应商配置，不改写 1–6 的迁移历史。

@@ -98,6 +98,7 @@ const MIGRATIONS = [
     apply: migrateToVersion5,
   },
   { version: 6, sql: COMPANION_MIGRATION },
+  { version: 7, sql: "DELETE FROM provider_configs WHERE provider = 'mimo_tts';" },
 ];
 
 export function openDatabase(path) {

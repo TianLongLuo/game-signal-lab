@@ -88,7 +88,7 @@ test("extractNewTranscript handles overlapping suffix/prefix", () => {
   );
 });
 
-test("PCM encoder produces a mono 16 kHz WAV accepted by MiMo ASR", async () => {
+test("PCM encoder produces a mono 16 kHz WAV accepted by local FunASR", async () => {
   const sourceRate = 48_000;
   const samples = new Float32Array(sourceRate / 10);
   for (let index = 0; index < samples.length; index += 1) {

@@ -324,7 +324,7 @@ const EN_PHRASES = {
   "已采用当前文字 · 可编辑并发送": "Current text selected · You can edit and send it",
   "归档并结束": "Save & Finish",
   "需要登录并同意外部 AI 处理说明后开始。": "Sign in and accept the AI data notice to begin.",
-  "录音期间只保存在当前设备；结束后 WAV 会发送给语音识别服务，并在进入对话前由 DeepSeek 整理句读。本地 FunASR 优先，失败时回退 MiMo；你点击“发送”后才进入对话。": "Audio stays on this device while recording. When you stop, the WAV file is sent for transcription and DeepSeek cleans up punctuation before it enters the conversation. FunASR is used first, with MiMo as fallback. Nothing is sent to the Agent until you select Send.",
+  "录音期间只保存在当前设备；结束后 WAV 会发送给语音识别服务，可自行选择 DeepSeek 整理句读。仅使用本地 FunASR，失败直接提示重试，不向云端发送录音；你点击“发送”后才进入对话。": "Audio stays on this device while recording. When you stop, the WAV file is sent for transcription and optional DeepSeek punctuation cleanup is available. Only local FunASR processes audio; failures return an error without cloud fallback. Nothing is sent to the Agent until you select Send.",
   "正在录音": "Recording",
   "边录边识别；手动结束后会用完整 WAV 校正，最长 5 分钟": "Live transcription with a full-WAV correction after you stop · 5-minute maximum",
   "关系思考": "Relationship Reflection",
