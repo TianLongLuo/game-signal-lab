@@ -160,3 +160,89 @@ test("lost image acknowledgement reuses same id even after reload", async () => 
   reloaded.acknowledge("story:portrait:0");
   assert.notEqual(reloaded.begin("story:portrait:0"), id);
 });
+
+test("portrait picker renders all 20 lazy choices without implicitly selecting art", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { runInNewContext } = await import("node:vm");
+  const source = await readFile(
+    new URL("../companion/app.js", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf("function portraitPickerMarkup(");
+  assert.ok(start >= 0, "the gallery has an independently testable renderer");
+  const end = source.indexOf("\nfunction bindPortraitPicker(", start);
+  const render = runInNewContext(`(${source.slice(start, end)})`, {
+    esc: (s) => String(s ?? "").replaceAll('"', "&quot;"),
+  });
+  const presets = Array.from({ length: 20 }, (_, i) => ({
+    id: `portrait-${String(i + 1).padStart(2, "0")}`,
+    zh: `人物 ${i + 1}`,
+    en: `Character ${i + 1}`,
+    thumbnail: `/companion/presets/${i + 1}.jpg`,
+  }));
+  const html = render(presets, null, { lang: "en", scope: "draft" });
+  assert.equal((html.match(/loading="lazy"/g) || []).length, 20);
+  assert.equal((html.match(/type="button"/g) || []).length, 21);
+  assert.equal((html.match(/aria-pressed="true"/g) || []).length, 1);
+  assert.match(html, /data-preset-id="" aria-pressed="true"/);
+  assert.match(html, /Character 20/);
+  const selected = render(presets, "portrait-03", {
+    lang: "zh",
+    scope: "world",
+    disabled: true,
+  });
+  assert.match(selected, /data-preset-id="portrait-03" aria-pressed="true"/);
+  assert.match(selected, /人物 20/);
+  assert.equal((selected.match(/ disabled/g) || []).length, 21);
+});
+
+test("portrait selection is local until Apply and blocked while a turn is active", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { runInNewContext } = await import("node:vm");
+  const source = await readFile(
+    new URL("../companion/app.js", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf("function bindPortraitPicker(");
+  const end = source.indexOf("\nfunction renderWorldPortraitPicker(", start);
+  let listener, selectedId;
+  const options = ["", "portrait-02"].map((id) => ({
+    dataset: { presetId: id },
+    disabled: false,
+    setAttribute(name, value) {
+      this[name] = value;
+    },
+  }));
+  const picker = {
+    contains: (button) => options.includes(button),
+    addEventListener(type, handler) {
+      listener = handler;
+    },
+    querySelectorAll: () => options,
+  };
+  const context = {
+    document: { querySelector: () => picker },
+    busy: false,
+    imageEnqueueing: false,
+    voice: null,
+    voicePending: false,
+    voiceAbort: null,
+    canLeaveCompanionView: ({ busy, recording, transcribing }) =>
+      !busy && !recording && !transcribing,
+    getPortraitPreset: (id) => (id === "portrait-02" ? { id } : null),
+  };
+  const bind = runInNewContext(`(${source.slice(start, end)})`, context);
+  bind("world", (id) => {
+    selectedId = id;
+  });
+  listener({ target: { closest: () => options[1] } });
+  assert.equal(selectedId, "portrait-02");
+  assert.equal(options[1]["aria-pressed"], "true");
+  assert.equal(options[0]["aria-pressed"], "false");
+  context.busy = true;
+  listener({ target: { closest: () => options[0] } });
+  assert.equal(selectedId, "portrait-02");
+  context.busy = false;
+  listener({ target: { closest: () => options[0] } });
+  assert.equal(selectedId, null);
+});

@@ -1,3 +1,4 @@
+import { PORTRAIT_PRESETS, getPortraitPreset } from "/src/companion-presets.js";
 import { PlatformClient } from "/src/platform-client.js";
 import {
   CompanionClient,
@@ -23,6 +24,9 @@ let locale = resolveCompanionLocale(
   draft = null,
   draftSceneTitles = [],
   draftAdultConfirmed = false,
+  draftPortraitPresetId = null,
+  worldPortraitPresetId = null,
+  worldPortraitStoryId = null,
   characterAge = 25,
   imageEnqueueing = false,
   input = "",
@@ -114,8 +118,8 @@ const copy = {
   ],
   images: ["人物与场景插画", "Character & scene illustrations"],
   imageOff: [
-    "图片生成尚未启用；文字故事仍可继续。此处背景为界面装饰，不是生成结果。",
-    "Image generation is not enabled. Your text story can continue. The atmosphere is interface decoration, not generated artwork.",
+    "自定义图片生成尚未启用；仍可选择下方内置人物插画，文字故事也可继续。",
+    "Custom image generation is not enabled. Built-in portraits below remain available, and your text story can continue.",
   ],
   imageQuota: ["剩余图片额度", "Images remaining"],
   portrait: ["生成人物插画", "Generate portrait"],
@@ -382,6 +386,7 @@ function renderIntro() {
         draft = generated.character;
         draftSceneTitles = generated.sceneTitles || [];
         draftAdultConfirmed = false;
+        draftPortraitPresetId = null;
         render();
       } catch (e) {
         error(e);
@@ -390,6 +395,118 @@ function renderIntro() {
         if ($("#generate")) $("#generate").disabled = false;
       }
     });
+  };
+}
+function portraitPickerMarkup(
+  presets,
+  selectedId,
+  { lang, disabled = false, scope },
+) {
+  const english = lang === "en";
+  const off = disabled ? " disabled" : "";
+  const none = english
+    ? "Use my generated portrait / no preset"
+    : "使用自生成肖像 / 不选预设";
+  const heading = english
+    ? "An illustrated face for your story"
+    : "为故事选一张人物插画";
+  const note = english
+    ? "20 built-in illustrations, generated in advance. Optional and free of image credits. Choosing one never changes your character’s written settings."
+    : "20 张预先生成的内置插画，自由选择，不消耗图片额度。选图不会改变你已填写的人物设定。";
+  return `<fieldset class="portrait-picker" data-preset-scope="${esc(scope)}"><legend>${heading}</legend><p class="fine">${note}</p><button type="button" class="preset-none" data-preset-id="" aria-pressed="${selectedId === null}"${off}>${none}</button><div class="portrait-grid">${presets
+    .map((preset) => {
+      const selected = selectedId === preset.id;
+      const label = english ? preset.en : preset.zh;
+      return `<button type="button" class="portrait-option" data-preset-id="${esc(preset.id)}" aria-pressed="${selected}"${off}><img src="${esc(preset.thumbnail)}" alt="" loading="lazy" decoding="async" width="240" height="320"><span class="portrait-label">${esc(label)}</span><span class="preset-selected" aria-hidden="true">✓</span></button>`;
+    })
+    .join(
+      "",
+    )}</div><p class="fine preset-selection-note" aria-live="polite">${scope === "world" ? (english ? "Select an illustration, then Apply to save it to this story." : "先选择插画，再点击“应用形象”保存到当前故事。") : english ? "Your selection is saved when you confirm the character." : "确认人物设定时，所选插画才会一起保存。"}</p></fieldset>`;
+}
+function bindPortraitPicker(scope, onSelect) {
+  const picker = document.querySelector(`[data-preset-scope="${scope}"]`);
+  if (!picker) return;
+  picker.addEventListener("click", (event) => {
+    const selected = event.target.closest("button[data-preset-id]");
+    if (!selected || !picker.contains(selected) || selected.disabled) return;
+    if (
+      !canLeaveCompanionView({
+        busy: busy || imageEnqueueing,
+        recording: voice || voicePending,
+        transcribing: voiceAbort,
+      })
+    )
+      return;
+    const id = selected.dataset.presetId || null;
+    if (id && !getPortraitPreset(id)) return;
+    picker.querySelectorAll("[data-preset-id]").forEach((button) => {
+      button.setAttribute(
+        "aria-pressed",
+        String((button.dataset.presetId || null) === id),
+      );
+    });
+    onSelect(id);
+  });
+}
+function renderWorldPortraitPicker() {
+  const story = state.story;
+  if (worldPortraitStoryId !== story.id) {
+    worldPortraitStoryId = story.id;
+    worldPortraitPresetId =
+      getPortraitPreset(story.portraitPresetId)?.id || null;
+  }
+  const selected = worldPortraitPresetId;
+  const applied = getPortraitPreset(story.portraitPresetId)?.id || null;
+  const section = document.createElement("section");
+  section.className = "world-portrait-library";
+  section.innerHTML =
+    portraitPickerMarkup(PORTRAIT_PRESETS, selected, {
+      lang: locale,
+      scope: "world",
+      disabled: busy,
+    }) +
+    `<div class="actions"><button type="button" id="apply-portrait-preset" class="primary" ${selected === applied || busy ? "disabled" : ""}>${locale === "en" ? "Apply portrait" : "应用形象"}</button><span class="fine" id="preset-save-status" role="status">${selected === applied ? (locale === "en" ? "Matches your saved selection" : "与当前已保存选择一致") : ""}</span></div>`;
+  document.querySelector(".document").append(section);
+  bindPortraitPicker("world", (id) => {
+    worldPortraitPresetId = id;
+    $("#apply-portrait-preset").disabled =
+      id === (getPortraitPreset(state.story.portraitPresetId)?.id || null);
+    $("#preset-save-status").textContent =
+      locale === "en" ? "Not saved yet" : "尚未保存";
+  });
+  $("#apply-portrait-preset").onclick = async () => {
+    if (
+      !canLeaveCompanionView({
+        busy: busy || imageEnqueueing,
+        recording: voice || voicePending,
+        transcribing: voiceAbort,
+      })
+    )
+      return;
+    const mine = epoch;
+    const storyId = state.story.id;
+    const presetId = worldPortraitPresetId;
+    busy = true;
+    $("#apply-portrait-preset").disabled = true;
+    section.querySelectorAll("[data-preset-id]").forEach((button) => {
+      button.disabled = true;
+    });
+    try {
+      const result = await api.request(`/stories/${storyId}/portrait-preset`, {
+        method: "POST",
+        body: { presetId, expectedVersion: state.story.version },
+      });
+      if (mine !== epoch || state.story.id !== storyId) return;
+      state.story = result.story;
+      worldPortraitPresetId =
+        getPortraitPreset(result.story.portraitPresetId)?.id || null;
+      notify(t("saved"));
+    } catch (e) {
+      if (mine === epoch) error(e);
+    } finally {
+      busy = false;
+      if (mine === epoch) render();
+    }
   };
 }
 function renderDraft() {
@@ -403,7 +520,10 @@ function renderDraft() {
     "opening",
   ];
   $("#main").innerHTML =
-    `<section class="document" style="max-width:850px"><h1>${t("review")}</h1><p class="fine">${locale === "zh" ? "以下是系统建议，可逐项修改；确认后将保存为故事设定。" : "These are editable suggestions. Confirming saves them as your story setting."}</p><form id="character"><div class="form-grid">${fields.map((k) => `<label class="${["name", "age"].includes(k) ? "" : "full"}">${t(k === "world" ? "worldLabel" : k)}${k === "age" ? `<input name="age" type="number" min="18" max="100" required value="${esc(draft.age)}">` : k === "name" ? `<input name="name" maxlength="80" required value="${esc(draft.name)}">` : `<textarea name="${k}" maxlength="2500" rows="3" required>${esc(draft[k])}</textarea>`}</label>`).join("")}</div><label class="check"><input id="adult" type="checkbox" ${draftAdultConfirmed ? "checked" : ""} required>${t("adult")}</label><div class="actions">${button("confirm", "create", "primary")}<button type="button" id="back">${locale === "zh" ? "返回描述" : "Back to description"}</button></div></form></section>`;
+    `<section class="document" style="max-width:850px"><h1>${t("review")}</h1><p class="fine">${locale === "zh" ? "以下是系统建议，可逐项修改；确认后将保存为故事设定。" : "These are editable suggestions. Confirming saves them as your story setting."}</p><form id="character"><div class="form-grid">${fields.map((k) => `<label class="${["name", "age"].includes(k) ? "" : "full"}">${t(k === "world" ? "worldLabel" : k)}${k === "age" ? `<input name="age" type="number" min="18" max="100" required value="${esc(draft.age)}">` : k === "name" ? `<input name="name" maxlength="80" required value="${esc(draft.name)}">` : `<textarea name="${k}" maxlength="2500" rows="3" required>${esc(draft[k])}</textarea>`}</label>`).join("")}</div>${portraitPickerMarkup(PORTRAIT_PRESETS, draftPortraitPresetId, { lang: locale, scope: "draft", disabled: busy })}<label class="check"><input id="adult" type="checkbox" ${draftAdultConfirmed ? "checked" : ""} required>${t("adult")}</label><div class="actions">${button("confirm", "create", "primary")}<button type="button" id="back">${locale === "zh" ? "返回描述" : "Back to description"}</button></div></form></section>`;
+  bindPortraitPicker("draft", (id) => {
+    draftPortraitPresetId = id;
+  });
   $("#character").oninput = (e) => {
     if (e.target.id === "adult") draftAdultConfirmed = e.target.checked;
     else if (fields.includes(e.target.name)) {
@@ -427,6 +547,7 @@ function renderDraft() {
           method: "POST",
           body: {
             character: draft,
+            portraitPresetId: draftPortraitPresetId,
             ...(draftSceneTitles.length === 3
               ? { sceneTitles: draftSceneTitles }
               : {}),
@@ -450,6 +571,7 @@ function renderTogether() {
   const s = state.story,
     last = s.turns.filter((x) => x.role === "assistant").at(-1);
   const approved = s.assets || [];
+  const portraitPreset = getPortraitPreset(s.portraitPresetId);
   const portrait = approved.find(
       (a) => a.kind === "portrait" && a.confirmed === true,
     ),
@@ -459,7 +581,7 @@ function renderTogether() {
   const safeAsset = (a) =>
     a && /^\/api\/companion\/assets\/[\w-]+$/.test(a.url);
   $("#main").innerHTML =
-    `<section class="stage">${safeAsset(scene) ? `<img class="scene-image" src="${esc(scene.url)}" alt="">` : ""}${safeAsset(portrait) ? `<img class="portrait" src="${esc(portrait.url)}" alt="${esc(s.character.name)}">` : ""}<div class="chapter"><div><h1>${esc(s.character.name)}</h1><span class="fine">${esc(s.sceneTitles?.[s.scene] || "")} · ${esc({ meeting: locale === "zh" ? "初识" : "First meeting", familiar: locale === "zh" ? "熟悉" : "Getting closer", flirting: locale === "zh" ? "暧昧" : "A spark", together: locale === "zh" ? "双方确认" : "Together" }[s.stage])}</span></div><span class="fine">${t("ai")}</span></div><div class="space">${!portrait ? `<p class="scene-caption">${locale === "zh" ? "故事留白，等你们一起写下。" : "A little space for the story you will write together."}<br><small>${locale === "zh" ? "氛围装饰 · 尚无已确认插画" : "Decorative atmosphere · No approved art"}</small></p>` : ""}</div><section class="dialogue"><div class="speaker"><span>${esc(s.character.name)}</span><button class="quiet" id="history">${t("history")}</button></div><div class="line" id="reply" aria-live="polite">${esc(streamText || last?.content || s.character.opening)}</div><div class="choices">${(
+    `<section class="stage">${safeAsset(scene) ? `<img class="scene-image" src="${esc(scene.url)}" alt="">` : ""}${portraitPreset ? `<img class="portrait preset-portrait" src="${esc(portraitPreset.url)}" alt="${esc(s.character.name)}">` : safeAsset(portrait) ? `<img class="portrait" src="${esc(portrait.url)}" alt="${esc(s.character.name)}">` : ""}<div class="chapter"><div><h1>${esc(s.character.name)}</h1><span class="fine">${esc(s.sceneTitles?.[s.scene] || "")} · ${esc({ meeting: locale === "zh" ? "初识" : "First meeting", familiar: locale === "zh" ? "熟悉" : "Getting closer", flirting: locale === "zh" ? "暧昧" : "A spark", together: locale === "zh" ? "双方确认" : "Together" }[s.stage])}</span></div><span class="fine">${t("ai")}</span></div><div class="space">${!portraitPreset && !portrait ? `<p class="scene-caption">${locale === "zh" ? "故事留白，等你们一起写下。" : "A little space for the story you will write together."}<br><small>${locale === "zh" ? "氛围装饰 · 尚无已确认插画" : "Decorative atmosphere · No approved art"}</small></p>` : ""}</div><section class="dialogue"><div class="speaker"><span>${esc(s.character.name)}</span><button class="quiet" id="history">${t("history")}</button></div><div class="line" id="reply" aria-live="polite">${esc(streamText || last?.content || s.character.opening)}</div><div class="choices">${(
       s.choices || []
     )
       .slice(0, 3)
@@ -661,6 +783,7 @@ function renderWorld() {
     $(`#${kind}`).onclick = () => generateImage(kind);
   }
   renderJobs();
+  renderWorldPortraitPicker();
 }
 function renderJobs() {
   if (!$("#jobs")) return;
@@ -687,6 +810,8 @@ function renderJobs() {
   document.querySelectorAll("[data-approve]").forEach(
     (b) =>
       (b.onclick = async () => {
+        if (busy) return;
+        busy = true;
         try {
           state.story = (
             await api.request(
@@ -694,10 +819,13 @@ function renderJobs() {
               { method: "POST", body: {} },
             )
           ).story;
+          worldPortraitStoryId = null;
           notify(t("saved"));
-          render();
         } catch (e) {
           error(e);
+        } finally {
+          busy = false;
+          render();
         }
       }),
   );
@@ -723,7 +851,7 @@ async function refreshImageState(mine = epoch) {
   renderJobs();
 }
 async function generateImage(kind) {
-  if (imageEnqueueing || !confirm(t("imageCost"))) return;
+  if (busy || imageEnqueueing || !confirm(t("imageCost"))) return;
   await ensureReady(async () => {
     const mine = epoch;
     const storyId = state.story.id;

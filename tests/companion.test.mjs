@@ -165,3 +165,51 @@ test("deleted memories remove their source pair from model context but preserve 
   assert.equal(store.contextTurns(1, s.id).length, 0);
   assert.equal(store.get(1, s.id).turns.length, 2);
 });
+
+test("preset portraits persist, enforce owner/version and do not use image quota", (t) => {
+  const { db, store } = setup(t);
+  let story = store.create(1, character, "en", undefined, "portrait-01");
+  assert.equal(story.portraitPresetId, "portrait-01");
+  assert.throws(
+    () => store.setPortraitPreset(2, story.id, "portrait-02", 0),
+    /story_not_found/,
+  );
+  assert.throws(
+    () => store.setPortraitPreset(1, story.id, "../secret", 0),
+    /invalid_portrait_preset/,
+  );
+  assert.throws(
+    () => store.setPortraitPreset(1, story.id, "portrait-21", 0),
+    /invalid_portrait_preset/,
+  );
+  story = store.setPortraitPreset(1, story.id, "portrait-20", 0);
+  assert.equal(story.version, 1);
+  assert.equal(story.portraitPresetId, "portrait-20");
+  assert.deepEqual(story.character, character);
+  assert.throws(
+    () => store.setPortraitPreset(1, story.id, "portrait-02", 0),
+    /version_conflict/,
+  );
+  story = store.commitTurn(
+    1,
+    story.id,
+    { clientTurnId: "after-preset", expectedVersion: 1, text: "Hello" },
+    "Hello",
+  );
+  assert.equal(story.portraitPresetId, "portrait-20");
+  story = store.setPortraitPreset(1, story.id, null, 2);
+  assert.equal(story.portraitPresetId, null);
+  assert.equal(
+    db.prepare("SELECT count(*) n FROM companion_image_usage").get().n,
+    0,
+  );
+});
+
+test("unknown preset is rejected before creating a story", (t) => {
+  const { store } = setup(t);
+  assert.throws(
+    () => store.create(1, character, "en", undefined, "portrait-00"),
+    /invalid_portrait_preset/,
+  );
+  assert.equal(store.current(1), null);
+});

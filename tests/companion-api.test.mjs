@@ -292,7 +292,11 @@ test("image jobs persist private results, confirm explicitly and charge only onc
   const s = (
     await a.request("/api/companion/stories", {
       method: "POST",
-      body: { character, adultConfirmed: true },
+      body: {
+        character,
+        adultConfirmed: true,
+        portraitPresetId: "portrait-01",
+      },
     })
   ).json.story;
   h.backend.db
@@ -327,6 +331,7 @@ test("image jobs persist private results, confirm explicitly and charge only onc
     )
   ).json.story;
   assert.equal(confirmed.assets[0].confirmed, true);
+  assert.equal(confirmed.portraitPresetId, null);
   await a.request(`/api/companion/stories/${s.id}/images`, {
     method: "POST",
     body: input,
@@ -391,4 +396,86 @@ test("withdrawing consent during draft body upload prevents any provider request
   const result = await response;
   assert.equal(result.status, 403);
   assert.equal(h.calls(), 0);
+});
+
+test("bundled portraits work without image provider, with owner/CSRF/version protection", async (t) => {
+  const h = await setup(t);
+  const a = await h.client("preset-owner");
+  const b = await h.client("preset-other");
+  const created = await a.request("/api/companion/stories", {
+    method: "POST",
+    body: {
+      character,
+      locale: "en",
+      adultConfirmed: true,
+      portraitPresetId: "portrait-01",
+    },
+  });
+  assert.equal(created.status, 200);
+  const story = created.json.story;
+  assert.equal(story.portraitPresetId, "portrait-01");
+  const path = `/api/companion/stories/${story.id}/portrait-preset`;
+  const body = { presetId: "portrait-20", expectedVersion: 0 };
+  assert.equal((await b.request(path, { method: "POST", body })).status, 404);
+  assert.equal(
+    (await a.request(path, { method: "POST", body, noCsrf: true })).status,
+    403,
+  );
+  assert.equal(
+    (
+      await a.request(path, {
+        method: "POST",
+        body,
+        origin: "https://other.test",
+      })
+    ).status,
+    403,
+  );
+  const changed = await a.request(path, { method: "POST", body });
+  assert.equal(changed.status, 200);
+  assert.equal(changed.json.story.portraitPresetId, "portrait-20");
+  assert.equal((await a.request(path, { method: "POST", body })).status, 409);
+  assert.equal(h.calls(), 0);
+  assert.equal((await a.request("/api/companion")).json.imageRemaining, 0);
+  assert.equal(
+    (await fetch(h.base + "/companion/presets/portrait-21.jpg")).status,
+    404,
+  );
+  for (const suffix of ["", "-thumb"]) {
+    const r = await fetch(
+      h.base + `/companion/presets/portrait-01${suffix}.jpg`,
+    );
+    assert.equal(r.status, 200);
+    assert.match(r.headers.get("content-type"), /image\/jpeg/);
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    assert.deepEqual([...bytes.slice(0, 3)], [255, 216, 255]);
+  }
+});
+
+test("preset changes cannot invalidate an in-flight paid story turn", async (t) => {
+  const h = await setup(t);
+  const a = await h.client("preset-concurrent");
+  const story = (
+    await a.request("/api/companion/stories", {
+      method: "POST",
+      body: { character, adultConfirmed: true },
+    })
+  ).json.story;
+  h.setMode("wait");
+  const turn = a.request(`/api/companion/stories/${story.id}/turn`, {
+    method: "POST",
+    body: { text: "Hello", clientTurnId: "slow-turn", expectedVersion: 0 },
+  });
+  for (let i = 0; i < 100 && !h.calls(); i++)
+    await new Promise((r) => setTimeout(r, 5));
+  const change = await a.request(
+    `/api/companion/stories/${story.id}/portrait-preset`,
+    { method: "POST", body: { presetId: "portrait-01", expectedVersion: 0 } },
+  );
+  h.release();
+  const result = await turn;
+  assert.equal(change.status, 409);
+  assert.equal(change.json.error.code, "companion_busy");
+  assert.match(result.text, /event: done/);
+  assert.equal((await a.request("/api/companion")).json.story.turns.length, 2);
 });

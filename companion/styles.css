@@ -719,3 +719,109 @@ h3 {
   margin-top: 6px;
   accent-color: var(--rose);
 }
+
+/* The illustration library is an optional art selection, not a character template. */
+.portrait-picker {
+  padding: 0;
+  margin: 30px 0;
+  border: 0;
+  min-width: 0;
+}
+.portrait-picker legend {
+  font-family: var(--serif);
+  font-size: 26px;
+  line-height: 1.45;
+  padding: 0;
+}
+.portrait-picker > .fine {
+  margin: 12px 0 18px;
+}
+.preset-none {
+  text-align: left;
+  margin-bottom: 18px;
+  font-size: 13px;
+}
+.preset-none[aria-pressed="true"] {
+  border-color: var(--rose);
+  background: #cbb3bf1a;
+}
+.portrait-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+}
+.portrait-option {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 6px;
+  border: 1px solid #ffffff25;
+  background: #171421;
+  text-align: left;
+  min-width: 0;
+}
+.portrait-option img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  object-position: center top;
+  background: #333043;
+}
+.portrait-label {
+  display: block;
+  padding: 11px 10px;
+  min-height: 52px;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.preset-selected {
+  display: none;
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
+  background: var(--rose);
+  color: var(--ink);
+  text-align: center;
+  line-height: 25px;
+  font-weight: 700;
+}
+.portrait-option[aria-pressed="true"] {
+  border-color: var(--rose);
+  box-shadow: 0 0 0 2px #cbb3bf77;
+}
+.portrait-option[aria-pressed="true"] .preset-selected {
+  display: block;
+}
+.world-portrait-library {
+  margin-top: 46px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+.preset-portrait {
+  border-radius: 38% 38% 0 0;
+  mask-image: linear-gradient(to bottom, #000 78%, transparent 100%);
+}
+@media (max-width: 800px) {
+  .portrait-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+}
+@media (max-width: 540px) {
+  .portrait-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+  .portrait-picker legend {
+    font-size: 24px;
+  }
+  .portrait-label {
+    min-height: 48px;
+  }
+}

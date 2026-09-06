@@ -415,7 +415,30 @@ export function createCompanionApi({
       requireConsent(auth);
       if (b.adultConfirmed !== true) fail(400, "adult_character_required");
       json({
-        story: store.create(auth.id, b.character, b.locale, b.sceneTitles),
+        story: store.create(
+          auth.id,
+          b.character,
+          b.locale,
+          b.sceneTitles,
+          b.portraitPresetId,
+        ),
+      });
+      return true;
+    }
+    if (
+      method === "POST" &&
+      (match = tail.match(/^\/stories\/([^/]+)\/portrait-preset$/))
+    ) {
+      const b = await readJson(request);
+      if (active.has(auth.id)) fail(409, "companion_busy");
+      // Local visual preference: no provider call and no paid-image allowance.
+      json({
+        story: store.setPortraitPreset(
+          auth.id,
+          match[1],
+          b.presetId,
+          b.expectedVersion,
+        ),
       });
       return true;
     }
@@ -636,7 +659,8 @@ export function createCompanionApi({
       (match = tail.match(/^\/stories\/([^/]+)\/images\/([^/]+)\/confirm$/)) &&
       method === "POST"
     ) {
-      store.row(auth.id, match[1]);
+      if (active.has(auth.id)) fail(409, "companion_busy");
+      const storyRow = store.row(auth.id, match[1]);
       const a = db
         .prepare(
           "SELECT * FROM companion_assets WHERE id=? AND user_id=? AND story_id=?",
@@ -644,6 +668,16 @@ export function createCompanionApi({
         .get(match[2], auth.id, match[1]);
       if (!a) fail(404, "asset_not_found");
       runTransaction(db, () => {
+        if (a.kind === "portrait") {
+          const data = store.unpack(storyRow.data, auth.id);
+          db.prepare(
+            "UPDATE companion_stories SET data=?,version=version+1 WHERE id=? AND user_id=?",
+          ).run(
+            store.pack({ ...data, portraitPresetId: null }, auth.id),
+            match[1],
+            auth.id,
+          );
+        }
         db.prepare(
           "UPDATE companion_assets SET confirmed=0 WHERE story_id=? AND kind=? AND scene=?",
         ).run(match[1], a.kind, a.scene);

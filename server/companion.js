@@ -1,3 +1,4 @@
+import { getPortraitPreset } from "../src/companion-presets.js";
 import { randomUUID, createHash } from "node:crypto";
 import { encryptSecret, decryptSecret } from "./security.js";
 import { runTransaction } from "./database.js";
@@ -175,7 +176,15 @@ export class CompanionStore {
       createdAt: row.created_at,
     };
   }
-  create(userId, character, locale = "zh", sceneTitles) {
+  create(
+    userId,
+    character,
+    locale = "zh",
+    sceneTitles,
+    portraitPresetId = null,
+  ) {
+    if (portraitPresetId !== null && !getPortraitPreset(portraitPresetId))
+      fail(400, "invalid_portrait_preset");
     character = validateCharacter(character);
     if (this.current(userId)) fail(409, "story_exists");
     const id = randomUUID();
@@ -185,6 +194,7 @@ export class CompanionStore {
       stage: "meeting",
       scene: 0,
       sceneTitles: validateScenes(sceneTitles, locale),
+      portraitPresetId,
     };
     this.db
       .prepare(
@@ -192,6 +202,26 @@ export class CompanionStore {
       )
       .run(id, userId, this.pack(data, userId), stamp());
     return this.get(userId, id);
+  }
+  setPortraitPreset(userId, id, presetId, expectedVersion) {
+    return runTransaction(this.db, () => {
+      const row = this.row(userId, id);
+      if (presetId !== null && !getPortraitPreset(presetId))
+        fail(400, "invalid_portrait_preset");
+      if (!Number.isInteger(expectedVersion)) fail(400, "invalid_version");
+      if (row.version !== expectedVersion) fail(409, "version_conflict");
+      const data = this.unpack(row.data, userId);
+      this.db
+        .prepare(
+          "UPDATE companion_stories SET version=version+1,data=? WHERE id=? AND user_id=?",
+        )
+        .run(
+          this.pack({ ...data, portraitPresetId: presetId }, userId),
+          id,
+          userId,
+        );
+      return this.get(userId, id);
+    });
   }
   replay(userId, id, input) {
     this.row(userId, id);

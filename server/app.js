@@ -1,3 +1,4 @@
+import { PORTRAIT_PRESETS } from "../src/companion-presets.js";
 import { createCompanionApi } from "./companion-api.js";
 import { CompanionError } from "./companion.js";
 import { createServer } from "node:http";
@@ -95,6 +96,8 @@ const MAX_SSE_FRAME_BYTES = 128 * 1024;
 const REQUEST_ID = Symbol("gameRequestId");
 const STATIC_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const STATIC_ASSETS = new Map([
+  ["/src/companion-presets.js", ["src/companion-presets.js", "text/javascript; charset=utf-8"]],
+  ...PORTRAIT_PRESETS.flatMap(p => [p.url, p.thumbnail].map(url => [url, [url.slice(1), "image/jpeg"]])),
   ["/", ["index.html", "text/html; charset=utf-8"]],
   ["/index.html", ["index.html", "text/html; charset=utf-8"]],
   ["/legacy/", ["index.html", "text/html; charset=utf-8"]],
