@@ -1617,6 +1617,25 @@ export async function createBackend(options = {}) {
       return;
     }
 
+    if ((method === "GET" || method === "HEAD") && pathname.startsWith("/companion/presets/") && (pathname.endsWith(".jpg") || pathname.endsWith(".png") || pathname.endsWith(".webp"))) {
+      const ext = pathname.split(".").pop().toLowerCase();
+      const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+      let body;
+      try {
+        body = await readFile(join(STATIC_ROOT, pathname.slice(1)));
+      } catch (error) {
+        if (error?.code === "ENOENT") throw new HttpError(404, "not_found", "接口不存在。");
+        throw error;
+      }
+      response.statusCode = 200;
+      response.setHeader("Content-Type", mime);
+      response.setHeader("Cache-Control", "public, max-age=300, must-revalidate");
+      response.setHeader("Content-Length", body.byteLength);
+      if (method === "HEAD") { response.end(); return; }
+      response.end(body);
+      return;
+    }
+
     if ((method === "GET" || method === "HEAD") && STATIC_ASSETS.has(pathname)) {
       await serveStaticAsset(response, pathname, method, publicOrigin);
       return;
