@@ -223,89 +223,6 @@ export class PlatformClient {
     return organized;
   }
 
-  async synthesizeVoice(text, { voice = "茉莉", signal } = {}) {
-    const response = await fetch("/api/voice/tts", {
-      method: "POST",
-      credentials: "same-origin",
-      cache: "no-store",
-      headers: this.#writeHeaders({ Accept: "audio/mpeg" }),
-      body: JSON.stringify({ text, voice }),
-      signal,
-    });
-    if (!response.ok) throw await responseError(response);
-    return response.blob();
-  }
-
-  async streamVoice(text, { voice = "茉莉", signal, onAudio } = {}) {
-    const response = await fetch("/api/voice/tts", {
-      method: "POST",
-      credentials: "same-origin",
-      cache: "no-store",
-      headers: this.#writeHeaders({ Accept: "text/event-stream" }),
-      body: JSON.stringify({ text, voice, stream: true }),
-      signal,
-    });
-    if (!response.ok) throw await responseError(response);
-    if (!response.body) {
-      throw new PlatformError("当前浏览器无法读取流式语音。", {
-        code: "voice_stream_unavailable",
-        status: response.status,
-      });
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let sawDone = false;
-    let audioChunks = 0;
-    const emitEvent = (event) => {
-      const data = event
-        .split(/\r?\n/)
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice(5).trimStart())
-        .join("\n");
-      if (!data) return;
-      if (data === "[DONE]") {
-        sawDone = true;
-        return;
-      }
-      let payload;
-      try { payload = JSON.parse(data); } catch { return; }
-      if (payload?.error) {
-        throw new PlatformError(payload.error.message || "流式语音生成失败。", {
-          code: payload.error.code || "voice_stream_failed",
-          status: response.status,
-        });
-      }
-      const audio = payload?.choices?.[0]?.delta?.audio?.data;
-      if (typeof audio === "string" && audio) {
-        audioChunks += 1;
-        onAudio?.(audio);
-      }
-    };
-
-    try {
-      while (!sawDone) {
-        const { value, done } = await reader.read();
-        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-        const events = buffer.split(/\r?\n\r?\n/);
-        buffer = events.pop() || "";
-        for (const event of events) emitEvent(event);
-        if (done) break;
-      }
-      if (!sawDone && audioChunks === 0) {
-        throw new PlatformError("流式语音未完整结束，请稍后重试。", {
-          code: "voice_stream_incomplete",
-          status: response.status,
-        });
-      }
-    } finally {
-      try { await reader.cancel(); } catch { /* upstream may already be closed */ }
-      reader.releaseLock();
-    }
-    return audioChunks;
-  }
-
   async transcribeVoice(blob, { signal, priority = "final", language = "auto" } = {}) {
     if (!(blob instanceof Blob) || !blob.size) {
       throw new PlatformError("没有可识别的语音内容。", { code: "audio_empty" });
@@ -328,78 +245,12 @@ export class PlatformClient {
     return text;
   }
 
-  async streamTranscribeVoice(blob, { signal, onText, priority = "final", language = "auto" } = {}) {
-    if (!(blob instanceof Blob) || !blob.size) {
-      throw new PlatformError("没有可识别的语音内容。", { code: "audio_empty" });
-    }
-    const audio = await blobToDataUrl(blob);
-    const response = await fetch("/api/voice/asr", {
-      method: "POST",
-      credentials: "same-origin",
-      cache: "no-store",
-      headers: this.#writeHeaders({ Accept: "text/event-stream" }),
-      body: JSON.stringify({ audio, stream: true, priority, language }),
-      signal,
-    });
-    if (!response.ok) throw await responseError(response);
-    if (!response.body) {
-      throw new PlatformError("当前浏览器无法读取流式识别。", {
-        code: "asr_stream_unavailable",
-        status: response.status,
-      });
-    }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let complete = "";
-    let sawDone = false;
-    const emitEvent = (event) => {
-      const data = event
-        .split(/\r?\n/)
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice(5).trimStart())
-        .join("\n");
-      if (!data) return;
-      if (data === "[DONE]") {
-        sawDone = true;
-        return;
-      }
-      let payload;
-      try { payload = JSON.parse(data); } catch { return; }
-      if (payload?.error) {
-        throw new PlatformError(payload.error.message || "流式语音识别失败。", {
-          code: payload.error.code || "asr_stream_failed",
-          status: response.status,
-        });
-      }
-      const candidate = payload?.choices?.[0]?.delta?.content
-        ?? payload?.choices?.[0]?.message?.content
-        ?? payload?.text;
-      if (typeof candidate !== "string" || !candidate) return;
-      complete = candidate.startsWith(complete) ? candidate : `${complete}${candidate}`;
-      onText?.(complete);
-    };
-    try {
-      while (!sawDone) {
-        const { value, done } = await reader.read();
-        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-        const events = buffer.split(/\r?\n\r?\n/);
-        buffer = events.pop() || "";
-        for (const event of events) emitEvent(event);
-        if (done) break;
-      }
-      if (!sawDone && !complete.trim()) {
-        throw new PlatformError("流式语音识别未完整结束，请稍后重试。", {
-          code: "asr_stream_incomplete",
-          status: response.status,
-        });
-      }
-    } finally {
-      try { await reader.cancel(); } catch { /* upstream may already be closed */ }
-      reader.releaseLock();
-    }
-    if (!complete.trim()) throw new PlatformError("语音服务没有识别出文字。", { code: "asr_empty" });
-    return complete.trim();
+  // Compatibility for the legacy recorder: emit one completed transcript, not fake streaming.
+  async streamTranscribeVoice(blob, {signal, onText, priority = "final", language = "auto"} = {}) {
+    const text = await this.transcribeVoice(blob, {signal, priority, language});
+    signal?.throwIfAborted();
+    onText?.(text);
+    return text;
   }
 
   #writeHeaders(extra = {}) {

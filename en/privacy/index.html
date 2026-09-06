@@ -58,7 +58,7 @@
             <article class="flow-card"><small>On device</small><h3>Local relationship journal</h3><p>Anonymous profiles, events, structured analyses, reviews, and preferences live in browser storage. Their full text stays on this device unless you deliberately use a connected feature.</p></article>
             <article class="flow-card"><small>Account</small><h3>Account and access</h3><p>The server processes a username, password verifier, session, membership state, AI allowance, consent state, and limited security-audit metadata.</p></article>
             <article class="flow-card flow-card--blue"><small>Explicit AI</small><h3>Agent and story conversations</h3><p>Only text you actively send enters a model request. Messages and model responses are archived in encrypted form; minimum anonymous profile fields enter your account-isolated vector store.</p></article>
-            <article class="flow-card"><small>Voice</small><h3>Speech recognition</h3><p>After recording ends, audio goes temporarily to self-hosted FunASR and may fall back to MiMo ASR. The site does not attach audio files to your relationship journal. A transcript returns to the composer for your review before sending.</p></article>
+            <article class="flow-card"><small>Voice</small><h3>Speech recognition</h3><p>After recording ends, audio goes temporarily to local self-hosted FunASR only, with no cloud fallback. The site does not attach audio files to your relationship journal. A transcript returns to the composer for your review before sending.</p></article>
           </div>
         </div>
       </section>
@@ -83,7 +83,7 @@
         <div><p class="section-index">03 / Providers</p><h2>Service providers</h2></div>
         <div class="policy-copy">
           <h3>DeepSeek</h3><p>Generates story follow-up questions, organizes profiles, and supports relationship reflection. It receives only text you explicitly send and the minimum context needed for that request. The provider processes API requests under its developer-service terms and data rules. See the <a href="https://platform.deepseek.com/downloads/DeepSeek%20Privacy%20Policy.pdf" rel="noopener noreferrer">official DeepSeek privacy policy</a>.</p>
-          <h3>FunASR and MiMo</h3><p>Self-hosted FunASR is the preferred speech-recognition route. If unavailable and the server has a fallback configured, audio may be sent to MiMo ASR. Audio is used to complete that transcription and is not saved as a relationship-journal attachment.</p>
+          <h3>Local FunASR</h3><p>Local self-hosted FunASR is the only speech-recognition route. Failures return an error and never send audio to a cloud provider. Audio is used to complete that transcription and is not saved as a relationship-journal attachment.</p>
           <h3>Google Analytics 4</h3><p>Helps us understand acquisition and feature completion. Its script does not load before you opt in, and you can change that choice from Privacy &amp; Data. See Google’s <a href="https://support.google.com/analytics/answer/6004245?hl=en" rel="noopener noreferrer">Analytics data safeguards</a>.</p>
         </div>
       </section>
@@ -93,7 +93,7 @@
         <div class="policy-copy">
           <ul>
             <li>Passwords are not stored as plaintext; sessions use secure cookies and same-origin request protection.</li>
-            <li>DeepSeek and MiMo API keys are encrypted on the server and never embedded in client code.</li>
+            <li>DeepSeek API keys are encrypted on the server and never embedded in client code.</li>
             <li>Every vector query is scoped by user so one account cannot retrieve another account’s profiles.</li>
             <li>Explicit conversation archives are encrypted; administrator access and permission changes are audited.</li>
             <li>No system is perfectly secure. Avoid entering sensitive information on shared devices, public browsers, or networks you do not control.</li>

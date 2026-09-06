@@ -58,7 +58,7 @@
             <article class="flow-card"><small>On device</small><h3>本地关系日记</h3><p>匿名档案、事件、结构化分析、复盘和偏好保存在浏览器本地存储中。除非你主动使用需要联网的功能，否则这些正文不离开设备。</p></article>
             <article class="flow-card"><small>Account</small><h3>账号与权限</h3><p>服务端处理用户名、密码验证值、会话、会员状态、AI 调用额度、同意状态及必要的安全审计元数据。</p></article>
             <article class="flow-card flow-card--blue"><small>Explicit AI</small><h3>Agent 与故事对话</h3><p>只有你按下发送的文字才进入模型请求。消息和模型回复会加密存档；匿名档案的最少必要字段进入当前账号的隔离向量知识库。</p></article>
-            <article class="flow-card"><small>Voice</small><h3>语音识别</h3><p>录音结束后，音频会临时发送给自托管 FunASR；不可用时可能回退到 MiMo ASR。本站不把音频文件写入关系档案，转写结果先回到输入框，由你确认后再发送。</p></article>
+            <article class="flow-card"><small>Voice</small><h3>语音识别</h3><p>录音结束后，音频会临时发送给本地自托管 FunASR；不可用时直接提示错误，不向云端外发录音。本站不把音频文件写入关系档案，转写结果先回到输入框，由你确认后再发送。</p></article>
           </div>
         </div>
       </section>
@@ -83,7 +83,7 @@
         <div><p class="section-index">03 / Providers</p><h2>服务提供方</h2></div>
         <div class="policy-copy">
           <h3>DeepSeek</h3><p>用于生成故事追问、档案整理和关系思考回复，仅接收你明确发送及本次任务所需的最少上下文。外部模型提供方会按照其服务条款和开发者数据规则处理请求。你可以查阅 <a href="https://platform.deepseek.com/downloads/DeepSeek%20Privacy%20Policy.pdf" rel="noopener noreferrer">DeepSeek 官方隐私政策</a>。</p>
-          <h3>FunASR 与 MiMo</h3><p>自托管 FunASR 是优先语音识别通道；当它不可用且服务端已配置回退时，音频可能交给 MiMo ASR 转写。音频只用于完成本次转写，不会作为关系档案附件保存。</p>
+          <h3>本地 FunASR</h3><p>自托管 FunASR 是唯一语音识别通道；不可用时返回错误，不把音频发送给云端供应商。音频只用于完成本次转写，不会作为关系档案附件保存。</p>
           <h3>Google Analytics 4</h3><p>用于了解访问来源与功能完成率。分析脚本在你同意前不会加载；你可以在「隐私与数据」中随时修改选择。更多信息见 <a href="https://support.google.com/analytics/answer/6004245?hl=zh-Hans" rel="noopener noreferrer">Google Analytics 数据保护说明</a>。</p>
         </div>
       </section>
@@ -93,7 +93,7 @@
         <div class="policy-copy">
           <ul>
             <li>密码不会以明文保存；会话使用安全 Cookie 与同源请求保护。</li>
-            <li>DeepSeek 与 MiMo API 密钥在服务端加密保存，不写入前端代码。</li>
+            <li>DeepSeek API 密钥在服务端加密保存，不写入前端代码。</li>
             <li>每个账号的向量检索都带用户范围过滤，不允许跨账号检索对象档案。</li>
             <li>显式发送的对话存档加密保存；管理员读取与权限修改进入审计记录。</li>
             <li>任何系统都不存在绝对安全。请避免在共享设备、公共浏览器或不受控网络中输入敏感信息。</li>

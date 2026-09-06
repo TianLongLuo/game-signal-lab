@@ -216,19 +216,11 @@
 - `enabled: true` 但没有可用密钥时返回 `422`；
 - 配置变更与不含秘密的审计元数据原子写入。
 
-## MiMo V2.5 TTS + ASR 语音服务
+## 本地 FunASR 语音输入
 
-语音供应商地址固定为 `https://token-plan-cn.xiaomimimo.com/v1/`，同一把 Token Plan MiMo Key 用于 Agent 的可选语音回应（TTS）和更准确的语音转文字（ASR）。密钥只在后台提交并以密文保存。
+语音配置由 Linux 环境变量 FUNASR_BASE_URL / FUNASR_WS_URL（二选一）管理，后台不再保存云语音密钥。POST /api/voice/asr 仅把 WAV/MP3 发送至回环本地服务，返回完整 JSON `{text,provider:"funasr"}`，不模拟逐字流。未配置、繁忙、超时明确返回错误，不外发音频。默认单并发，20 秒超时；取消会释放 Node 请求槽位。
 
-浏览器录音统一转换为单声道 16 kHz WAV，再调用 `mimo-v2.5-asr`；不向上游发送 WebM、OGG 或 MP4。录音过程中按节流策略实时校正，停止后再做最终校正；超时会保留浏览器实时文本，不会让界面停在“校正中”。TTS 使用 `茉莉` 预置女声并通过风格指令生成成熟、知性、温暖的御姐表达。
-
-### `GET /integrations/mimo-tts`
-
-返回 `enabled`、允许的 `model`、固定 `baseUrl`、`apiKeyConfigured` 和更新时间；不返回密钥或掩码。
-
-### `PATCH /integrations/mimo-tts`
-
-接受 `{ "enabled": boolean, "model": "mimo-v2.5-tts" | "mimo-v2-tts", "apiKey"?: string }`。省略 `apiKey` 表示保留现有密钥；启用但没有密钥时返回 `422`。配置使用与 DeepSeek 相同的服务端 AES-256-GCM 加密和管理员审计。
+语音合成接口已移除。DeepSeek 文字句读整理保留，必须有当前同意和权限。
 
 ## Agent 全局访问
 

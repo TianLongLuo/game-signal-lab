@@ -825,3 +825,561 @@ h3 {
     min-height: 48px;
   }
 }
+
+/* Visual-novel stage: artwork owns the viewport; speaker hierarchy owns the reading shelf. */
+body.stage-active {
+  overflow: hidden;
+}
+.stage-active .topbar {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 15;
+  background: linear-gradient(#13121bd9, #13121b00);
+  text-shadow: 0 1px 12px #0009;
+}
+.stage-active .privacy-link {
+  display: none;
+}
+.galgame-stage {
+  isolation: isolate;
+  position: relative;
+  width: 100%;
+  height: 100dvh;
+  min-height: 100svh;
+  padding: 106px 5vw max(20px, env(safe-area-inset-bottom));
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.galgame-stage .scene-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  opacity: 1;
+  z-index: -4;
+}
+.stage-shade {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, #10121a40, transparent 58%),
+    linear-gradient(#17172433, transparent 35%, #17172460 75%, #171724dc);
+  z-index: -1;
+  pointer-events: none;
+}
+.galgame-stage .portrait {
+  position: absolute;
+  right: 7vw;
+  top: 9vh;
+  height: 82vh;
+  width: auto;
+  max-width: 56vw;
+  object-fit: contain;
+  object-position: center top;
+  z-index: -2;
+  filter: drop-shadow(0 18px 45px #10101860);
+}
+.galgame-stage .preset-portrait {
+  border-radius: 30% 30% 0 0;
+  mask-image: linear-gradient(to bottom, #000 65%, transparent 98%);
+}
+.galgame-stage .chapter {
+  position: relative;
+  flex-shrink: 0;
+  color: #fff9f0;
+  text-shadow: 0 2px 14px #000a;
+}
+.galgame-stage .chapter h1 {
+  font-size: clamp(25px, 3vw, 38px);
+}
+.galgame-stage .chapter p {
+  margin: 7px 0;
+  font-size: 13px;
+}
+.relationship-tone {
+  display: inline-block;
+  margin-left: 15px;
+  padding-left: 15px;
+  border-left: 1px solid #fff5;
+}
+.stage-spacer {
+  flex: 1;
+  min-height: 15px;
+}
+.galgame-stage .stage-dialogue {
+  position: relative;
+  margin: 0 auto;
+  width: min(1120px, 100%);
+  max-height: calc(100dvh - 185px);
+  overflow: auto;
+  flex-shrink: 0;
+  background: #1b192be8;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 13px 28px 16px;
+  border-top: 2px solid #d3c1caad;
+  border-radius: 10px 10px 5px 5px;
+  box-shadow: 0 18px 70px #0008;
+}
+.dialogue-tools {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 5px;
+}
+.dialogue-tools > .fine {
+  flex: 1;
+}
+.dialogue-tools button,
+.dialogue-tools a {
+  font-size: 12px;
+  padding: 8px 0;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  color: #d9d1e1;
+}
+.speech-label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.035em;
+}
+.narrator-speech {
+  display: flex;
+  align-items: baseline;
+  gap: 17px;
+  border-bottom: 1px solid #ffffff18;
+  padding: 8px 0 12px;
+  color: #d5c9b8;
+}
+.narrator-speech .speech-label {
+  flex-shrink: 0;
+}
+.narrator-speech p {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 15px;
+  line-height: 1.65;
+  max-height: 8dvh;
+  overflow: auto;
+}
+.player-speech {
+  display: flex;
+  gap: 17px;
+  align-items: baseline;
+  padding: 11px 0;
+  border-bottom: 1px solid #ffffff15;
+  color: #c2d1e3;
+}
+.player-speech .speech-label {
+  flex-shrink: 0;
+}
+.player-speech p {
+  margin: 0;
+  line-height: 1.65;
+  font-size: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 7dvh;
+  overflow: auto;
+}
+.companion-speech {
+  padding-top: 8px;
+}
+.companion-speech .speaker {
+  min-height: 36px;
+  color: #ead3df;
+}
+.reveal-line {
+  border: 0;
+  padding: 5px 0 5px 12px;
+  font-size: 11px;
+  color: #b9b3c8;
+  min-height: 36px;
+}
+.galgame-stage .line {
+  margin: 3px 0 13px;
+  font-size: clamp(19px, 1.7vw, 23px);
+  line-height: 1.75;
+  min-height: 45px;
+  max-height: 16dvh;
+}
+.response-drawer {
+  border-top: 1px solid #ffffff22;
+  margin: 0 0 12px;
+}
+.response-drawer summary {
+  cursor: pointer;
+  min-height: 44px;
+  padding: 13px 0 9px;
+  font-size: 13px;
+  color: #e2dbe8;
+}
+.response-drawer summary span {
+  margin-left: 15px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.response-drawer summary:focus-visible {
+  outline: 2px solid var(--rose);
+  outline-offset: 2px;
+}
+.response-drawer .choices {
+  margin: 2px 0 7px;
+}
+.galgame-stage .choices button {
+  background: #ffffff08;
+  min-height: 44px;
+  flex: 1;
+}
+.galgame-stage .composer textarea {
+  min-height: 52px;
+  background: #11101d6b;
+  border: 1px solid #ffffff19;
+  padding: 10px 13px;
+}
+.galgame-stage .composer-controls {
+  margin-top: 7px;
+}
+.galgame-stage .composer .fine {
+  font-size: 11px;
+}
+.story-ending {
+  padding: 18px 0 12px;
+  border-top: 1px solid #ffffff28;
+}
+.story-ending strong {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 19px;
+}
+.story-ending p {
+  color: var(--silver);
+  font-size: 13px;
+  margin-bottom: 0;
+}
+.world-relationship {
+  margin-top: 50px;
+  padding-top: 25px;
+  border-top: 1px solid var(--line);
+}
+.transcript-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.transcript-actions button {
+  font-size: 11px;
+  padding: 5px 9px;
+}
+.stage-atmosphere {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -3;
+  pointer-events: none;
+}
+.scene-rain path {
+  animation: stage-rain var(--duration, 1.5s) linear infinite;
+  animation-delay: var(--delay);
+}
+.scene-particles circle {
+  animation: stage-drift 11s ease-in-out infinite alternate;
+  animation-delay: var(--delay);
+}
+.scene-waves {
+  animation: stage-wave 9s ease-in-out infinite alternate;
+}
+.scene-leaves path {
+  animation: stage-leaf 14s ease-in-out infinite alternate;
+  animation-delay: var(--delay);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.tone-conflict .stage-shade,
+.tone-painful .stage-shade,
+.tone-breakup .stage-shade {
+  background-color: #23304c38;
+}
+.tone-sweet .stage-shade,
+.tone-repair .stage-shade {
+  background-color: #b9865710;
+}
+.tone-breakup .stage-dialogue {
+  border-top-color: #9aadc5;
+}
+@keyframes stage-rain {
+  from {
+    transform: translate(15px, -65px);
+  }
+  to {
+    transform: translate(-15px, 65px);
+  }
+}
+@keyframes stage-drift {
+  from {
+    transform: translate(0, 0);
+    opacity: 0.3;
+  }
+  to {
+    transform: translate(15px, -30px);
+    opacity: 0.85;
+  }
+}
+@keyframes stage-wave {
+  from {
+    transform: translate(-35px, 0);
+  }
+  to {
+    transform: translate(35px, 7px);
+  }
+}
+@keyframes stage-leaf {
+  from {
+    translate: 0 0;
+    rotate: -8deg;
+  }
+  to {
+    translate: 30px 28px;
+    rotate: 17deg;
+  }
+}
+.reduce-motion *,
+.page-hidden .stage-atmosphere * {
+  animation: none !important;
+}
+.reduce-motion * {
+  transition: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .stage-atmosphere * {
+    animation: none !important;
+  }
+}
+@media (max-width: 650px) {
+  .galgame-stage {
+    padding: 86px 10px max(10px, env(safe-area-inset-bottom));
+  }
+  .galgame-stage .chapter {
+    padding: 0 7px;
+  }
+  .galgame-stage .chapter h1 {
+    font-size: 25px;
+  }
+  .galgame-stage .chapter > .fine {
+    font-size: 10px;
+    max-width: 11ch;
+  }
+  .galgame-stage .portrait {
+    right: -3vw;
+    top: 11vh;
+    height: 65vh;
+    max-width: 86vw;
+  }
+  .galgame-stage .stage-dialogue {
+    padding: 9px 15px 13px;
+    max-height: calc(100dvh - 155px);
+  }
+  .dialogue-tools {
+    gap: 13px;
+  }
+  .dialogue-tools > .fine {
+    display: none;
+  }
+  .dialogue-tools button {
+    margin-left: auto;
+  }
+  .narrator-speech,
+  .player-speech {
+    gap: 11px;
+  }
+  .narrator-speech p {
+    font-size: 13px;
+  }
+  .player-speech p {
+    font-size: 13px;
+  }
+  .speech-label {
+    font-size: 12px;
+  }
+  .galgame-stage .line {
+    font-size: 19px;
+    max-height: 14dvh;
+  }
+  .galgame-stage .choices {
+    flex-direction: column;
+    gap: 6px;
+  }
+  .galgame-stage .choices button {
+    min-height: 44px;
+    padding: 8px 12px;
+  }
+  .response-drawer summary span {
+    margin-left: 9px;
+  }
+  .relationship-tone {
+    margin-left: 9px;
+    padding-left: 9px;
+  }
+  .galgame-stage .composer textarea {
+    min-height: 46px;
+  }
+}
+@media (max-height: 650px) {
+  .galgame-stage .chapter {
+    display: none;
+  }
+  .galgame-stage .stage-dialogue {
+    max-height: calc(100dvh - 95px);
+  }
+  .galgame-stage .line {
+    min-height: 30px;
+  }
+}
+.speech-state {
+  display: block;
+  font-size: 10px;
+  line-height: 1.35;
+  font-weight: 400;
+  margin-top: 3px;
+  max-width: 13ch;
+  color: #b6bace;
+}
+.stage-atmosphere.mood-conflict,
+.stage-atmosphere.mood-painful {
+  opacity: 0.6;
+  filter: saturate(0.4);
+}
+.stage-atmosphere.mood-breakup {
+  opacity: 0.35;
+}
+.stage-atmosphere.mood-sweet,
+.stage-atmosphere.mood-repair {
+  filter: drop-shadow(0 0 6px #e7d6bb22);
+}
+.history-narration {
+  margin: 0 0 15px;
+  padding: 10px 15px;
+  background: #d5c9b809;
+  border-left: 2px solid #d5c9b84d;
+  color: #d5c9b8;
+}
+.history-narration strong {
+  color: #d5c9b8;
+}
+.history-narration p {
+  font-family: var(--serif);
+  font-size: 14px;
+}
+
+/* Compact reading shelf: the face and the composer keep their own space. */
+.galgame-stage .portrait {
+  top: 7vh;
+  height: 65vh;
+  right: 8vw;
+  max-width: 49vw;
+}
+.galgame-stage .stage-dialogue {
+  display: flex;
+  flex-direction: column;
+  max-height: 48dvh;
+  overflow: hidden;
+  padding: 9px 22px 12px;
+}
+.dialogue-tools { flex: 0 0 auto; margin-bottom: 0; }
+.narrator-speech, .player-speech {
+  flex: 0 1 auto;
+  min-height: 29px;
+  max-height: 58px;
+  padding: 7px 0;
+  overflow: auto;
+}
+.narrator-speech p, .player-speech p { max-height: 3.3em; }
+.companion-speech {
+  flex: 1 1 auto;
+  min-height: 72px;
+  overflow: auto;
+  padding-top: 4px;
+}
+.galgame-stage .line {
+  font-size: 21px;
+  line-height: 1.65;
+  min-height: 32px;
+  max-height: 11dvh;
+  margin-bottom: 8px;
+}
+.response-drawer {
+  flex: 0 1 auto;
+  min-height: 44px;
+  margin-bottom: 8px;
+  max-height: 23dvh;
+  overflow: auto;
+}
+.response-drawer summary { min-height: 44px; padding: 12px 0 10px; }
+#composer-slot { flex: 0 0 auto; }
+.galgame-stage .composer textarea {
+  height: 50px;
+  min-height: 50px;
+  max-height: 80px;
+}
+.galgame-stage .composer-controls { margin-top: 5px; }
+.galgame-stage .composer .fine { margin-top: 4px; }
+.story-ending { flex: 0 0 auto; }
+@media (max-width: 650px) {
+  .topbar {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 5px;
+    padding: 0 12px;
+    height: 66px;
+    width: 100%;
+  }
+  .topbar .brand { font-size: 19px; letter-spacing: .04em; }
+  .topbar nav { min-width: 0; justify-content: center; gap: 0; }
+  .topbar button { white-space: nowrap; padding: 8px 6px; font-size: 11px; min-height: 44px; }
+  .topbar .tools { gap: 0; min-width: 0; }
+  .topbar #language { width: 33px; min-width: 33px; padding: 8px 2px; }
+  .topbar #settings { font-size: 11px; padding: 8px 4px; }
+  .galgame-stage { padding-top: 74px; }
+  .galgame-stage .chapter h1 { font-size: 23px; }
+  .galgame-stage .chapter p { font-size: 11px; }
+  .galgame-stage .chapter > .fine { max-width: 12ch; font-size: 9px; }
+  .galgame-stage .portrait {
+    top: 7vh;
+    height: 54vh;
+    right: 2vw;
+    max-width: 77vw;
+  }
+  .galgame-stage .stage-dialogue {
+    max-height: 49dvh;
+    padding: 6px 14px 10px;
+  }
+  .dialogue-tools { gap: 12px; }
+  .dialogue-tools button, .dialogue-tools a { font-size: 11px; min-height: 35px; padding-top: 4px; padding-bottom: 4px; }
+  .narrator-speech, .player-speech { padding: 5px 0; gap: 9px; max-height: 49px; min-height: 27px; }
+  .narrator-speech p, .player-speech p { font-size: 12px; line-height: 1.5; max-height: 3em; }
+  .speech-label { font-size: 11px; }
+  .companion-speech { min-height: 69px; padding-top: 2px; }
+  .companion-speech .speaker { min-height: 31px; }
+  .reveal-line { min-height: 31px; font-size: 10px; }
+  .galgame-stage .line { font-size: 17px; line-height: 1.6; max-height: 10dvh; min-height: 27px; margin: 0 0 5px; }
+  .response-drawer { margin-bottom: 5px; }
+  .response-drawer summary { font-size: 12px; }
+  .response-drawer summary span { font-size: 10px; margin-left: 8px; }
+  .galgame-stage .composer textarea { height: 46px; min-height: 46px; font-size: 13px; }
+  .galgame-stage .composer-controls { margin-top: 4px; gap: 5px; }
+  .galgame-stage .composer-controls button { min-height: 44px; padding: 8px 12px; font-size: 12px; }
+  .galgame-stage .composer .fine { display: none; }
+  .galgame-stage .composer-controls #voice-status { max-width: 106px; }
+  .speech-state { font-size: 9px; }
+}
+@media (max-height: 600px) {
+  .galgame-stage .stage-dialogue { max-height: calc(100dvh - 95px); }
+  .galgame-stage .portrait { height: 68vh; top: 5vh; }
+  .galgame-stage .line { max-height: 15dvh; }
+  .galgame-stage .composer .fine { display: none; }
+}

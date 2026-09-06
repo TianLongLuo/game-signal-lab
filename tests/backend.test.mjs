@@ -161,6 +161,7 @@ test("a legacy version-1 database is upgraded without rewriting migration histor
       updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
     ) STRICT;
   `);
+  legacy.prepare("INSERT INTO provider_configs(provider,ciphertext,iv,auth_tag,model,created_at,updated_at) VALUES('mimo_tts','obsolete','iv','tag','obsolete','now','now')").run();
   legacy.close();
 
   backend = await createBackend({
@@ -179,8 +180,9 @@ test("a legacy version-1 database is upgraded without rewriting migration histor
       .prepare("SELECT version FROM schema_migrations ORDER BY version")
       .all()
       .map((row) => row.version),
-    [1, 2, 3, 4, 5, 6]
+    [1, 2, 3, 4, 5, 6, 7]
   );
+  assert.equal(backend.db.prepare("SELECT count(*) n FROM provider_configs WHERE provider='mimo_tts'").get().n, 0);
   assert.equal(
     backend.db
       .prepare("SELECT COUNT(*) AS value FROM agent_usage_quotas")
@@ -1029,7 +1031,7 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
     csrf: true,
     body: { messages: [{ role: "user", content: "请帮我回顾山茶最近的约会" }] },
   });
-  assert.equal(ragStream.response.status, 200);
+  assert.equal(ragStream.response.status, 200, ragStream.text);
   const ragRequest = upstreamRequests.at(-1).body;
   assert.equal(
     ragRequest.messages.some((message) => message.content.includes("RAG_OWNER_A")),

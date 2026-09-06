@@ -1,3 +1,10 @@
+import { getScenePreset } from "/src/companion-scenes.js";
+import {
+  chooseStageScene,
+  stageDialogue,
+  atmosphereSvg,
+  TypewriterText,
+} from "/src/companion-stage.js";
 import { PORTRAIT_PRESETS, getPortraitPreset } from "/src/companion-presets.js";
 import { PlatformClient } from "/src/platform-client.js";
 import {
@@ -39,6 +46,12 @@ let locale = resolveCompanionLocale(
   voice = null,
   voicePending = false,
   voiceAbort = null,
+  polishAbort = null,
+  typewriter = null,
+  pendingPlayerText = "",
+  responseDrawerOpen = false,
+  reduceMotion =
+    localStorage.getItem("game-companion-reduce-motion") === "true",
   voiceTimer = null,
   epoch = 0;
 const copy = {
@@ -326,6 +339,14 @@ $("#settings").onclick = () => {
   settings();
 };
 function render() {
+  typewriter?.dispose();
+  typewriter = null;
+  cancelPolish();
+  document.body.classList.toggle(
+    "stage-active",
+    Boolean(state?.story && tab === "together"),
+  );
+  document.body.classList.toggle("reduce-motion", reduceMotion);
   document.body.dataset.scene = String(state?.story?.scene ?? 0);
   syncLocale();
   document
@@ -567,40 +588,72 @@ function renderDraft() {
     }
   };
 }
+function relationshipLabel(tone) {
+  const labels = {
+    normal: ["平静相处", "At ease"],
+    sweet: ["亲近时刻", "A tender moment"],
+    conflict: ["意见不同", "A disagreement"],
+    painful: ["难过时刻", "A difficult moment"],
+    repair: ["重新沟通", "Talking again"],
+    breakup: ["故事落幕", "An ending"],
+  };
+  return (labels[tone] || labels.normal)[locale === "en" ? 1 : 0];
+}
 function renderTogether() {
-  const s = state.story,
-    last = s.turns.filter((x) => x.role === "assistant").at(-1);
+  const s = state.story;
+  const view = stageDialogue(s, {
+    locale,
+    pendingPlayerText,
+    streamText,
+    streaming: busy,
+  });
+  const sceneId = chooseStageScene(s);
+  const background = getScenePreset(sceneId);
+  const preset = getPortraitPreset(s.portraitPresetId);
   const approved = s.assets || [];
-  const portraitPreset = getPortraitPreset(s.portraitPresetId);
   const portrait = approved.find(
-      (a) => a.kind === "portrait" && a.confirmed === true,
-    ),
-    scene = approved.find(
-      (a) => a.kind === "scene" && a.scene === s.scene && a.confirmed === true,
-    );
+    (a) => a.kind === "portrait" && a.confirmed === true,
+  );
+  const scene = approved.find(
+    (a) => a.kind === "scene" && a.scene === s.scene && a.confirmed === true,
+  );
   const safeAsset = (a) =>
     a && /^\/api\/companion\/assets\/[\w-]+$/.test(a.url);
+  const sceneUrl = safeAsset(scene) ? scene.url : background?.url;
+  const portraitUrl =
+    preset?.url || (safeAsset(portrait) ? portrait.url : null);
+  const narrator = view.narrator.content;
+  const choices = view.ended ? [] : s.choices || [];
   $("#main").innerHTML =
-    `<section class="stage">${safeAsset(scene) ? `<img class="scene-image" src="${esc(scene.url)}" alt="">` : ""}${portraitPreset ? `<img class="portrait preset-portrait" src="${esc(portraitPreset.url)}" alt="${esc(s.character.name)}">` : safeAsset(portrait) ? `<img class="portrait" src="${esc(portrait.url)}" alt="${esc(s.character.name)}">` : ""}<div class="chapter"><div><h1>${esc(s.character.name)}</h1><span class="fine">${esc(s.sceneTitles?.[s.scene] || "")} · ${esc({ meeting: locale === "zh" ? "初识" : "First meeting", familiar: locale === "zh" ? "熟悉" : "Getting closer", flirting: locale === "zh" ? "暧昧" : "A spark", together: locale === "zh" ? "双方确认" : "Together" }[s.stage])}</span></div><span class="fine">${t("ai")}</span></div><div class="space">${!portraitPreset && !portrait ? `<p class="scene-caption">${locale === "zh" ? "故事留白，等你们一起写下。" : "A little space for the story you will write together."}<br><small>${locale === "zh" ? "氛围装饰 · 尚无已确认插画" : "Decorative atmosphere · No approved art"}</small></p>` : ""}</div><section class="dialogue"><div class="speaker"><span>${esc(s.character.name)}</span><button class="quiet" id="history">${t("history")}</button></div><div class="line" id="reply" aria-live="polite">${esc(streamText || last?.content || s.character.opening)}</div><div class="choices">${(
-      s.choices || []
-    )
-      .slice(0, 3)
-      .map((c) => `<button data-choice="${esc(c.id)}">${esc(c.label)}</button>`)
-      .join("")}</div><div id="composer-slot"></div></section></section>`;
-  $("#composer-slot").append($("#composer").content.cloneNode(true));
-  $("#message").placeholder = t("placeholder");
-  $("#message").value = input;
-  $("#message").oninput = (e) => {
-    input = e.target.value;
-    guard.edit();
+    `<section class="stage galgame-stage tone-${view.tone}" aria-label="${locale === "en" ? "Visual novel stage" : "视觉小说舞台"}">
+    ${sceneUrl ? `<img class="scene-image" src="${esc(sceneUrl)}" alt="" fetchpriority="high">` : ""}
+    <div class="stage-shade" aria-hidden="true"></div>
+    ${atmosphereSvg(sceneId, view.tone)}
+    ${portraitUrl ? `<img class="portrait ${preset ? "preset-portrait" : ""}" src="${esc(portraitUrl)}" alt="${esc(s.character.name)}" fetchpriority="high">` : ""}
+    <header class="chapter"><div><h1>${esc(s.character.name)}</h1><p>${esc(s.sceneTitles?.[s.scene] || "")}<span class="relationship-tone">${relationshipLabel(view.tone)}</span></p></div><span class="fine">${t("ai")}</span></header>
+    <div class="stage-spacer" aria-hidden="true"></div>
+    <section class="dialogue stage-dialogue" aria-label="${locale === "en" ? "Dialogue" : "对白"}">
+      <div class="dialogue-tools"><span class="fine">${locale === "en" ? "Your story, one moment at a time" : "此刻的故事，由你回应"}</span><button class="quiet" id="history">${t("history")}</button><a href="/companion/guide/" target="_blank" rel="noopener">${locale === "en" ? "Relationship guide" : "相处参考"}</a></div>
+      <section class="narrator-speech" id="narrator-speech" ${narrator ? "" : "hidden"}><span class="speech-label">${view.narrator.label}</span><p>${esc(narrator)}</p></section>
+      <section class="player-speech" id="player-speech" ${view.player.content ? "" : "hidden"}><span class="speech-label">${view.player.label}<small class="speech-state" id="player-state">${pendingPlayerText ? (locale === "en" ? "Awaiting confirmation" : "等待发送确认") : ""}</small></span><p id="player-line">${esc(view.player.content)}</p></section>
+      <section class="companion-speech" id="companion-speech" ${view.companion.content || busy ? "" : "hidden"}><div class="speaker"><span class="speech-label">${esc(view.companion.label)}</span><button class="reveal-line" id="reveal-line" type="button" aria-label="${locale === "en" ? "Show all received dialogue" : "显示当前完整台词"}">${locale === "en" ? "Show full line" : "显示完整台词"}</button></div><div class="line" id="reply" aria-live="polite" aria-atomic="true">${esc(view.companion.content)}</div></section>
+      ${view.ended ? `<div class="story-ending" role="status"><strong>${locale === "en" ? "This chapter of your relationship has ended." : "这段关系的故事已结束。"}</strong><p>${locale === "en" ? "Your conversations and memories remain yours to read. There is no need to reply." : "对话与回忆仍可回看，不需要再做回应。"}</p></div>` : `<details class="response-drawer" id="response-drawer" ${responseDrawerOpen ? "open" : ""}><summary>${locale === "en" ? "Choose a response" : "选择回应"}<span>${choices.length ? (locale === "en" ? "or write in your own words" : "也可以自由输入") : locale === "en" ? "Write in your own words" : "自由输入你的想法"}</span></summary><div class="choices">${choices.map((c) => `<button data-choice="${esc(c.id)}">${esc(c.label)}</button>`).join("")}</div></details><div id="composer-slot"></div>`}
+    </section></section>`;
+  const reply = $("#reply");
+  typewriter = new TypewriterText(
+    (text) => {
+      if (reply.isConnected) reply.textContent = text;
+    },
+    {
+      reducedMotion:
+        reduceMotion || matchMedia("(prefers-reduced-motion: reduce)").matches,
+    },
+  );
+  const reveal = () => {
+    if (busy) typewriter?.flush();
   };
-  $("#record").textContent = t("record");
-  $("#record").onclick = () => record($("#message"));
-  $("#cancel-voice").textContent = t("cancel");
-  $("#cancel-voice").onclick = cancelVoice;
-  $("#voice-hint").textContent = t("voiceHint");
-  $("#send").textContent = t("send");
-  $("#send").onclick = () => send();
+  $("#reveal-line").onclick = reveal;
+  reply.onclick = reveal;
   $("#history").onclick = () => {
     if (
       !canLeaveCompanionView({
@@ -615,12 +668,34 @@ function renderTogether() {
     tab = "memories";
     render();
   };
+  if (view.ended) return;
+  $("#response-drawer").ontoggle = (e) => {
+    responseDrawerOpen = e.target.open;
+  };
+  $("#composer-slot").append($("#composer").content.cloneNode(true));
+  $("#message").placeholder = t("placeholder");
+  $("#message").setAttribute(
+    "aria-label",
+    locale === "en" ? "Your reply" : "你的回应",
+  );
+  $("#message").value = input;
+  $("#message").oninput = (e) => {
+    input = e.target.value;
+    guard.edit();
+  };
+  $("#record").textContent = t("record");
+  $("#record").onclick = () => record($("#message"));
+  $("#cancel-voice").textContent = t("cancel");
+  $("#cancel-voice").onclick = cancelVoice;
+  $("#voice-hint").textContent = t("voiceHint");
+  $("#send").textContent = t("send");
+  $("#send").onclick = () => send();
   document
     .querySelectorAll("[data-choice]")
     .forEach(
-      (b) =>
-        (b.onclick = () =>
-          send(s.choices.find((c) => c.id === b.dataset.choice))),
+      (button) =>
+        (button.onclick = () =>
+          send(s.choices.find((c) => c.id === button.dataset.choice))),
     );
   $("#message").onkeydown = (e) => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -630,6 +705,7 @@ function renderTogether() {
   };
 }
 async function send(choice) {
+  if (state?.story?.relationship?.ended) return;
   if (
     !canLeaveCompanionView({
       busy,
@@ -638,6 +714,16 @@ async function send(choice) {
     })
   )
     return;
+  if (
+    choice?.id === "end-relationship" &&
+    !confirm(
+      locale === "en"
+        ? "End this relationship? The story will close. Your conversations and memories will remain available to read."
+        : "确认结束这段关系吗？故事将落幕，所有对话与回忆仍会保留，供你回看。",
+    )
+  )
+    return;
+  cancelPolish();
   const text = choice?.label || input.trim();
   if (!text) return;
   await ensureReady(async () => {
@@ -656,7 +742,15 @@ async function send(choice) {
           };
     retry = body;
     busy = true;
+    $("#narrator-speech").hidden = true;
+    $("#companion-speech").hidden = false;
     streamText = "";
+    pendingPlayerText = text;
+    $("#player-speech").hidden = false;
+    $("#player-line").textContent = text;
+    $("#player-state").textContent =
+      locale === "en" ? "Awaiting confirmation" : "等待发送确认";
+    typewriter?.reset();
     turnAbort = new AbortController();
     const mine = epoch;
     $("#send").disabled = true;
@@ -664,6 +758,7 @@ async function send(choice) {
       .querySelectorAll("[data-choice]")
       .forEach((b) => (b.disabled = true));
     $("#reply").textContent = t("pending");
+    $("#reply").setAttribute("aria-busy", "true");
     const cancel = document.createElement("button");
     cancel.textContent = t("cancel");
     cancel.onclick = () => turnAbort?.abort();
@@ -674,13 +769,16 @@ async function send(choice) {
         onText: (fragment) => {
           if (epoch !== mine) return;
           streamText += fragment;
-          if ($("#reply")) $("#reply").textContent = streamText;
+          typewriter?.append(fragment);
         },
       });
       if (epoch !== mine) return;
       state.story = story;
+      pendingPlayerText = "";
+      typewriter?.flush();
       if (!choice && input.trim() === text) input = "";
       retry = null;
+      pendingPlayerText = "";
       streamText = "";
     } catch (e) {
       if (epoch === mine) {
@@ -697,7 +795,7 @@ async function send(choice) {
 function renderMemories() {
   const s = state.story;
   $("#main").innerHTML =
-    `<section class="document"><header class="document-header"><h1>${t("memories")}</h1><p class="fine">${t("private")}</p></header><div class="notebook"><section><h2>${t("shared")}</h2>${s.memories.length ? s.memories.map((m) => `<article class="memory"><p>${esc(m.content)}</p><div class="actions"><button data-source="${esc(m.sourceTurnId)}">${t("source")}</button><button data-edit="${esc(m.id)}">${t("edit")}</button><button data-delete="${esc(m.id)}">${t("delete")}</button></div></article>`).join("") : `<p class="empty">${t("emptyMemory")}</p>`}</section><section><h2>${t("history")}</h2><div class="history">${s.turns.map((turn) => `<article class="turn" id="turn-${esc(turn.id)}"><strong>${esc(turn.role === "user" ? t("you") : s.character.name)}</strong><p>${esc(turn.content)}</p><button data-keep="${esc(turn.id)}">${t("keep")}</button></article>`).join("")}</div></section></div></section>`;
+    `<section class="document"><header class="document-header"><h1>${t("memories")}</h1><p class="fine">${t("private")}</p></header><div class="notebook"><section><h2>${t("shared")}</h2>${s.memories.length ? s.memories.map((m) => `<article class="memory"><p>${esc(m.content)}</p><div class="actions"><button data-source="${esc(m.sourceTurnId)}">${t("source")}</button><button data-edit="${esc(m.id)}">${t("edit")}</button><button data-delete="${esc(m.id)}">${t("delete")}</button></div></article>`).join("") : `<p class="empty">${t("emptyMemory")}</p>`}</section><section><h2>${t("history")}</h2><div class="history">${s.turns.map((turn) => `<article class="turn" id="turn-${esc(turn.id)}">${turn.role === "assistant" && turn.narration ? `<section class="history-narration"><strong>${locale === "en" ? "Narrator" : "旁白"}</strong><p>${esc(turn.narration)}</p></section>` : ""}<strong>${esc(turn.role === "user" ? t("you") : s.character.name)}</strong><p>${esc(turn.content)}</p><button data-keep="${esc(turn.id)}">${t("keep")}</button></article>`).join("")}</div></section></div></section>`;
   document
     .querySelectorAll("[data-source]")
     .forEach(
@@ -784,6 +882,11 @@ function renderWorld() {
   }
   renderJobs();
   renderWorldPortraitPicker();
+  const relationship = stageDialogue(s, { locale });
+  const status = document.createElement("section");
+  status.className = "world-relationship";
+  status.innerHTML = `<h2>${locale === "en" ? "Where you are together" : "你们正在经历"}</h2><p>${relationshipLabel(relationship.tone)}</p>${relationship.narrator.content ? `<p class="fine">${locale === "en" ? "Narrator" : "旁白"}</p><p>${esc(relationship.narrator.content)}</p>` : ""}<a href="/companion/guide/" target="_blank" rel="noopener">${locale === "en" ? "Open the optional relationship guide" : "主动打开相处参考"}</a>`;
+  document.querySelector(".world-portrait-library").before(status);
 }
 function renderJobs() {
   if (!$("#jobs")) return;
@@ -995,8 +1098,17 @@ function settings() {
   }
   showModal(
     t("settings"),
-    `<p>${t("private")}</p><p class="fine">${t("consentText")}</p><p class="fine">${t("imageQuota")}: ${state?.imageRemaining ?? 0}</p><p class="fine">${locale === "zh" ? "文字调用状态" : "Text usage"}: ${state?.usage?.unlimited ? (locale === "zh" ? "不限次数" : "Unlimited") : `${state?.usage?.remaining ?? "—"} ${locale === "zh" ? "次剩余" : "remaining"}`} </p><div class="actions">${button("refresh", "refresh")}${button("withdraw", "withdraw")}${state?.story ? button("deleteStory", "delete-story") : ""}${button("logout", "logout")}</div><p><a href="/legacy/">${t("legacy")}</a></p>`,
+    `<p>${t("private")}</p><p class="fine">${t("consentText")}</p><p class="fine">${t("imageQuota")}: ${state?.imageRemaining ?? 0}</p><p class="fine">${locale === "zh" ? "文字调用状态" : "Text usage"}: ${state?.usage?.unlimited ? (locale === "zh" ? "不限次数" : "Unlimited") : `${state?.usage?.remaining ?? "—"} ${locale === "zh" ? "次剩余" : "remaining"}`} </p><label class="check"><input id="reduce-motion" type="checkbox" ${reduceMotion ? "checked" : ""}>${locale === "en" ? "Reduce motion (system preference is also respected)" : "减少动态效果（同时遵循系统设置）"}</label><p><a href="/companion/guide/" target="_blank" rel="noopener">${locale === "en" ? "Optional relationship guide" : "相处参考（自由选择阅读）"}</a></p><div class="actions">${button("refresh", "refresh")}${button("withdraw", "withdraw")}${state?.story ? button("deleteStory", "delete-story") : ""}${button("logout", "logout")}</div><p><a href="/legacy/">${t("legacy")}</a></p>`,
   );
+  $("#reduce-motion").onchange = (e) => {
+    reduceMotion = e.target.checked;
+    localStorage.setItem("game-companion-reduce-motion", String(reduceMotion));
+    document.body.classList.toggle("reduce-motion", reduceMotion);
+    if (typewriter)
+      typewriter.reducedMotion =
+        reduceMotion || matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) typewriter?.flush();
+  };
   $("#refresh").onclick = async () => {
     cancelVoice();
     try {
@@ -1039,6 +1151,7 @@ function settings() {
       input = "";
       description = "";
       retry = null;
+      pendingPlayerText = "";
       $("#modal").close();
       render();
     } catch (e) {
@@ -1057,6 +1170,7 @@ function settings() {
         state = await api.request();
         input = "";
         retry = null;
+        pendingPlayerText = "";
         $("#modal").close();
         render();
       } catch (e) {
@@ -1065,6 +1179,8 @@ function settings() {
     };
 }
 async function record(target) {
+  if (state?.story?.relationship?.ended && target?.id === "message") return;
+  cancelPolish();
   if (voice) {
     await finishVoice();
     return;
@@ -1160,81 +1276,121 @@ function releaseRecording() {
   old.context.close().catch(() => {});
   return old;
 }
+function cancelPolish() {
+  if (!polishAbort) return;
+  polishAbort.abort("cancel");
+  polishAbort = null;
+  guard.cancel();
+}
 async function finishVoice() {
-  const v = releaseRecording();
-  if (!v) return;
-  voiceAbort = new AbortController();
-  const controller = voiceAbort;
+  const recording = releaseRecording();
+  if (!recording) return;
+  const controller = new AbortController();
+  voiceAbort = controller;
   $("#record").disabled = true;
   $("#voice-status").textContent = t("transcribing");
-  let timeout = setTimeout(() => controller.abort("timeout"), 24000),
-    rawAvailable = false;
+  const timeout = setTimeout(() => controller.abort("timeout"), 35000);
   try {
-    if (!v.chunks.length)
+    if (!recording.chunks.length)
       throw new Error(
-        locale === "zh"
-          ? "未捕获音频，可能有遗漏，请重新录音。"
-          : "No audio captured. Content may be missing; record again.",
+        locale === "en"
+          ? "No audio captured. Record again; content may be missing."
+          : "未捕获音频，可能有遗漏，请重新录音。",
       );
-    const wav = new Blob([encodeWav(v.chunks, v.context.sampleRate)], {
-      type: "audio/wav",
-    });
+    const wav = new Blob(
+      [encodeWav(recording.chunks, recording.context.sampleRate)],
+      { type: "audio/wav" },
+    );
     const text = await platform.transcribeVoice(wav, {
       priority: "final",
       signal: controller.signal,
       language: locale === "zh" ? "zh" : "en",
     });
-    const result = guard.finish(v.token, text);
-    if (result === null || !v.target.isConnected) {
+    if (controller.signal.aborted) return;
+    const raw = guard.finish(recording.token, text);
+    if (raw === null || !recording.target.isConnected) {
       notify(t("late"));
       return;
     }
+    const target = recording.target;
     const apply = (value) => {
-      v.target.value = value;
-      if (v.target.id === "description") description = value;
+      target.value = value;
+      if (target.id === "description") description = value;
       else input = value;
     };
-    apply(result);
-    rawAvailable = true;
-    document.getElementById("restore-transcript")?.remove();
+    apply(raw);
+    // The raw result is immediately sendable. Punctuation is opt-in and never owns the composer lock.
+    document.getElementById("transcript-actions")?.remove();
+    const actions = document.createElement("span");
+    actions.id = "transcript-actions";
+    actions.className = "transcript-actions";
     const restore = document.createElement("button");
-    restore.id = "restore-transcript";
     restore.type = "button";
     restore.textContent =
-      locale === "zh" ? "恢复原始转写" : "Restore raw transcript";
+      locale === "en" ? "Restore raw transcript" : "恢复原始转写";
     restore.onclick = () => {
-      if (v.target.isConnected) {
+      if (target.isConnected) {
+        cancelPolish();
         guard.edit();
-        apply(result);
+        apply(raw);
       }
     };
-    $("#record").parentElement.append(restore);
-    clearTimeout(timeout);
-    $("#voice-status").textContent =
-      locale === "zh"
-        ? "正在整理标点，可取消并保留原文…"
-        : "Tidying punctuation. Cancel to keep the raw text…";
-    const organizeToken = guard.begin(v.token.base);
-    timeout = setTimeout(() => controller.abort("organize_timeout"), 10000);
-    const organized = await platform.organizeVoiceText(text, {
-      signal: controller.signal,
-    });
-    const polished = guard.finish(
-      organizeToken,
-      preserveVoiceTranscript(text, organized),
-    );
-    if (polished !== null && v.target.isConnected) apply(polished);
-    else if (!controller.signal.aborted) notify(t("late"));
-  } catch (e) {
-    if (rawAvailable) {
-      if (controller.signal.reason !== "cancel")
-        notify(
-          locale === "zh"
-            ? "标点整理未完成，已保留原始转写，可编辑后发送。"
-            : "Punctuation cleanup did not finish. Raw transcription is preserved for editing.",
-        );
-    } else if (controller.signal.reason === "timeout") notify(t("timeout"));
-    else if (e.name !== "AbortError") error(e);
+    const tidy = document.createElement("button");
+    tidy.type = "button";
+    tidy.textContent =
+      locale === "en" ? "Tidy punctuation (optional)" : "整理标点（可选）";
+    tidy.onclick = () => {
+      if (busy || voice || voicePending || voiceAbort || !target.isConnected)
+        return;
+      if (polishAbort) {
+        cancelPolish();
+        tidy.textContent =
+          locale === "en" ? "Tidy punctuation (optional)" : "整理标点（可选）";
+        return;
+      }
+      const original = target.value;
+      const token = guard.begin("");
+      const polishController = new AbortController();
+      polishAbort = polishController;
+      tidy.textContent =
+        locale === "en"
+          ? "Cancel punctuation · keep text"
+          : "取消整理 · 保留文字";
+      const timer = setTimeout(() => polishController.abort("timeout"), 10000);
+      platform
+        .organizeVoiceText(original, { signal: polishController.signal })
+        .then((polished) => {
+          if (polishController.signal.aborted) return;
+          const candidate = guard.finish(
+            token,
+            preserveVoiceTranscript(original, polished),
+          );
+          if (candidate !== null && target.isConnected) apply(candidate);
+        })
+        .catch((error) => {
+          if (!polishController.signal.aborted)
+            notify(
+              locale === "en"
+                ? "Punctuation cleanup failed. Your draft is preserved."
+                : "标点整理失败，当前草稿已保留。",
+            );
+        })
+        .finally(() => {
+          clearTimeout(timer);
+          if (polishAbort !== polishController) return;
+          polishAbort = null;
+          if (tidy.isConnected)
+            tidy.textContent =
+              locale === "en"
+                ? "Tidy punctuation (optional)"
+                : "整理标点（可选）";
+        });
+    };
+    actions.append(tidy, restore);
+    $("#record").parentElement.append(actions);
+  } catch (errorValue) {
+    if (controller.signal.reason === "timeout") notify(t("timeout"));
+    else if (errorValue.name !== "AbortError") error(errorValue);
   } finally {
     clearTimeout(timeout);
     if (voiceAbort === controller) {
@@ -1250,9 +1406,11 @@ function voiceUiReset() {
   }
   if ($("#voice-status")) $("#voice-status").textContent = "";
   if ($("#cancel-voice")) $("#cancel-voice").hidden = true;
-  if ($("#send")) $("#send").disabled = false;
+  if ($("#send"))
+    $("#send").disabled = busy || Boolean(state?.story?.relationship?.ended);
 }
 function cancelVoice() {
+  cancelPolish();
   voicePending = false;
   guard.cancel();
   releaseRecording();
@@ -1262,6 +1420,7 @@ function cancelVoice() {
 }
 window.addEventListener("pagehide", () => {
   epoch++;
+  typewriter?.dispose();
   cancelVoice();
   turnAbort?.abort();
   clearTimeout(jobTimer);
@@ -1295,3 +1454,11 @@ boot();
 document.addEventListener("visibilitychange", () => {
   document.body.classList.toggle("page-hidden", document.hidden);
 });
+
+matchMedia("(prefers-reduced-motion: reduce)").addEventListener(
+  "change",
+  (event) => {
+    if (typewriter) typewriter.reducedMotion = event.matches || reduceMotion;
+    if (event.matches || reduceMotion) typewriter?.flush();
+  },
+);

@@ -5,7 +5,6 @@ import {
   createFunAsrConfig,
   normalizeFunAsrBaseUrl,
   normalizeFunAsrWebSocketUrl,
-  splitTranscriptForStreaming,
   transcribeWithFunAsr,
 } from "../server/app.js";
 
@@ -113,12 +112,6 @@ test("FunASR HTTP client propagates caller cancellation while reading the respon
   await assert.rejects(pending, (error) => error?.code === "aborted");
 });
 
-test("transcript chunks preserve all content in order", () => {
-  const source = "第一句比较短。第二句会继续补充，而且不会覆盖前面的内容。";
-  const chunks = splitTranscriptForStreaming(source, 8);
-  assert.equal(chunks.join(""), source);
-  assert.ok(chunks.length > 2);
-});
 
 function createMonoWav({ sampleRate = 16_000, sampleCount = 3_200 } = {}) {
   const dataSize = sampleCount * 2;
@@ -301,3 +294,40 @@ test("FunASR WebSocket client aborts the upstream socket when the browser cancel
   assert.equal(closeCount, 1);
 });
 
+
+test('FunASR defaults to a bounded single-worker local request',()=>{
+ const config=createFunAsrConfig({FUNASR_BASE_URL:'http://127.0.0.1:8000'});
+ assert.equal(config.timeoutMs,20000); assert.equal(config.maxConcurrency,1);
+});
+test('failed HTTP connections release caller abort listeners for repeated recordings',async()=>{
+ const {getEventListeners}=await import('node:events'); const controller=new AbortController();
+ for(let i=0;i<3;i++){
+  await assert.rejects(transcribeWithFunAsr({baseUrl:new URL('http://127.0.0.1:8000/'),bytes:Buffer.from([1]),mimeType:'audio/wav',signal:controller.signal,fetchImpl:async()=>{throw new Error('offline');}}),e=>e.code==='network_error');
+  assert.equal(getEventListeners(controller.signal,'abort').length,0);
+ }
+});
+
+test('offline VAD segments with is_final wait for whole-recording is_end acknowledgement',async()=>{
+ class Socket extends EventTarget {
+  readyState=1;bufferedAmount=0;
+  constructor(){super();queueMicrotask(()=>this.dispatchEvent(new Event('open')));}
+  send(value){
+   if(typeof value!=='string'||JSON.parse(value).is_speaking!==false)return;
+   const emit=payload=>{const event=new Event('message');event.data=JSON.stringify(payload);this.dispatchEvent(event);};
+   queueMicrotask(()=>emit({mode:'2pass-offline',is_final:true,text:'第一句话。'}));
+   setTimeout(()=>{emit({mode:'2pass-offline',is_final:true,text:'第二句话。'});emit({is_end:true,is_final:true});},10);
+  }
+  close(){this.readyState=3;}
+ }
+ const text=await transcribeWithFunAsr({transport:'websocket',baseUrl:new URL('ws://127.0.0.1:10095'),timeoutMs:100,bytes:createMonoWav(),mimeType:'audio/wav',webSocketImpl:Socket});
+ assert.match(text,/第一句话。/);assert.match(text,/第二句话。/);
+});
+
+test('HTTP response-body timeout stays bounded and cleans its caller listener',async()=>{
+ const {getEventListeners}=await import('node:events');const controller=new AbortController();
+ const keep=setTimeout(()=>{},100);
+ try {
+  await assert.rejects(transcribeWithFunAsr({baseUrl:new URL('http://127.0.0.1:8000/'),timeoutMs:20,bytes:Buffer.from([1]),mimeType:'audio/wav',signal:controller.signal,fetchImpl:async(url,options)=>({ok:true,json:()=>new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(options.signal.reason),{once:true}))})}),e=>e.code==='timeout');
+  assert.equal(getEventListeners(controller.signal,'abort').length,0);
+ } finally {clearTimeout(keep);}
+});

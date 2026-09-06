@@ -213,12 +213,6 @@ const demoSeed = {
     apiKeyConfigured: true,
     updatedAt: "2026-07-30T10:42:12.000Z",
   },
-  mimo: {
-    enabled: false,
-    model: "mimo-v2.5-tts",
-    apiKeyConfigured: false,
-    updatedAt: null,
-  },
 };
 
 let session = {
@@ -300,14 +294,6 @@ const deepseekUpdated = document.querySelector("#deepseek-updated");
 const deepseekKeyState = document.querySelector("#api-key-state");
 const deepseekMessage = document.querySelector("#deepseek-message");
 const reloadDeepseekButton = document.querySelector("#reload-deepseek");
-const mimoForm = document.querySelector("#mimo-form");
-const mimoEnabled = document.querySelector("#mimo-enabled");
-const mimoModel = document.querySelector("#mimo-model");
-const mimoApiKey = document.querySelector("#mimo-api-key");
-const mimoUpdated = document.querySelector("#mimo-updated");
-const mimoKeyState = document.querySelector("#mimo-key-state");
-const mimoMessage = document.querySelector("#mimo-message");
-const reloadMimoButton = document.querySelector("#reload-mimo");
 
 const entitlementDialog = document.querySelector("#entitlement-dialog");
 const entitlementForm = document.querySelector("#entitlement-form");
@@ -381,8 +367,6 @@ function bindEvents() {
   deepseekForm.addEventListener("submit", saveDeepseekConfig);
   agentAccessForm.addEventListener("submit", saveAgentAccess);
   reloadDeepseekButton.addEventListener("click", () => loadDeepseek(true));
-  mimoForm.addEventListener("submit", saveMimoConfig);
-  reloadMimoButton.addEventListener("click", () => loadMimo(true));
 
   entitlementForm.addEventListener("submit", applyEntitlementChange);
   entitlementCancel.addEventListener("click", () => entitlementDialog.close("cancel"));
@@ -540,7 +524,6 @@ async function navigate(view, options = {}) {
   if (view === "messages") await loadMessages(messagePage, false);
   if (view === "audit") await loadAudit(auditPage, false);
   if (view === "deepseek") await loadDeepseek(false);
-  if (view === "voice") await loadMimo(false);
 
   if (options.focus !== false) {
     const heading = document.querySelector(`[data-view-panel="${view}"] h1`);
@@ -589,11 +572,6 @@ function buildDemoOverview() {
         label: "Agent 访问总闸",
         status: demoState.deepseek.globalEnabled ? "已开放" : "已关闭",
         level: demoState.deepseek.globalEnabled ? "good" : "warn",
-      },
-      {
-        label: "MiMo V2.5 TTS + ASR",
-        status: demoState.mimo.enabled ? "已启用" : "待配置",
-        level: demoState.mimo.enabled ? "good" : "warn",
       },
     ],
   };
@@ -1116,62 +1094,7 @@ async function loadDeepseek(announce) {
   }
 }
 
-async function loadMimo(announce) {
-  mimoMessage.textContent = "";
-  reloadMimoButton.disabled = true;
-  try {
-    const config = session.mode === "demo"
-      ? structuredClone(demoState.mimo)
-      : await request("/integrations/mimo-tts");
-    renderMimo(config);
-    if (announce) showToast("未保存的语音修改已撤销");
-  } catch (error) {
-    mimoMessage.textContent = publicError(error, "语音配置加载失败，请稍后重试。");
-  } finally {
-    reloadMimoButton.disabled = false;
-  }
-}
 
-function renderMimo(config) {
-  mimoEnabled.checked = Boolean(config.enabled);
-  mimoModel.value = config.model || "mimo-v2.5-tts";
-  mimoApiKey.value = "";
-  mimoKeyState.textContent = config.apiKeyConfigured
-    ? "已配置（密钥已加密，前端不可读取）"
-    : "尚未配置 API Key";
-  mimoUpdated.textContent = config.updatedAt
-    ? `上次更新：${formatDateTime(config.updatedAt)}`
-    : "尚无更新时间";
-}
-
-async function saveMimoConfig(event) {
-  event.preventDefault();
-  mimoMessage.textContent = "";
-  if (!mimoForm.reportValidity()) return;
-  const submitButton = mimoForm.querySelector('button[type="submit"]');
-  setButtonBusy(submitButton, true, "正在保存…");
-  const body = {
-    enabled: mimoEnabled.checked,
-    model: mimoModel.value.trim(),
-  };
-  const newApiKey = mimoApiKey.value.trim();
-  if (newApiKey) body.apiKey = newApiKey;
-  try {
-    const saved = session.mode === "demo"
-      ? { ...demoState.mimo, ...body, apiKeyConfigured: demoState.mimo.apiKeyConfigured || Boolean(newApiKey), updatedAt: new Date().toISOString() }
-      : await request("/integrations/mimo-tts", { method: "PATCH", body });
-    if (session.mode === "demo") demoState.mimo = saved;
-    mimoApiKey.value = "";
-    renderMimo(saved);
-    showToast("MiMo 语音配置已保存");
-  } catch (error) {
-    mimoMessage.textContent = publicError(error, "语音配置保存失败，请稍后重试。");
-  } finally {
-    mimoApiKey.value = "";
-    delete body.apiKey;
-    setButtonBusy(submitButton, false);
-  }
-}
 
 function renderDeepseek(config) {
   agentGlobalEnabled.checked = Boolean(config.globalEnabled);

@@ -705,55 +705,11 @@ test("authorization matrix supports 50 included calls before an ongoing admin gr
   assert.equal((await me.json()).capabilities.agent, false);
 });
 
-test("MiMo TTS configuration stays encrypted and never returns the API key", async () => {
-  const harness = await createHarness();
-  harness.env.DB = harness.DB;
-  const admin = await login(
-    harness.env,
-    harness.ctx,
-    "Drac",
-    "test-pass",
-    "203.0.113.39"
-  );
-  assert.equal(admin.response.status, 200);
-
-  const initial = await api(
-    harness.env,
-    harness.ctx,
-    "/api/admin/v1/integrations/mimo-tts",
-    admin
-  );
-  assert.equal(initial.status, 200);
-  assert.equal((await initial.json()).apiKeyConfigured, false);
-
-  const missingKey = await api(
-    harness.env,
-    harness.ctx,
-    "/api/admin/v1/integrations/mimo-tts",
-    admin,
-    { method: "PATCH", body: { enabled: true, model: "mimo-v2.5-tts" } }
-  );
-  assert.equal(missingKey.status, 422);
-
-  const saved = await api(
-    harness.env,
-    harness.ctx,
-    "/api/admin/v1/integrations/mimo-tts",
-    admin,
-    {
-      method: "PATCH",
-      body: { enabled: true, model: "mimo-v2.5-tts", apiKey: "test-mimo-key" },
-    }
-  );
-  assert.equal(saved.status, 200);
-  const savedPayload = await saved.json();
-  assert.equal(savedPayload.apiKeyConfigured, true);
-  assert.equal("apiKey" in savedPayload, false);
-  const stored = await harness.DB.prepare(
-    "SELECT ciphertext FROM provider_configs WHERE provider = 'mimo_tts'"
-  ).first();
-  assert.ok(stored?.ciphertext);
-  assert.notEqual(stored.ciphertext, "test-mimo-key");
+test("removed cloud speech endpoints do not process audio", async()=>{
+ const h=await createHarness(); h.env.DB=h.DB;
+ const admin=await login(h.env,h.ctx,"Drac","test-pass","203.0.113.39");
+ const response=await api(h.env,h.ctx,"/api/voice/asr",admin,{method:"POST",body:{audio:"not-sent"}});
+ assert.equal(response.status,503);
 });
 
 test("Agent requires current explicit consent and filters provider SSE", async () => {

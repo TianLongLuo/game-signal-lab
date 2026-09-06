@@ -1,3 +1,8 @@
+import {
+  createRelationship,
+  advanceRelationship,
+  publicRelationship,
+} from "./companion-events.js";
 import { getPortraitPreset } from "../src/companion-presets.js";
 import { randomUUID, createHash } from "node:crypto";
 import { encryptSecret, decryptSecret } from "./security.js";
@@ -62,7 +67,8 @@ export function transition(stage, scene, choice) {
     return { stage: "familiar", scene: 2 };
   fail(409, "choice_not_available");
 }
-function choices(stage, locale) {
+function choices(stage, locale, relationship) {
+  if (relationship?.ended) return [];
   const en = locale === "en";
   const list =
     stage === "meeting"
@@ -86,14 +92,24 @@ function choices(stage, locale) {
               ],
             ]
           : [];
-  return [...list, ["stay", en ? "Stay in this moment" : "留在此刻"]].map(
-    ([id, label]) => ({ id, label }),
-  );
+  if (["conflict", "painful"].includes(relationship?.tone)) {
+    list.push(
+      ["talk-it-through", en ? "Talk it through" : "把分歧说清楚"],
+      ["give-space", en ? "Give each other space" : "给彼此一点空间"],
+    );
+  } else
+    list.push(["spend-time", en ? "Share another moment" : "一起经历新的片段"]);
+  return [
+    ...list,
+    ["stay", en ? "Stay in this moment" : "留在此刻"],
+    ["end-relationship", en ? "End this relationship" : "结束这段关系"],
+  ].map(([id, label]) => ({ id, label }));
 }
 export class CompanionStore {
-  constructor(db, key) {
+  constructor(db, key, { randomSeed = randomUUID } = {}) {
     this.db = db;
     this.key = key;
+    this.randomSeed = randomSeed;
   }
   pack(value, userId) {
     return JSON.stringify(
@@ -139,6 +155,8 @@ export class CompanionStore {
             id: r.id + ":a",
             role: "assistant",
             content: d.reply,
+            narration:
+              d.event?.narration?.[data.locale === "en" ? "en" : "zh"] ?? null,
             createdAt: r.created_at,
           },
         ];
@@ -169,7 +187,10 @@ export class CompanionStore {
       revision: row.revision,
       version: row.version,
       ...data,
-      choices: choices(data.stage, data.locale),
+      relationship: publicRelationship(
+        data.relationship ?? createRelationship(id),
+      ),
+      choices: choices(data.stage, data.locale, data.relationship),
       turns,
       memories,
       assets,
@@ -195,6 +216,7 @@ export class CompanionStore {
       scene: 0,
       sceneTitles: validateScenes(sceneTitles, locale),
       portraitPresetId,
+      relationship: createRelationship(this.randomSeed()),
     };
     this.db
       .prepare(
@@ -241,8 +263,7 @@ export class CompanionStore {
     if (!Number.isInteger(input.expectedVersion)) fail(400, "invalid_version");
     const row = this.row(userId, id);
     if (row.version !== input.expectedVersion) fail(409, "version_conflict");
-    const data = this.unpack(row.data, userId);
-    transition(data.stage, data.scene, input.choiceId);
+    this.planTurn(userId, id, input);
     if (
       this.db
         .prepare("SELECT count(*) n FROM companion_turns WHERE story_id=?")
@@ -250,13 +271,48 @@ export class CompanionStore {
     )
       fail(409, "story_turn_limit");
   }
+  planTurn(userId, id, input) {
+    const data = this.unpack(this.row(userId, id).data, userId);
+    const relationship = data.relationship ?? createRelationship(id);
+    if (relationship.ended) fail(409, "story_ended");
+    if (
+      input.choiceId &&
+      !choices(data.stage, data.locale, relationship).some(
+        (c) => c.id === input.choiceId,
+      )
+    )
+      fail(409, "choice_not_available");
+    const extra = [
+      "spend-time",
+      "talk-it-through",
+      "give-space",
+      "end-relationship",
+    ].includes(input.choiceId);
+    const next = transition(
+      data.stage,
+      data.scene,
+      extra ? undefined : input.choiceId,
+    );
+    return {
+      ...next,
+      relationship: advanceRelationship(relationship, {
+        opportunity:
+          next.stage !== data.stage || input.choiceId === "spend-time",
+        choiceId: input.choiceId,
+      }),
+    };
+  }
   commitTurn(userId, id, input, reply) {
     return runTransaction(this.db, () => {
       this.checkTurn(userId, id, input);
       cleanText(reply, 16000);
       const row = this.row(userId, id);
       const data = this.unpack(row.data, userId);
-      const next = transition(data.stage, data.scene, input.choiceId);
+      const next = this.planTurn(userId, id, input);
+      const event =
+        next.relationship.event?.id !== data.relationship?.event?.id
+          ? next.relationship.event
+          : null;
       const turnId = randomUUID();
       const now = stamp();
       this.db
@@ -269,7 +325,7 @@ export class CompanionStore {
           userId,
           input.clientTurnId,
           fingerprint(input),
-          this.pack({ input, reply }, userId),
+          this.pack({ input, reply, event }, userId),
           now,
         );
       this.db
