@@ -1256,7 +1256,7 @@ export async function createBackend(options = {}) {
       return;
     }
 
-    if ((method === "GET" || method === "HEAD") && pathname.startsWith("/companion/presets/") && (pathname.endsWith(".jpg") || pathname.endsWith(".png") || pathname.endsWith(".webp"))) {
+    if ((method === "GET" || method === "HEAD") && (pathname.startsWith("/companion/presets/") || pathname.startsWith("/companion/scenes/")) && (pathname.endsWith(".jpg") || pathname.endsWith(".png") || pathname.endsWith(".webp"))) {
       const ext = pathname.split(".").pop().toLowerCase();
       const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
       let body;
