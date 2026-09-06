@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>伴侣模式隐私说明 | Companion privacy · GAME</title>
+    <link rel="stylesheet" href="/companion/styles.css" />
+  </head>
+  <body>
+    <main
+      class="document"
+      style="max-width: 850px; margin: 3rem auto; padding: 1.5rem"
+    >
+      <a href="/companion/">返回相伴 / Back to Together</a>
+      <h1>伴侣模式隐私说明</h1>
+      <p>
+        版本：2026-09-06-companion-v1。适用于虚构成年角色的「相伴、回忆、世界」，旧版关系记录独立保留。
+      </p>
+      <h2>哪些内容会保存？</h2>
+      <p>
+        启用前需要明确同意。确认的人物设定、已完成对话、分支选择、保留的记忆及生成插画会存入你的账号专属服务端空间。旧版对象档案不会自动作为人物或故事素材。录音只有在你主动录制并结束后才提交转写；文字草稿必须点击发送才进入故事。
+      </p>
+      <h2>哪些服务会处理内容？</h2>
+      <p>
+        DeepSeek 接收本次输入、必要的人物设定、近期故事和相关记忆。WAV
+        录音由部署的本地 FunASR 优先识别，失败时可交给已配置的 MiMo
+        识别；句读整理使用
+        DeepSeek。仅点击生成插画时，外貌或世界描述才会发送给单独配置的图像服务（当前适配
+        OpenAI
+        Images）。这些服务适用各自的数据处理条款。网站不声称能控制上游服务的保留周期。
+      </p>
+      <h2>谁可以访问？</h2>
+      <p>
+        网页 API 按登录账号隔离故事、记忆、向量检索和图片，图片不使用公开分享
+        URL。管理员旧版会话查看功能不包含伴侣对话。应用主密钥加密文字记录；图像和向量库须通过私有存储保护。服务器运营人员仍具有基础设施访问权限，这不是端到端加密或运营方零访问系统。
+      </p>
+      <h2>撤回、修改与删除</h2>
+      <p>
+        在设置中撤回同意会停止新的生成并取消待处理任务，不会自动删除你已经保存的故事。回忆可编辑、删除；删除记忆后，其来源回合不再进入后续模型上下文，但仍可在自己的历史中查看。删除整个故事会移除账号中的设定、对话、记忆、任务和图片。向量库清理由后台重试完成；服务中断时可能延迟。运营者备份不会自动同步删除，应向网站运营者确认实际备份保留周期。
+      </p>
+      <h2>统计与联系方式</h2>
+      <p>
+        此版伴侣界面不加载
+        GA4；不向分析服务发送剧情、录音或用户名。额度计数和任务状态属于运行所需信息。账户或备份删除问题请联系向你提供此网站试用的运营者；正式公开运营前应公布有效联系渠道和备份保留周期。
+      </p>
+      <hr />
+      <section lang="en">
+        <h1>Companion privacy</h1>
+        <p>
+          Version: 2026-09-06-companion-v1. This mode is for fictional adult
+          characters. Legacy relationship records stay separate.
+        </p>
+        <h2>Storage and processing</h2>
+        <p>
+          After explicit consent, confirmed character settings, completed
+          conversations, choices, saved memories and generated art are stored
+          privately for your account on the server. Legacy files are not
+          automatically used. Recording is submitted for transcription when you
+          finish it; its text remains an editable draft until you press Send.
+        </p>
+        <p>
+          DeepSeek receives your input and the character, recent story and
+          relevant memories needed to respond. Local FunASR handles audio first
+          where configured; MiMo may be used as a fallback. DeepSeek cleans up
+          punctuation. Image descriptions go to the configured image provider
+          (currently the OpenAI Images adapter) only when you request artwork.
+          Each provider has its own data terms and retention practices.
+        </p>
+        <h2>Access and deletion</h2>
+        <p>
+          Story, memory, vector retrieval and image APIs are scoped to your
+          signed-in account. Images are not public share links. Legacy admin
+          conversation views do not include companion dialogue. Text is
+          encrypted with the application key; infrastructure operators still
+          have server access. This is not end-to-end encryption.
+        </p>
+        <p>
+          Withdraw consent in Settings to stop new generation and cancel pending
+          work. Existing stories stay available for reading and deletion.
+          Deleting a memory excludes its source conversation pair from
+          subsequent model context while keeping your visible history. Deleting
+          the story removes its live database records and images; vector cleanup
+          may be delayed during outages. Backups follow the operator’s published
+          retention period, not immediate automatic deletion.
+        </p>
+        <p>
+          This companion version does not load GA4 or send story content to
+          analytics. Contact the operator who invited you for account or backup
+          deletion. The operator must publish a valid contact channel and actual
+          backup retention policy before a public launch.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

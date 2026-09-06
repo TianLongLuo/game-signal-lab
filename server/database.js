@@ -2,6 +2,8 @@ import { chmodSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import { COMPANION_MIGRATION } from "./companion-schema.js";
+
 const MIGRATIONS = [
   {
     version: 1,
@@ -95,6 +97,7 @@ const MIGRATIONS = [
     version: 5,
     apply: migrateToVersion5,
   },
+  { version: 6, sql: COMPANION_MIGRATION },
 ];
 
 export function openDatabase(path) {

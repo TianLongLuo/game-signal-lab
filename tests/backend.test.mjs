@@ -31,7 +31,8 @@ test("an empty database requires the one-time Drac bootstrap password", async (t
       databasePath: join(directory, "backend.sqlite"),
       secureCookies: false,
       publicOrigin: "http://game.test",
-      env: { CONFIG_MASTER_KEY: MASTER_KEY },
+      env: {
+      COMPANION_ENABLED: "false", CONFIG_MASTER_KEY: MASTER_KEY },
     }),
     /ADMIN_BOOTSTRAP_PASSWORD/
   );
@@ -57,6 +58,7 @@ test("a database from an unknown future migration fails closed", async (t) => {
       secureCookies: false,
       publicOrigin: "http://game.test",
       env: {
+      COMPANION_ENABLED: "false",
         ADMIN_BOOTSTRAP_PASSWORD: ADMIN_PASSWORD,
         CONFIG_MASTER_KEY: MASTER_KEY,
       },
@@ -166,6 +168,7 @@ test("a legacy version-1 database is upgraded without rewriting migration histor
     secureCookies: false,
     publicOrigin: "http://game.test",
     env: {
+      COMPANION_ENABLED: "false",
       ADMIN_BOOTSTRAP_PASSWORD: ADMIN_PASSWORD,
       CONFIG_MASTER_KEY: MASTER_KEY,
       GA_MEASUREMENT_ID: "G-TEST123456",
@@ -176,7 +179,7 @@ test("a legacy version-1 database is upgraded without rewriting migration histor
       .prepare("SELECT version FROM schema_migrations ORDER BY version")
       .all()
       .map((row) => row.version),
-    [1, 2, 3, 4, 5]
+    [1, 2, 3, 4, 5, 6]
   );
   assert.equal(
     backend.db
@@ -306,6 +309,7 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
     deepseekBaseUrl: upstreamBaseUrl,
     allowInsecureDeepSeekForTests: true,
     env: {
+      COMPANION_ENABLED: "false",
       ADMIN_BOOTSTRAP_PASSWORD: ADMIN_PASSWORD,
       CONFIG_MASTER_KEY: MASTER_KEY,
       GA_MEASUREMENT_ID: "G-TEST123456",
@@ -1485,6 +1489,7 @@ test("auth, admin control, encrypted provider config, grants, audit, and SSE wor
     deepseekBaseUrl: upstreamBaseUrl,
     allowInsecureDeepSeekForTests: true,
     env: {
+      COMPANION_ENABLED: "false",
       ADMIN_BOOTSTRAP_PASSWORD: "different-password-must-not-reset",
       CONFIG_MASTER_KEY: MASTER_KEY,
     },
