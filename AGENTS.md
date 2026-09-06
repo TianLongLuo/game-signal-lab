@@ -211,3 +211,8 @@ AND current explicit external-AI consent
 - `npm run check` 与 `npm run build:sites` 通过；
 - PR 中没有真实个人数据、密码、密钥、网络指纹、未说明的遥测或正文日志；
 - 发布分支、GitHub PR 与部署产物来自同一已验证源码状态。
+
+
+## Companion alpha addendum (2026-09-06)
+
+The user-approved companion spec supersedes the relationship-analysis-only product direction for the Node companion entry, not for legacy modules. Read `docs/COMPANION_RELEASE.md` for actual first-release scope. Companion is fictional adult romance, never real-person profiling. Its encrypted private server-side stories use separate companion tables and an isolated Qdrant collection; never pass legacy customer data into companion prompts or expose companion content through legacy admin message APIs. Three main companion tabs; no TTS, no automatic voice submission. Test all permission/consent gates and cancellation before publishing. Sites stays on the legacy entry.

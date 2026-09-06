@@ -8,7 +8,7 @@
     "start": "node server/index.js",
     "serve": "python3 -m http.server 4173",
     "build:sites": "node build-sites/build-sites.mjs",
-    "check:syntax": "node --check app.js && node --check src/platform-client.js && node --check src/signal-engine.js && node --check src/state-schema.js && node --check src/voice-utils.js && node --check admin/app.js && node --check server/app.js && node --check server/database.js && node --check server/index.js && node --check server/security.js && node --check server/vector-store.js && node --check sites-runtime/index.js && node --check build-sites/build-sites.mjs && node --check scripts/check-project.mjs",
+    "check:syntax": "node --check app.js && node --check src/platform-client.js && node --check src/signal-engine.js && node --check src/state-schema.js && node --check src/voice-utils.js && node --check admin/app.js && node --check server/app.js && node --check server/database.js && node --check server/index.js && node --check server/security.js && node --check server/vector-store.js && node --check sites-runtime/index.js && node --check build-sites/build-sites.mjs && node --check scripts/check-project.mjs && node --check server/companion.js && node --check server/companion-api.js && node --check server/companion-memory.js && node --check server/companion-schema.js && node --check companion/app.js && node --check src/companion-client.js",
     "check:structure": "node scripts/check-project.mjs",
     "test": "node --test tests/*.test.mjs sites-runtime/runtime.test.mjs",
     "check": "npm run build:sites && npm run check:syntax && npm test && npm run check:structure"

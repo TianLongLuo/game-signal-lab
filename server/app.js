@@ -1,3 +1,5 @@
+import { createCompanionApi } from "./companion-api.js";
+import { CompanionError } from "./companion.js";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { readFile, readdir } from "node:fs/promises";
@@ -95,6 +97,12 @@ const STATIC_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const STATIC_ASSETS = new Map([
   ["/", ["index.html", "text/html; charset=utf-8"]],
   ["/index.html", ["index.html", "text/html; charset=utf-8"]],
+  ["/legacy/", ["index.html", "text/html; charset=utf-8"]],
+  ["/companion/", ["companion/index.html", "text/html; charset=utf-8"]],
+  ["/companion/privacy/", ["companion/privacy.html", "text/html; charset=utf-8"]],
+  ["/companion/app.js", ["companion/app.js", "text/javascript; charset=utf-8"]],
+  ["/companion/styles.css", ["companion/styles.css", "text/css; charset=utf-8"]],
+  ["/src/companion-client.js", ["src/companion-client.js", "text/javascript; charset=utf-8"]],
   ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
   ["/zine-system.css", ["zine-system.css", "text/css; charset=utf-8"]],
   ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
@@ -233,6 +241,36 @@ export async function createBackend(options = {}) {
       })
     : null;
   const activeLiveAsrControllers = new Map();
+  const companionEnabled = env.COMPANION_ENABLED !== "false";
+  const companion = createCompanionApi({
+    db, masterKey, env, fetchImpl, authenticate: requireAuthentication, csrf: requireCsrf,
+    readJson, sendJson, publicRootEnabled: companionEnabled,
+    usage: auth => publicAgentUsage(db, auth),
+    authorize: auth => {
+      if (!hasCurrentExternalAiConsent(auth)) throw new HttpError(403, "external_ai_consent_required", "请先同意外部 AI 数据处理说明。");
+      requireAgentAuthorization(db, auth, "当前账户尚未获得 Agent 权限。");
+    },
+    authorizeCommit: auth => {
+      if (!hasCurrentExternalAiConsent(auth)) throw new HttpError(403, "external_ai_consent_required", "AI 同意已撤回。");
+      if (getAccessPolicy(db).global_enabled !== 1 || (auth.role !== "admin" && (auth.membership_status !== "active" || (auth.expires_at && Date.parse(auth.expires_at) <= Date.now())))) throw new HttpError(403, "agent_access_denied", "账户权限已变更。");
+    },
+    authorizeStoredUser: userId => {
+      const row = db.prepare(`SELECT u.*, m.status AS membership_status, m.expires_at,
+        c.policy_version AS consent_policy_version, c.consented_at AS ai_consented_at,
+        c.revoked_at AS ai_revoked_at FROM users u
+        LEFT JOIN memberships m ON m.user_id=u.id
+        LEFT JOIN external_ai_consents c ON c.user_id=u.id WHERE u.id=?`).get(userId);
+      if (!row || row.disabled_at || !hasCurrentExternalAiConsent(row) || getAccessPolicy(db).global_enabled !== 1 ||
+          (row.role !== "admin" && (row.membership_status !== "active" || (row.expires_at && Date.parse(row.expires_at) <= Date.now()))))
+        throw new HttpError(403, "companion_access_revoked", "AI 授权已变更。");
+    },
+    consume: auth => { agentRequests.consume(String(auth.id)); consumeIncludedAgentCall(db, auth); },
+    generateConfig: () => {
+      const config = db.prepare("SELECT * FROM provider_configs WHERE provider='deepseek'").get();
+      if (!isProviderConfigUsable(config)) throw new HttpError(503, "deepseek_not_configured", "请在管理员后台配置 DeepSeek。");
+      return {url: new URL("chat/completions", deepseekBaseUrl), model: config.model, key: decryptSecret(config, masterKey)};
+    },
+  });
 
   let dummyPasswordHash;
   try {
@@ -283,10 +321,15 @@ export async function createBackend(options = {}) {
     }
 
     if (method === "GET" && pathname === "/api/health") {
-      sendJson(response, 200, { ok: true });
+      sendJson(response, 200, { ok: true, capabilities: { companion: companionEnabled } });
       return;
     }
 
+    if (await companion.route(request, response, pathname)) return;
+    if ((method === "GET" || method === "HEAD") && companionEnabled && ["/", "/index.html", "/en", "/en/"].includes(pathname)) {
+      await serveStaticAsset(response, "/companion/", method, publicOrigin);
+      return;
+    }
     if (method === "GET" && pathname === "/robots.txt") {
       if (!publicOrigin) {
         throw new HttpError(503, "public_origin_unavailable", "公开 Origin 尚未配置。");
@@ -572,6 +615,7 @@ export async function createBackend(options = {}) {
           "外部 AI 数据处理说明已更新，请重新确认。"
         );
       }
+      if (!body.accepted) companion.revoke(auth.id);
       if (!body.accepted && vectorStore) {
         await clearVectorStoreForUser(vectorStore, auth.id);
       }
@@ -2389,6 +2433,7 @@ export async function createBackend(options = {}) {
       return server.address();
     },
     async close() {
+      companion.close();
       if (server.listening) {
         server.close();
         await once(server, "close");
@@ -3784,6 +3829,9 @@ async function serveStaticAsset(response, pathname, method, publicOrigin, blogWi
     : STATIC_ASSETS.get(pathname);
   let body = await readFile(join(STATIC_ROOT, relativePath));
   const isHtml = contentType.startsWith("text/html");
+  if (pathname === "/legacy/") {
+    body = Buffer.from(body.toString("utf8").replaceAll('href="./', 'href="/').replaceAll('src="./', 'src="/'));
+  }
   if (isHtml && publicOrigin && ["/", "/en", "/en/"].includes(pathname)) {
     const pagePath = pathname.startsWith("/en") ? "/en/" : "/";
     // Absolute canonical/og tags so search engines resolve the right origin.
@@ -3839,7 +3887,7 @@ function handleRequestError(response, error, options = {}) {
     return;
   }
   if (options.admin) {
-    if (error instanceof HttpError) {
+    if (error instanceof HttpError || error instanceof CompanionError) {
       const adminCode =
         {
           authentication_required: "ADMIN_UNAUTHORIZED",
@@ -3869,7 +3917,7 @@ function handleRequestError(response, error, options = {}) {
     });
     return;
   }
-  if (error instanceof HttpError) {
+  if (error instanceof HttpError || error instanceof CompanionError) {
     sendJson(response, error.status, { error: { code: error.code, message: error.message } });
     return;
   }
