@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Reference only. Production runtimes replace PUBLIC_ORIGIN dynamically. -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>PUBLIC_ORIGIN/</loc>
+  </url>
+  <url>
+    <loc>PUBLIC_ORIGIN/privacy/</loc>
+  </url>
+  <url>
+    <loc>PUBLIC_ORIGIN/en/privacy/</loc>
+  </url>
+</urlset>

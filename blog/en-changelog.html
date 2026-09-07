@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>What's New — Week of September 7, 2026 | GAME Signal Lab</title>
+  <meta name="description" content="Weekly changelog for GAME Signal Lab covering the Companion alpha release (private fictional romance visual-novel) and 7 new bilingual blog articles (topics 40–46)." />
+  <meta name="robots" content="noindex"/>
+  <link rel="alternate" hreflang="zh-CN" href="https://rsdgame.online/blog/changelog.html" />
+  <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0c0910;color:#c4bfd0;line-height:2;max-width:720px;margin:0 auto;padding:60px 20px}h1{font-size:1.8rem;color:#f5f2fa;margin-bottom:8px;line-height:1.4}.subtitle{color:#6b5e80;font-size:.85rem;margin-bottom:36px}h2{font-size:1.2rem;color:#d4cfe6;margin:36px 0 12px;padding-bottom:6px;border-bottom:1px solid #2a2038}h3{font-size:1rem;color:#b8a8d0;margin:20px 0 8px}ul{margin:8px 0 20px 20px}li{margin-bottom:6px;font-size:.92rem}code{font-family:"SF Mono",Monaco,Menlo,monospace;font-size:.8rem;color:#a855f7;background:#1a1425;padding:1px 6px;border-radius:3px}p{margin-bottom:14px;font-size:.92rem}.badge{display:inline-block;font-size:.7rem;padding:1px 8px;border-radius:4px;margin-right:4px;font-weight:600;text-transform:uppercase}.badge-feat{background:#1a3a2a;color:#4ade80}.badge-fix{background:#3a1a1a;color:#f87171}.badge-perf{background:#1a2a3a;color:#60a5fa}.badge-docs{background:#2a1a3a;color:#c084fc}.badge-i18n{background:#3a2a1a;color:#fbbf24}.stats{background:#14101c;border:1px solid #2a2038;border-radius:6px;padding:16px 20px;margin:20px 0}.stats dt{font-size:.78rem;color:#6b5e80;text-transform:uppercase;letter-spacing:.04em}.stats dd{font-size:1.1rem;color:#d4cfe6;margin-bottom:10px}.stats dd:last-child{margin-bottom:0}.back{margin-top:60px;font-size:.9rem}.back a{color:#a855f7}a{color:#a855f7}</style>
+</head>
+<body>
+  <h1>What's New — Week of September 7, 2026</h1>
+  <div class="subtitle">August 31 – September 7, 2026 · 8 commits · 14 new blog articles</div>
+
+  <p>This was a milestone week. The <strong>Companion alpha</strong> — a private, fictional adult-romance visual-novel experience — shipped as the first runnable end-to-end release, while the publishing engine kept its rhythm with seven new bilingual articles in the "recognizing manipulation" series, bringing the archive to <strong>92 articles</strong> (46 Chinese + 46 English).</p>
+
+  <div class="stats">
+    <dl>
+      <dt>Total Commits</dt>
+      <dd>8 (5 substantive + 2 merges + 1 changelog run)</dd>
+      <dt>Substantive Changes</dt>
+      <dd>3 features / 2 fixes — the Companion alpha landed this week</dd>
+      <dt>Blog Articles</dt>
+      <dd>46 Chinese + 46 English = 92 articles live (+14 this week: topics 40–46)</dd>
+      <dt>Google Index</dt>
+      <dd>Indexed · sitemap: 100 URLs (+14) · no new GSC signal (credentials unavailable)</dd>
+      <dt>Test Suite</dt>
+      <dd>129 pass / 0 fail · up from 65 (companion alpha added 64 tests)</dd>
+    </dl>
+  </div>
+
+  <h2>🧑‍💻 Code Changes — Companion Alpha</h2>
+  <p>The headline is the <strong>Companion alpha</strong>: the first closed loop of a private fictional-adult-romance experience (never real-person profiling). It ships three main tabs, DeepSeek-generated characters and scene titles, streamed story turns, branch-driven progression, memory saving with source links, an isolated Qdrant collection, and optional image generation. The legacy app and admin entry remain available under <code>/legacy/</code>.</p>
+
+  <ul>
+    <li><span class="badge badge-feat">feat</span> Ship private romance companion alpha with streamed stories, memory and artwork <code>c27b790</code></li>
+    <li><span class="badge badge-feat">feat</span> Bundle twenty selectable illustrated portraits <code>f39c1b7</code></li>
+    <li><span class="badge badge-feat">feat</span> Add illustrated visual-novel stage and reliable FunASR voice <code>85316b4</code></li>
+    <li><span class="badge badge-fix">fix</span> Serve companion portrait presets with 404 on missing files <code>baf7a1a</code></li>
+    <li><span class="badge badge-fix">fix</span> Serve companion scene backgrounds from /companion/scenes/ <code>b5d3259</code></li>
+  </ul>
+
+  <h2>📝 New Blog Articles — "Recognizing Manipulation" Series</h2>
+  <p>The seven-part-per-week rhythm continues on recognizing manipulation and unhealthy relationship dynamics. Topics 40–46 extend the series into guilt-tripping, jealousy baiting, isolation, the idealize-then-devalue cycle, hoovering, trauma bonding, and cognitive dissonance — the psychological mechanisms that make leaving a hurtful relationship so hard. Each article ships in Chinese and English.</p>
+
+  <ul>
+    <li><span class="badge badge-feat">40</span> <a href="/blog/40-guilt-tripping.html">How to Recognize Guilt-Tripping: When "After Everything I've Done for You" Makes You Give In</a> <em>(en: <a href="/blog/en-40-guilt-tripping.html">en-40</a>)</em></li>
+    <li><span class="badge badge-feat">41</span> <a href="/blog/41-jealousy-baiting.html">How to Recognize Jealousy Baiting: When "Someone Else Wants Me" Is a Lever, Not a Fact</a> <em>(en: <a href="/blog/en-41-jealousy-baiting.html">en-41</a>)</em></li>
+    <li><span class="badge badge-feat">42</span> <a href="/blog/42-isolation.html">How to Recognize Isolation: When "I'm the Only One Who Understands You" Slowly Walls Off Your World</a> <em>(en: <a href="/blog/en-42-isolation.html">en-42</a>)</em></li>
+    <li><span class="badge badge-feat">43</span> <a href="/blog/43-idealize-then-devalue.html">How to Recognize the Idealize-Then-Devalue Cycle: When "You're My Whole World" Turns Into "You're Not Good Enough"</a> <em>(en: <a href="/blog/en-43-idealize-then-devalue.html">en-43</a>)</em></li>
+    <li><span class="badge badge-feat">44</span> <a href="/blog/44-hoovering.html">How to Recognize Hoovering: When They Suddenly Turn Back Into "The One Who Gets You" After You Left</a> <em>(en: <a href="/blog/en-44-hoovering.html">en-44</a>)</em></li>
+    <li><span class="badge badge-feat">45</span> <a href="/blog/45-trauma-bonding.html">How to Recognize Trauma Bonding: Why You Can't Leave the Person Who Hurts You</a> <em>(en: <a href="/blog/en-45-trauma-bonding.html">en-45</a>)</em></li>
+    <li><span class="badge badge-feat">46</span> <a href="/blog/46-cognitive-dissonance.html">How to Recognize Cognitive Dissonance: Why the More You're Hurt, the More You Defend Them and Can't Let Go</a> <em>(en: <a href="/blog/en-46-cognitive-dissonance.html">en-46</a>)</em></li>
+  </ul>
+
+  <h2>🔍 SEO & Indexing</h2>
+  <p>The sitemap grew from 86 to <strong>100 URLs</strong> (+14), tracking the seven new bilingual articles. All 100 URLs returned HTTP 200 in this week's SEO health check. Google indexing remains confirmed-as-indexed from the last verified signal; no fresh Search Console data was available this week.</p>
+
+  <h2>🤖 CI Automation</h2>
+  <p>The test suite grew from 65 to <strong>129 passing tests</strong> (0 failures) as the companion alpha landed with full regression coverage for authorization isolation, Origin/CSRF, last-credit, duplicate submission, stream-drop safety, and private image paths. CI remains green, and GitHub push access was re-confirmed this week via a throwaway branch probe (exit 0).</p>
+
+  <h2>⚠️ Known Issues</h2>
+  <ul>
+    <li><strong>Google Search Console</strong> — No credentials available this week; index status last confirmed as indexed, no new signal.</li>
+    <li><strong>Baidu Verification</strong> — Still not submitted.</li>
+    <li><strong>Sitemap</strong> — Missing <code>&lt;lastmod&gt;</code> tags (optional optimization, doesn't block indexing).</li>
+    <li><strong>Uncommitted blog files</strong> — Articles 22–46 (both languages) are published to disk but not yet committed to git; the blog-daily loop writes files without committing. Worth a hygiene pass.</li>
+    <li><strong>Companion image generation</strong> — Requires an independent image-provider credential (OpenAI <code>gpt-image-1</code>); not yet verified in production with real keys. Text-mode companion works without it.</li>
+    <li><strong>Dependency audit</strong> — The <code>geoip-lite → ip-address</code> chain still reports 1 high + 1 medium npm audit finding; the code only uses it for geo lookup, not proxy-trust or HTML output. Evaluate before wider public release.</li>
+  </ul>
+
+  <div class="back"><a href="/blog/">← Back to Blog</a> · <a href="/blog/changelog.html">中文版</a> · <a href="https://rsdgame.online/">Enter GAME Signal Lab</a></div>
+</body>
+</html>

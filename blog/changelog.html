@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>本周更新 — 2026年9月7日周报 | GAME Signal Lab</title>
+  <meta name="description" content="GAME Signal Lab 每周更新日志：本周上线 Companion alpha（私人虚构恋爱视觉小说），并新增 7 篇「识别操控」系列双语博客文章（主题 40–46），博客扩展至 92 篇。" />
+  <meta name="robots" content="noindex"/>
+  <link rel="alternate" hreflang="en" href="https://rsdgame.online/blog/en-changelog.html" />
+  <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans SC",sans-serif;background:#0c0910;color:#c4bfd0;line-height:2;max-width:720px;margin:0 auto;padding:60px 20px}h1{font-size:1.8rem;color:#f5f2fa;margin-bottom:8px;line-height:1.4}.subtitle{color:#6b5e80;font-size:.85rem;margin-bottom:36px}h2{font-size:1.2rem;color:#d4cfe6;margin:36px 0 12px;padding-bottom:6px;border-bottom:1px solid #2a2038}h3{font-size:1rem;color:#b8a8d0;margin:20px 0 8px}ul{margin:8px 0 20px 20px}li{margin-bottom:6px;font-size:.92rem}code{font-family:"SF Mono",Monaco,Menlo,monospace;font-size:.8rem;color:#a855f7;background:#1a1425;padding:1px 6px;border-radius:3px}p{margin-bottom:14px;font-size:.92rem}.badge{display:inline-block;font-size:.7rem;padding:1px 8px;border-radius:4px;margin-right:4px;font-weight:600;text-transform:uppercase}.badge-feat{background:#1a3a2a;color:#4ade80}.badge-fix{background:#3a1a1a;color:#f87171}.badge-perf{background:#1a2a3a;color:#60a5fa}.badge-docs{background:#2a1a3a;color:#c084fc}.badge-i18n{background:#3a2a1a;color:#fbbf24}.stats{background:#14101c;border:1px solid #2a2038;border-radius:6px;padding:16px 20px;margin:20px 0}.stats dt{font-size:.78rem;color:#6b5e80;text-transform:uppercase;letter-spacing:.04em}.stats dd{font-size:1.1rem;color:#d4cfe6;margin-bottom:10px}.stats dd:last-child{margin-bottom:0}.back{margin-top:60px;font-size:.9rem}.back a{color:#a855f7}a{color:#a855f7}</style>
+</head>
+<body>
+  <h1>本周更新 — 2026年9月7日周报</h1>
+  <div class="subtitle">2026年8月31日 – 9月7日 · 8 次提交 · 新增 14 篇博客文章</div>
+
+  <p>这是一个里程碑式的一周。<strong>Companion alpha</strong>——私人虚构恋爱视觉小说体验——作为首个可运行的端到端版本正式上线；与此同时，发布引擎保持节奏，新增七篇「识别操控」系列双语文章，将档案库扩展到 <strong>92 篇文章</strong>（46 篇中文 + 46 篇英文）。</p>
+
+  <div class="stats">
+    <dl>
+      <dt>总提交数</dt>
+      <dd>8（5 项实质性 + 2 次合并 + 1 次 changelog 运行）</dd>
+      <dt>实质性变更</dt>
+      <dd>3 功能 / 2 修复——本周 Companion alpha 落地</dd>
+      <dt>博客文章</dt>
+      <dd>46 篇中文 + 46 篇英文 = 92 篇文章已上线（本周 +14 篇：主题 40–46）</dd>
+      <dt>Google 索引状态</dt>
+      <dd>已索引 · sitemap 包含 100 个 URL（+14）· 无新 GSC 信号（凭据不可用）</dd>
+      <dt>测试套件</dt>
+      <dd>129 通过 / 0 失败 · 较上周 65 大幅增长（companion alpha 新增 64 项测试）</dd>
+    </dl>
+  </div>
+
+  <h2>🧑‍💻 代码变更 — Companion Alpha</h2>
+  <p>头条是 <strong>Companion alpha</strong>：私人虚构恋爱体验的第一个可运行闭环（绝非真人画像）。它带来三个主标签页、DeepSeek 生成的人物与场景标题、逐段流式故事回合、分支驱动的剧情推进、带来源链接的记忆保存、隔离的 Qdrant 集合，以及可选的图片生成。旧应用与管理员入口保留在 <code>/legacy/</code> 下。</p>
+
+  <ul>
+    <li><span class="badge badge-feat">feat</span> 上线私人恋爱 Companion alpha：流式故事、记忆与美术 <code>c27b790</code></li>
+    <li><span class="badge badge-feat">feat</span> 内置二十个可选人物插画 <code>f39c1b7</code></li>
+    <li><span class="badge badge-feat">feat</span> 新增插画式视觉小说舞台与稳定的 FunASR 语音 <code>85316b4</code></li>
+    <li><span class="badge badge-fix">fix</span> 缺失文件时以 404 返回 companion 人物预设图 <code>baf7a1a</code></li>
+    <li><span class="badge badge-fix">fix</span> 从 /companion/scenes/ 提供 companion 场景背景图 <code>b5d3259</code></li>
+  </ul>
+
+  <h2>📝 新增博客文章 —「识别操控」系列</h2>
+  <p>每周七篇的节奏延续，继续围绕「识别操控与不健康关系动态」。主题 40–46 将系列推进到内疚诱导、制造嫉妒、孤立、理想化与贬低的交替、回吸、创伤纽带与认知失调——正是这些心理机制让离开一段有害关系变得如此艰难。每篇均以中英文双语发布。</p>
+
+  <ul>
+    <li><span class="badge badge-feat">40</span> <a href="/blog/40-guilt-tripping.html">如何识别「内疚诱导」：当「我为你付出了那么多」让你一次次妥协</a> <em>（英文：<a href="/blog/en-40-guilt-tripping.html">en-40</a>）</em></li>
+    <li><span class="badge badge-feat">41</span> <a href="/blog/41-jealousy-baiting.html">如何识别「制造嫉妒」：当对方用「别人对我有意思」操控你的不安全感</a> <em>（英文：<a href="/blog/en-41-jealousy-baiting.html">en-41</a>）</em></li>
+    <li><span class="badge badge-feat">42</span> <a href="/blog/42-isolation.html">如何识别「孤立」：当对方用「只有我最懂你」一点点切断你的世界</a> <em>（英文：<a href="/blog/en-42-isolation.html">en-42</a>）</em></li>
+    <li><span class="badge badge-feat">43</span> <a href="/blog/43-idealize-then-devalue.html">如何识别「理想化与贬低的交替」：当「你是我的全世界」突然变成「你什么都不行」</a> <em>（英文：<a href="/blog/en-43-idealize-then-devalue.html">en-43</a>）</em></li>
+    <li><span class="badge badge-feat">44</span> <a href="/blog/44-hoovering.html">如何识别「回吸」：当 TA 在分开后突然变回「那个最懂你的人」</a> <em>（英文：<a href="/blog/en-44-hoovering.html">en-44</a>）</em></li>
+    <li><span class="badge badge-feat">45</span> <a href="/blog/45-trauma-bonding.html">如何识别「创伤纽带」：为什么明知道这段关系在伤害你，却还是离不开、还是会心软</a> <em>（英文：<a href="/blog/en-45-trauma-bonding.html">en-45</a>）</em></li>
+    <li><span class="badge badge-feat">46</span> <a href="/blog/46-cognitive-dissonance.html">如何识别「认知失调」：为什么你越是被伤害，反而越替对方辩解、越舍不得放手</a> <em>（英文：<a href="/blog/en-46-cognitive-dissonance.html">en-46</a>）</em></li>
+  </ul>
+
+  <h2>🔍 SEO 与索引</h2>
+  <p>sitemap 从 86 个 URL 增长到 <strong>100 个</strong>（+14），与七篇新增双语文章同步。本周 SEO 健康检查中，全部 100 个 URL 均返回 HTTP 200。Google 索引状态沿用上次验证的「已索引」结论；本周无新的 Search Console 数据可用。</p>
+
+  <h2>🤖 CI 自动化</h2>
+  <p>测试套件从 65 项增长到 <strong>129 项通过</strong>（0 失败），伴随 companion alpha 落地了完整的回归覆盖：鉴权隔离、Origin/CSRF、最后一次额度、重复提交、断流安全与图片私有路径。CI 保持绿灯，本周通过临时分支探测（exit 0）再次确认 GitHub 推送权限可用。</p>
+
+  <h2>⚠️ 已知问题</h2>
+  <ul>
+    <li><strong>Google Search Console</strong> — 本周无凭据可用；索引状态上次确认为已索引，无新信号。</li>
+    <li><strong>百度验证</strong> — 仍未提交。</li>
+    <li><strong>Sitemap</strong> — 缺少 <code>&lt;lastmod&gt;</code> 标签（可选优化，不影响收录）。</li>
+    <li><strong>博客文件未提交</strong> — 文章 22–46（双语）已发布到磁盘但尚未提交到 git；blog-daily loop 写文件但不提交，建议做一次整理。</li>
+    <li><strong>Companion 图片生成</strong> — 需要独立的图片服务凭据（OpenAI <code>gpt-image-1</code>）；尚未用真实密钥在生产环境验证。文字模式的 companion 无需图片即可使用。</li>
+    <li><strong>依赖审计</strong> — <code>geoip-lite → ip-address</code> 链仍报告 1 项高危 + 1 项中危 npm audit 发现；当前代码仅用于地理查询，不用于代理信任判断或向网页输出地址。正式公网发布前应单独评估迁移。</li>
+  </ul>
+
+  <div class="back"><a href="/blog/">← 返回博客</a> · <a href="/blog/en-changelog.html">English Version</a> · <a href="https://rsdgame.online/">进入 GAME Signal Lab</a></div>
+</body>
+</html>

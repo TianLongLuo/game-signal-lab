@@ -5,18 +5,108 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="GAME Signal Lab：帮助成年人记录关系事件、区分事实与猜测、理解互动信号并完成复盘。"
+      content="GAME Signal Lab 帮助成年人记录关系事件、区分事实与猜测，并形成尊重边界、可以复盘的下一步沟通。在线关系记录与信号分析工具，数据保存在本地。"
     />
-    <meta name="theme-color" content="#182036" />
-    <title>GAME · Signal Lab</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='28' fill='%23182036'/%3E%3Ccircle cx='32' cy='32' r='14' fill='%23aee8d0'/%3E%3Ccircle cx='32' cy='32' r='5' fill='%23566ff2'/%3E%3C/svg%3E" />
+    <meta
+      name="keywords"
+      content="关系记录,关系信号,沟通复盘,关系分析,情绪记录,边界意识,关系日记,GAME Signal Lab"
+    />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <meta name="google-site-verification" content="7dnn1eAB0SIFdr7eQNBM8eVD5HUz6AttJ5l5hD7qdFY" />
+    <meta name="baidu-site-verification" content="rsdgame-online" />
+    <link rel="canonical" href="/" />
+    <link rel="alternate" hreflang="zh-CN" href="/" />
+    <link rel="alternate" hreflang="en" href="/en/" />
+    <link rel="alternate" hreflang="x-default" href="/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:site_name" content="GAME Signal Lab" />
+    <meta property="og:url" content="/" />
+    <meta property="og:image" content="/assets/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="GAME Signal Lab 把关系信号整理成可复盘的观察" />
+    <meta
+      property="og:title"
+      content="GAME Signal Lab｜把关系信号整理成可复盘的观察"
+    />
+    <meta
+      property="og:description"
+      content="记录关系事件、区分事实与猜测，形成尊重边界的下一步沟通。"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="/assets/og-image.png" />
+    <meta
+      name="twitter:title"
+      content="GAME Signal Lab｜把关系信号整理成可复盘的观察"
+    />
+    <meta
+      name="twitter:description"
+      content="记录关系事件、区分事实与猜测，形成尊重边界的下一步沟通。"
+    />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://www.google-analytics.com; connect-src 'self' https://www.google-analytics.com https://region1.google-analytics.com; object-src 'none'; base-uri 'none'; form-action 'self'"
+    />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="theme-color" content="#0c0910" />
+    <title>GAME Signal Lab｜把关系信号整理成可复盘的观察</title>
+    <link rel="icon" href="/assets/lovart/lovart_2e014588e25e.png" />
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./zine-system.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "/#website",
+            "url": "/",
+            "name": "GAME Signal Lab",
+            "description": "帮助成年人记录关系事件、区分事实与猜测，并形成尊重边界、可以复盘的下一步沟通。",
+            "inLanguage": "zh-CN",
+            "publisher": {
+              "@type": "Organization",
+              "name": "GAME Signal Lab"
+            }
+          },
+          {
+            "@type": "WebApplication",
+            "@id": "/#app",
+            "url": "/",
+            "name": "GAME Signal Lab",
+            "description": "帮助成年人记录关系事件、区分事实与猜测，并形成尊重边界、可以复盘的下一步沟通。",
+            "applicationCategory": "LifestyleApplication",
+            "operatingSystem": "Any",
+            "inLanguage": "zh-CN",
+            "isAccessibleForFree": true,
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "CNY"
+            },
+            "audience": {
+              "@type": "Audience",
+              "suggestedMinAge": 18
+            }
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
+    <svg class="scene-filter-defs" aria-hidden="true" focusable="false">
+      <defs>
+        <filter id="scene-fluid" x="-12%" y="-18%" width="124%" height="136%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.012 0.035" numOctaves="2" seed="7" result="noise" />
+          <feDisplacementMap in="SourceGraphic" in2="noise" scale="4" xChannelSelector="R" yChannelSelector="B" />
+        </filter>
+      </defs>
+    </svg>
     <a class="skip-link" href="#main-content">跳到主要内容</a>
 
     <div class="app-shell" id="app-shell" aria-hidden="true">
-      <aside class="sidebar" aria-label="主导航">
+      <aside class="sidebar" id="primary-sidebar" aria-label="主导航">
         <button class="brand" data-view="dashboard" aria-label="返回首页">
           <span class="brand-mark" aria-hidden="true">
             <span></span><span></span><span></span>
@@ -27,54 +117,65 @@
           </span>
         </button>
 
-        <nav class="nav-list">
-          <button class="nav-item is-active" data-view="dashboard">
-            <span class="nav-icon" aria-hidden="true">⌂</span>
-            <span>今日概览</span>
-          </button>
+        <nav class="nav-list" aria-label="三项主导航" data-primary-nav="three">
           <button class="nav-item" data-view="new-event">
-            <span class="nav-icon" aria-hidden="true">＋</span>
-            <span>记录事件</span>
+            <span class="nav-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>
+            <span data-i18n="startRecord">开始记录</span>
           </button>
           <button class="nav-item" data-view="people">
-            <span class="nav-icon" aria-hidden="true">◎</span>
-            <span>关系档案</span>
+            <span class="nav-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="3" x2="12" y2="9"/><line x1="12" y1="15" x2="12" y2="21"/><line x1="3" y1="12" x2="9" y2="12"/><line x1="15" y1="12" x2="21" y2="12"/></svg></span>
+            <span data-i18n="people">对象档案</span>
           </button>
-          <button class="nav-item" data-view="review">
-            <span class="nav-icon" aria-hidden="true">↺</span>
-            <span>行动复盘</span>
-          </button>
-          <button class="nav-item" data-view="profile">
-            <span class="nav-icon" aria-hidden="true">◇</span>
-            <span>我的表达</span>
+          <button class="nav-item" data-view="agent">
+            <span class="nav-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
+            <span data-i18n="thinkTogether">一起想想</span>
           </button>
         </nav>
+
+        <a class="nav-item nav-item--external" href="/blog/" aria-label="阅读关系信号分析博客">
+          <span class="nav-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></span>
+          <span data-i18n="blog">博客</span>
+        </a>
 
         <div class="sidebar-note">
           <span class="privacy-dot" aria-hidden="true"></span>
           <div>
-            <strong>仅保存在本机</strong>
-            <p>数据默认不上传、不追踪。</p>
+            <strong data-i18n="privacyNote">你的故事，由你决定放在哪里</strong>
+            <p data-i18n="privacySub">默认留在本机；使用 Agent 前需明确同意。</p>
+            <a class="sidebar-privacy-link" href="/privacy/">隐私保护说明 →</a>
           </div>
         </div>
 
-        <button class="nav-item nav-item--subtle" data-view="privacy">
-          <span class="nav-icon" aria-hidden="true">◉</span>
-          <span>隐私与数据</span>
-        </button>
       </aside>
+      <button class="sidebar-scrim" id="sidebar-scrim" aria-label="关闭导航" hidden></button>
 
       <div class="workspace">
         <header class="topbar">
-          <button class="mobile-menu" id="mobile-menu" aria-label="打开导航" aria-expanded="false">
+          <button
+            class="mobile-menu"
+            id="mobile-menu"
+            aria-label="打开导航"
+            aria-controls="primary-sidebar"
+            aria-expanded="false"
+          >
             <span></span><span></span>
           </button>
           <div class="topbar-copy">
-            <span class="eyebrow">关系事件与成长记录系统</span>
-            <strong id="topbar-title">今日概览</strong>
+            <span class="eyebrow" data-i18n="tagline">一间只属于你的关系工作室</span>
+              <strong id="topbar-title">今日概览</strong>
           </div>
           <div class="topbar-actions">
-            <span class="local-badge"><i></i> 本地模式</span>
+            <button class="local-badge" id="platform-status" data-action="open-platform-account">
+              <i aria-hidden="true"></i>
+              本地模式
+            </button>
+            <button class="lang-toggle" id="lang-toggle" aria-label="切换语言" title="中文 / English">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="9"/>
+                <ellipse cx="12" cy="12" rx="4" ry="9"/>
+                <line x1="2" y1="12" x2="22" y2="12"/>
+              </svg>
+            </button>
             <button class="avatar-button" data-view="profile" aria-label="打开个人表达设置">
               <span id="avatar-initial">我</span>
             </button>
@@ -85,32 +186,58 @@
       </div>
     </div>
 
+    <div class="scene-transition" id="scene-transition" aria-hidden="true">
+      <span class="scene-transition-index" data-transition-index>01</span>
+      <strong data-transition-title>开始记录</strong>
+      <i aria-hidden="true"></i>
+    </div>
+
     <dialog class="age-gate" id="age-gate" aria-labelledby="age-title">
       <div class="age-orbit" aria-hidden="true">
         <span></span><span></span><span></span>
       </div>
-      <p class="eyebrow">使用前确认</p>
-      <h1 id="age-title">关系里的答案，<br />应该来自双方。</h1>
-      <p class="age-intro">
-        GAME 帮助你整理事实、理解不确定性并准备更清楚的沟通。它不会读心，也不会教你突破拒绝。
+      <p class="eyebrow" data-i18n="ageEyebrow">使用前确认</p>
+      <h1 id="age-title" data-i18n-html="ageTitle">关系里的答案，<br />应该来自双方。</h1>
+      <p class="age-intro" data-i18n="ageIntro">
+        GAME 像一张安静的桌子，帮你把发生过的事、心里的感受和还不确定的部分放在一起看。它不会读心，也不会教你突破拒绝。
       </p>
       <div class="age-principles">
-        <div><span>01</span><p>仅面向年满 18 岁的成年人</p></div>
-        <div><span>02</span><p>明确表达始终高于信号推断</p></div>
-        <div><span>03</span><p>尊重拒绝、边界与自由退出</p></div>
+        <div><span>01</span><p data-i18n="agePrinciple1">仅面向年满 18 岁的成年人</p></div>
+        <div><span>02</span><p data-i18n="agePrinciple2">明确表达始终高于信号推断</p></div>
+        <div><span>03</span><p data-i18n="agePrinciple3">尊重拒绝、边界与自由退出</p></div>
       </div>
       <label class="check-row age-check">
         <input type="checkbox" id="adult-check" />
-        <span>我已年满 18 岁，并理解分析只作参考。</span>
+        <span data-i18n="ageCheck">我已年满 18 岁，并理解分析只作参考。</span>
       </label>
       <button class="button button--primary button--full" id="enter-app" disabled>
-        进入 Signal Lab
+        <span data-i18n="enterApp">进入 Signal Lab</span>
         <span aria-hidden="true">→</span>
       </button>
-      <p class="microcopy">如遇暴力、胁迫、跟踪或严重心理困扰，请优先寻求现实中的专业支持。</p>
+      <p class="microcopy" data-i18n="safetyNote">如遇暴力、胁迫、跟踪或严重心理困扰，请优先寻求现实中的专业支持。</p>
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <noscript>
+      <main>
+        <h1>GAME Signal Lab｜把关系信号整理成可复盘的观察</h1>
+        <p>从一个故事开始，把关系里的困惑慢慢说清楚。</p>
+        <h2>这是什么工具？</h2>
+        <p>GAME Signal Lab 是面向成年人的本地优先关系记录与信号分析工具。你可以匿名记录关系事件，把「发生了什么」与「我猜测什么」分开，理解带不确定性的互动信号，并依据真实反馈复盘。</p>
+        <h2>核心功能</h2>
+        <ul>
+          <li>关系事件日记：记录事实、解释、感受与回应</li>
+          <li>信号分析：区分证据强弱与行动策略</li>
+          <li>行动复盘：用真实结果修正原来的判断</li>
+          <li>尊重边界：明确拒绝与不舒服优先于任何信号推断</li>
+        </ul>
+        <h2>隐私</h2>
+        <p>你的关系记录默认只保存在当前浏览器的本地存储中，不会被自动上传。只有在你明确同意并主动使用时，才会连接账号与 AI 服务。</p>
+        <p><a href="/privacy/">查看完整隐私保护说明</a></p>
+        <p>本应用需要 JavaScript 才能在浏览器本地完成记录和分析。</p>
+      </main>
+    </noscript>
 
     <template id="icon-template">
       <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -118,6 +245,8 @@
       </svg>
     </template>
 
-    <script src="./app.js"></script>
+    <script src="./runtime-config.js"></script>
+    <script src="./analytics.js"></script>
+    <script type="module" src="./app.js"></script>
   </body>
 </html>

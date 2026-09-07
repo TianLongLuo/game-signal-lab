@@ -1,0 +1,7 @@
+# Reference only. Production runtimes replace PUBLIC_ORIGIN dynamically.
+User-agent: *
+Allow: /
+Disallow: /admin/
+Disallow: /api/
+
+Sitemap: PUBLIC_ORIGIN/sitemap.xml
