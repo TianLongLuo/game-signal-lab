@@ -7,43 +7,56 @@
 
 | Loop ID | 名称 | 类型 | 节奏 | 状态 | 上次运行 |
 |---------|------|------|------|------|----------|
-| blog-daily | 每日博客发布 | 内容生成 | 每天 9:00 | active | 2026-09-07 |
-| seo-weekly | SEO 健康监控 | 监控 | 每周一 10:00 | active | 2026-09-07 |
+| blog-daily | 每日博客发布 | 内容生成 | 每天 9:00 | active | 2026-09-14 |
+| seo-weekly | SEO 健康监控 | 监控 | 每周一 10:00 | active | 2026-09-14 |
 | ci-sweeper | CI 失败修复 | 修复 | 每 15 分钟 | active | 2026-08-10 16:08 |
-| changelog-weekly | 更新日志 | 文档 | 每周一 11:00 | active | 2026-09-07 |
+| changelog-weekly | 更新日志 | 文档 | 每周一 11:00 | active | 2026-09-14 |
 
 ## 每日博客 Loop 状态
 
-- **当前文章编号**: 46（已发布 46 篇中文 + 46 篇英文）
-- **上次主题**: 如何识别「认知失调」（cognitive dissonance）：为什么你越是被伤害，反而越替对方辩解、越投入、越舍不得放手——理解「投入越多越不愿承认选错」的心理机制（沉没成本与自我合理化），拆解认知失调如何让你用「说服自己」来回避「离开」的痛苦，列出五个特征（替伤害辩护／贬低离开的选项／抗拒朋友的建议／把离开等同于承认失败／情绪极度矛盾），给出五条摆脱「越痛越放不下」困境的路径（承认选错并不可耻／把沉没成本从决策里剔除／用关系日记还原真实比例／停止追加投入／找回「随时可以离开」的选择权），提醒你放不下的从来不是那个人，而是「不愿承认选错」的执念——清醒不是从不犯错，而是在看清代价后仍有力量转身
-- **下次主题候选**: 如何识别「习得性无助」（learned helplessness）：为什么你在关系里越努力越绝望，最后干脆放弃反抗、觉得「做什么都没用」——理解反复受挫后「习得」的无力感如何让你失去争取的勇气、默认自己无法改变现状，找到重新拿回主动权的路径
+- **当前文章编号**: 53（已发布 53 篇中文 + 53 篇英文）
+- **上次主题**: 如何在亲密中保留属于自己的独处空间：为什么「我需要一点自己的时间」不是拒绝，而是让关系更健康——区分「依赖」与「陪伴」，学会在爱里保留一块只属于自己的空间，让两个完整的人在一起更自在
+- **下次主题候选**: 如何在关系里表达真实的需求而不怕被拒绝：为什么「说出来」不是任性，而是让关系更清晰——区分「请求」与「要求」，学会用不指责的方式说出「我需要」，让两个人都不必靠猜来相处
 - **待验证**: -
 - **人工干预**: -
 
 ## SEO Health 状态
 
-- **上次 sitemap URL 数**: 100（+14，全部 100 个 URL 逐一检查均 200；新增双语博客主题 40–46 共 14 个 URL。构成：46 主题 × 2 语言 = 92 篇文章 + 8 个页面 [/, /en/, /privacy/, /en/privacy/, /blog/, /en/blog/, 中英 changelog]，与 blog-daily 已发布内容完全同步）
-- **上次 Google 索引状态**: 已索引（2026-09-07 本轮无 GSC 凭据无法访问，无新信号）
-- **robots.txt**: 正常（Allow /，Disallow /admin/、/api/，Sitemap 指向正确）
-- **待修复**: -
-- **注释**: 无 4xx/5xx；sitemap 不含 admin/api URL ✓；www→apex 301 正常；仍无 `<lastmod>` 标签（可选优化，不影响收录）；sitemap 由静态构建生成，内容与 blog-daily 发布节奏一致
+- **上次 sitemap URL 数**: 114（+14，全部 114 个 URL 逐一检查均 200。构成：53 主题 × 2 语言 = 106 篇文章 + 8 个页面 [/, /en/, /privacy/, /en/privacy/, /blog/, /en/blog/, blog/changelog.html, blog/en-changelog.html]，与 blog-daily 已发布 53 篇完全同步）
+- **上次 Google 索引状态**: 无法访问（本轮仍无 GSC 凭据，与 2026-09-07 相同，无新信号）
+- **robots.txt**: 格式正常（Allow /，Disallow /admin/、/api/，Sitemap 指向正确）
+- **待修复**: ⚠️ sitemap 与页面 robots 冲突（详见下）
+- **注释**:
+  - ✅ 无 4xx/5xx；sitemap 不含 admin/api URL；www→apex 301 正常；admin 带 `X-Robots-Tag: noindex`；blog 文章 canonical/hreflang 互指正确。
+  - ⚠️ **4 个 sitemap URL 实际为 noindex（sitemap 说收录、页面说别收录，Google 以 noindex 为准）**：
+    - `https://rsdgame.online/` → `noindex, nofollow`（sitemap 中 priority **1.0**）
+    - `https://rsdgame.online/en/` → `noindex, nofollow`（sitemap 中 priority **1.0**）
+    - `https://rsdgame.online/blog/changelog.html` → `noindex`
+    - `https://rsdgame.online/blog/en-changelog.html` → `noindex`
+  - 根因：`server/app.js` L332 —— 当 `COMPANION_ENABLED !== "false"`（默认 true，env 未设置）时，`/`、`/index.html`、`/en`、`/en/` 一律改为返回 `companion/index.html`（成年虚构恋爱视觉小说，页面自带 `noindex,nofollow`）。这正是 companion alpha（commit c27b790 / 85316b4）上线后的副作用。
+  - ⚠️ 真正的可收录营销落地页已迁移到 `https://rsdgame.online/legacy/`（`index,follow`，全 SEO 元数据），但它**不在 sitemap 中、且无任何内链（孤儿页）**，其 canonical 仍写死 `href="/"` → 指向一个 noindex 页面（canonical→noindex 冲突，会导致 /legacy/ 也难收录）。
+  - ⚠️ 英文落地页不可达：`en/index.html` 无独立路由，`/en/` 被 companion 覆盖；`/legacy/en/`、`/en/legacy/` 均 404。英文营销页事实上已死链。
+  - 轻微：`blog/2-how-to-do-relationship-review.html` 缺少 `<meta name="robots" content="index,follow">`（同批其他文章都有），默认仍可收录，仅模板不一致。
+  - 轻微：HEAD 请求对 `/robots.txt`、`/sitemap.xml`、`/runtime-config.js` 返回 404（路由只判 `method === "GET"`），GET 正常 200，Googlebot 用 GET 故影响低。
+  - 说明（非回归）：GA4 采用同意门控设计，`analytics.js` 仅在用户授权后才注入 gtag，故 HTML 中 grep 不到 `G-` 属预期；`runtime-config.js` 已正确下发 `gaMeasurementId: G-EJD3GEZ83Z`，CSP 放行 Google 域。旧的「grep G- 必须 ≥1」检查项对本架构已不适用。
+  - 仍无 `<lastmod>` 标签（可选优化，不影响收录）。
 
 ## CI 状态
 
 - **上次测试结果**: 129 pass, 0 fail
 - **上次部署**: 成功
 - **已知不稳定测试**: 无
-- **注释**: 2026-09-07 changelog-weekly 运行 `npm run check` 确认 129 pass 0 fail（companion alpha 新增 64 项测试，较 08-10 的 65 项大幅增长）
-- **✅ 推送已恢复**: 2026-08-17 changelog-weekly 巡检确认 GitHub token 有效（`git push --dry-run` 新分支探针通过），工作分支已与 origin 同步（0 领先 / 0 落后，HEAD=ef571b9）。此前 08-10 的 401 问题已解除。注：blog/ 下仍留有 blog-daily loop 未提交的文章 22–26 及 index.html 改动。
+- **注释**: 2026-09-14 changelog-weekly 运行 `npm run check` 确认 129 pass 0 fail（与 09-07 持平；本周无代码变更，为内容更新周）
+- **✅ 推送已恢复**: 2026-09-14 changelog-weekly 巡检确认 GitHub token 有效（`git push --dry-run` 临时分支探针 exit 0），工作分支与 origin 同步。注：blog/ 下仍留有 blog-daily loop 未提交的文章 22–53 及 index.html 改动。
 
 ## Changelog 状态
 
-- **上次运行**: 2026-09-07
+- **上次运行**: 2026-09-14
 - **产出**: blog/en-changelog.html + blog/changelog.html
-- **覆盖范围**: 2026-08-31 至 2026-09-07（8 commits，5 实质性：3 feat + 2 fix）
-- **本周主题**: Companion alpha 里程碑周——私人虚构恋爱视觉小说上线（流式故事、记忆、插画、FunASR 语音），测试套件从 65 → 129；另加「识别操控」系列 7 篇双语文章（主题 40–46）
-- **博客文章数**: 46 中文 + 46 英文 = 92 篇（本周 +14，主题 40–46）
-- **备注**: GitHub push token 已确认可用（临时分支探测 exit 0）；博客文章 22–46 仍为磁盘上未提交状态（blog-daily loop 写文件不提交，待整理）
+- **覆盖范围**: 2026-09-07 至 2026-09-14（1 commit，0 实质性——内容更新周）
+- **本周主题**: 内容更新周——系列从「识别操控」转向「重建与疗愈」，新增 7 篇双语文章（主题 47–53：习得性无助、低自我价值感、讨好型沟通、情感依赖 → 重建自我感、健康边界、亲密中的独处空间）
+- **博客文章数**: 53 中文 + 53 英文 = 106 篇（本周 +14，主题 47–53）
+- **备注**: GitHub push token 已确认可用（临时分支探测 exit 0）；博客文章 22–53 仍为磁盘上未提交状态（blog-daily loop 写文件不提交，待整理）；本轮 SEO 巡检发现新问题——companion alpha 覆盖 /、/en 路由导致 sitemap/robots noindex 冲突，已在 changelog「已知问题」中记录
 
 ## 当前项目阶段
 
@@ -54,4 +67,4 @@
 
 ---
 
-*最后更新：2026-09-07 (changelog-weekly loop 执行) · Loop Engineering framework*
+*最后更新：2026-09-14 (changelog-weekly loop 执行) · Loop Engineering framework*
