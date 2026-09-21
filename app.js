@@ -1,27 +1,57 @@
-const STORAGE_KEY = "game-signal-lab:v1";
+import {
+  ENGINE_VERSION,
+  analyzeEvent,
+  validateEventInput,
+  validateReviewInput,
+} from "./src/signal-engine.js";
+import {
+  AGE_POLICY_VERSION,
+  MAX_BACKUP_BYTES,
+  MAX_CONTACTS,
+  MAX_EVENTS,
+  STATE_VERSION,
+  createDefaultState,
+  inspectStoredState,
+  parseBackup,
+  toPortableState,
+} from "./src/state-schema.js";
+import { PlatformClient, PlatformError } from "./src/platform-client.js";
+import { detectLocale, localizePage, t, toggleLocale } from "./src/i18n.js";
+import {
+  appendVoiceTranscript,
+  encodeMonoWav,
+  extractNewTranscript,
+  normalizeAssistantText,
+  reconcileCumulativeAsrText,
+} from "./src/voice-utils.js";
 
-const defaultState = {
-  version: 1,
-  adultConfirmed: false,
-  profile: {
-    name: "",
-    goal: "",
-    voice: "natural",
-    boundaries: "",
-    anxiety: "",
-  },
-  contacts: [],
-  events: [],
-};
+const STORAGE_KEY = "game-signal-lab:v2";
+const LEGACY_STORAGE_KEYS = ["game-signal-lab:v1"];
+const FINAL_ASR_WITH_PREVIEW_TIMEOUT_MS = 35_000;
+const FINAL_ASR_WITHOUT_PREVIEW_TIMEOUT_MS = 35_000;
+const VOICE_ORGANIZE_CLIENT_TIMEOUT_MS = 10_000;
+const defaultState = createDefaultState();
 
 const viewTitles = {
-  dashboard: "今日概览",
-  "new-event": "记录事件",
-  people: "关系档案",
+  dashboard: "我的空间",
+  "new-event": "开始记录",
+  people: "对象档案",
   review: "行动复盘",
   profile: "我的表达",
   privacy: "隐私与数据",
   analysis: "信号分析",
+  agent: "一起想想",
+};
+
+const englishViewTitles = {
+  dashboard: "Home",
+  "new-event": "Tell Your Story",
+  people: "People & Stories",
+  review: "Outcome Review",
+  profile: "Your Preferences",
+  privacy: "Privacy & Data",
+  analysis: "Signal Review",
+  agent: "Think It Through",
 };
 
 const signalMeta = {
@@ -29,33 +59,182 @@ const signalMeta = {
     label: "弱信号",
     short: "弱",
     className: "weak",
-    color: "#aeb6c8",
+    color: "#8b7fa3",
   },
   medium: {
     label: "中等信号",
     short: "中",
     className: "medium",
-    color: "#e0a63a",
+    color: "#22d3ee",
   },
   strong: {
     label: "强信号",
     short: "强",
     className: "strong",
-    color: "#aee8d0",
+    color: "#c084fc",
   },
   stop: {
     label: "停止推进",
     short: "停",
     className: "stop",
-    color: "#f57464",
+    color: "#ff3b5c",
   },
 };
 
+let startupWarning = "";
+let storageRecovery = null;
 let state = loadState();
 let currentView = "dashboard";
 let currentEventId = null;
 let reviewEventId = null;
+let preferredContactId = null;
+let editingContactId = null;
 let toastTimer = null;
+let platformAuthOpener = null;
+const platformClient = new PlatformClient();
+const platform = {
+  available: null,
+  user: null,
+  membership: null,
+  externalAiConsent: null,
+  capabilities: null,
+  knowledge: null,
+  knowledgeSignature: "",
+  knowledgeBusy: false,
+  agentMessages: [],
+  agentBusy: false,
+  agentController: null,
+};
+
+const storyIntake = {
+  active: false,
+  busy: false,
+  messages: [],
+  controller: null,
+  recording: false,
+  startedAt: 0,
+  remaining: 60,
+  timer: null,
+  draft: "",
+  draftInput: "",
+  archiveContactId: "",
+  audioRecorder: null,
+  recordingStream: null,
+  voiceStatus: "",
+  finalizingVoice: false,
+  motionSuppressed: false,
+  recordingDurationMs: 0,
+  waveformLevels: [],
+  liveAsrTimer: null,
+  liveAsrController: null,
+  liveAsrPromise: null,
+  lastAsrChunkIndex: 0,
+  recordingBaseText: "",
+  recordingAsrText: "",
+  finalizeController: null,
+  finalizeGeneration: 0,
+};
+
+const contactEditor = {
+  recording: false,
+  voiceTimeout: null,
+  voiceDraft: "",
+  voiceAutoOrganize: false,
+  busy: false,
+  audioRecorder: null,
+  recordingStream: null,
+  nextQuestion: "",
+  voiceStatus: "",
+  finalizingVoice: false,
+  liveAsrTimer: null,
+  liveAsrController: null,
+  liveAsrPromise: null,
+  lastAsrChunkIndex: 0,
+  recordingBaseText: "",
+  recordingAsrText: "",
+};
+
+const agentVoice = {
+  recording: false,
+  finalizingVoice: false,
+  voiceTimeout: null,
+  audioRecorder: null,
+  recordingStream: null,
+  voiceStatus: "",
+  voiceDraft: "",
+  liveAsrTimer: null,
+  liveAsrController: null,
+  liveAsrPromise: null,
+  lastAsrChunkIndex: 0,
+  recordingBaseText: "",
+  recordingAsrText: "",
+};
+
+const STORY_SCROLL_BOTTOM_THRESHOLD = 72;
+
+// The dashboard is a local scene selector rather than a long scrolling page.
+// Keeping the catalogue here means navigation, wheel choreography, and
+// accessible labels all use the same source of truth.
+const homeSceneCatalog = [
+  {
+    view: "new-event",
+    index: "01",
+    kicker: "LIVE INTAKE",
+    title: "开始记录",
+    subtitle: "把一段关系放回现场。",
+    description: "文字或语音都可以。只说你愿意保留的部分，Agent 会一次问一个真正有帮助的问题。",
+    cue: "进入记录",
+    art: "/assets/zine/scene-intake-dual-silhouette.webp",
+    en: {
+      title: "Tell Your Story",
+      subtitle: "Revisit what happened, one moment at a time.",
+      description: "Write or record only what you want to keep. The Agent will ask one useful question at a time.",
+      cue: "Start a Story",
+    },
+    tone: "signal",
+  },
+  {
+    view: "people",
+    index: "02",
+    kicker: "CASE FILES",
+    title: "对象档案",
+    subtitle: "让线索有一个可以回来的地方。",
+    description: "背景、目标、边界和互动记录会在故事结束后归档成匿名卡片，随时可以修正。",
+    cue: "查看档案",
+    art: "/assets/zine/scene-archive-woman-silhouette.webp",
+    en: {
+      title: "People & Stories",
+      subtitle: "Give every detail a place to return to.",
+      description: "Background, goals, boundaries, and interactions become an anonymous profile you can revise anytime.",
+      cue: "Browse Profiles",
+    },
+    tone: "cyan",
+  },
+  {
+    view: "agent",
+    index: "03",
+    kicker: "THINKING ROOM",
+    title: "一起想想",
+    subtitle: "把不确定写成可以讨论的问题。",
+    description: "只检索你的个人知识库，帮你区分事实、感受与猜测，再决定下一步。",
+    cue: "进入 Agent",
+    art: "/assets/zine/scene-agent-beach-silhouette.webp",
+    en: {
+      title: "Think It Through",
+      subtitle: "Turn uncertainty into a question you can explore.",
+      description: "The Agent searches only your private knowledge base, separating facts, feelings, and assumptions before you decide what comes next.",
+      cue: "Open the Agent",
+    },
+    tone: "neon",
+  },
+];
+
+let homeSceneIndex = 0;
+const homeSceneInput = {
+  wheelDelta: 0,
+  touchStartY: null,
+  transitioning: false,
+};
 
 const appShell = document.querySelector("#app-shell");
 const main = document.querySelector("#main-content");
@@ -65,6 +244,8 @@ const enterApp = document.querySelector("#enter-app");
 const toast = document.querySelector("#toast");
 const sidebar = document.querySelector(".sidebar");
 const mobileMenu = document.querySelector("#mobile-menu");
+const sidebarScrim = document.querySelector("#sidebar-scrim");
+const workspace = document.querySelector(".workspace");
 
 init();
 
@@ -72,17 +253,34 @@ function init() {
   appShell.classList.add("is-ready");
   syncProfileAvatar();
   bindGlobalEvents();
+  setMobileMenu(false);
   renderCurrentView();
+  void refreshPlatformSession();
 
-  if (!state.adultConfirmed) {
-    appShell.setAttribute("aria-hidden", "true");
+  const hasCurrentAdultConsent =
+    state.adultConfirmed && state.agePolicyVersion === AGE_POLICY_VERSION;
+  if (!hasCurrentAdultConsent) {
+    state.adultConfirmed = false;
+    setAppAvailability(false);
     ageGate.showModal();
   } else {
-    appShell.setAttribute("aria-hidden", "false");
+    setAppAvailability(true);
+  }
+
+  if (startupWarning) {
+    requestAnimationFrame(() => showToast(startupWarning, 5200));
   }
 }
 
 function bindGlobalEvents() {
+  ageGate.addEventListener("cancel", (event) => {
+    event.preventDefault();
+  });
+
+  ageGate.addEventListener("close", () => {
+    if (!state.adultConfirmed && !ageGate.open) ageGate.showModal();
+  });
+
   adultCheck.addEventListener("change", () => {
     enterApp.disabled = !adultCheck.checked;
   });
@@ -90,20 +288,49 @@ function bindGlobalEvents() {
   enterApp.addEventListener("click", () => {
     if (!adultCheck.checked) return;
     state.adultConfirmed = true;
-    saveState();
+    state.adultConfirmedAt = new Date().toISOString();
+    state.agePolicyVersion = AGE_POLICY_VERSION;
+    persistCurrentState();
     ageGate.close();
-    appShell.setAttribute("aria-hidden", "false");
-    main.focus();
+    setAppAvailability(true);
+    main.focus({ preventScroll: true });
+    if (window.matchMedia("(max-width: 700px)").matches) {
+      window.scrollTo({ top: 0, behavior: "auto" });
+    }
   });
 
   mobileMenu.addEventListener("click", () => {
-    const isOpen = sidebar.classList.toggle("is-open");
-    mobileMenu.setAttribute("aria-expanded", String(isOpen));
+    setMobileMenu(!sidebar.classList.contains("is-open"));
   });
+
+  sidebarScrim.addEventListener("click", () => setMobileMenu(false, true));
+  window.addEventListener("resize", () => setMobileMenu(false));
+
+  const langToggle = document.getElementById("lang-toggle");
+  if (langToggle) langToggle.addEventListener("click", () => {
+    toggleLocale();
+    renderCurrentView();
+  });
+
+  // The dashboard deliberately consumes vertical wheel input. The user is
+  // moving through local scenes, not scrolling an infinitely tall document.
+  window.addEventListener("wheel", handleHomeSceneWheel, { passive: false });
+  window.addEventListener("touchstart", handleHomeSceneTouchStart, { passive: true });
+  window.addEventListener("touchmove", handleHomeSceneTouchMove, { passive: false });
+  window.addEventListener("touchend", handleHomeSceneTouchEnd, { passive: true });
+  window.addEventListener("pointermove", handleHomeScenePointerMove, { passive: true });
 
   document.addEventListener("click", async (event) => {
     const viewButton = event.target.closest("[data-view]");
-    if (viewButton) {
+    if (viewButton && viewButton.dataset.action !== "home-scene-open") {
+      if (viewButton.dataset.view === "agent" && !platform.user) {
+        openPlatformAuthDialog(viewButton);
+        return;
+      }
+      preferredContactId =
+        viewButton.dataset.view === "new-event" && viewButton.dataset.contactId
+          ? viewButton.dataset.contactId
+          : preferredContactId;
       navigate(viewButton.dataset.view);
       return;
     }
@@ -112,6 +339,32 @@ function bindGlobalEvents() {
     if (!action) return;
 
     const actionName = action.dataset.action;
+
+    if (actionName === "open-platform-account") {
+      if (platform.user) navigate("agent");
+      else openPlatformAuthDialog(action);
+      return;
+    }
+
+    if (actionName === "close-platform-auth") {
+      closePlatformAuthDialog();
+      return;
+    }
+
+    if (actionName === "home-scene-next") {
+      setHomeSceneIndex(homeSceneIndex + 1);
+      return;
+    }
+
+    if (actionName === "home-scene-prev") {
+      setHomeSceneIndex(homeSceneIndex - 1);
+      return;
+    }
+
+    if (actionName === "home-scene-open") {
+      openHomeScene(action.dataset.view);
+      return;
+    }
 
     if (actionName === "load-sample") {
       loadSampleData();
@@ -127,43 +380,179 @@ function bindGlobalEvents() {
       currentView = "review";
       renderCurrentView();
       requestAnimationFrame(() => {
-        document.querySelector("#review-form")?.scrollIntoView({ behavior: "smooth", block: "center" });
+        const title = document.querySelector("#review-form-title");
+        title?.scrollIntoView({ behavior: "smooth", block: "center" });
+        title?.focus({ preventScroll: true });
       });
     }
 
+    if (actionName === "open-contact-editor") {
+      if (event.target.closest("details")) return;
+      openContactEditor(action.dataset.contactId);
+      return;
+    }
+
+    if (actionName === "close-contact-editor") {
+      closeContactEditor();
+      return;
+    }
+
     if (actionName === "cancel-review") {
+      const eventId = reviewEventId;
       reviewEventId = null;
       renderCurrentView();
+      requestAnimationFrame(() => {
+        document
+          .querySelector(`[data-action="open-review"][data-event-id="${cssEscape(eventId)}"]`)
+          ?.focus();
+      });
     }
 
     if (actionName === "copy-response") {
       const text = action.dataset.text || "";
-      try {
-        await navigator.clipboard.writeText(text);
-        showToast("回应选项已复制");
-      } catch {
-        showToast("浏览器未允许自动复制，请手动选择文字");
-      }
+      await copyText(text);
     }
 
     if (actionName === "export-data") {
       exportData();
     }
 
+    if (actionName === "export-recovery-data") {
+      exportRecoveryData();
+    }
+
     if (actionName === "clear-data") {
       clearData();
     }
+
+    if (actionName === "delete-event") {
+      deleteEvent(action.dataset.eventId);
+    }
+
+    if (actionName === "delete-contact") {
+      deleteContact(action.dataset.contactId);
+    }
+
+    if (actionName === "import-data") {
+      document.querySelector("#data-import")?.click();
+    }
+
+    if (actionName === "platform-logout") {
+      await logoutPlatform();
+    }
+
+    if (actionName === "clear-agent-chat") {
+      platform.agentMessages = [];
+      renderCurrentView();
+      requestAnimationFrame(() => document.querySelector("#agent-prompt")?.focus());
+    }
+
+    if (actionName === "cancel-agent") {
+      platform.agentController?.abort();
+    }
+
+    if (actionName === "refresh-platform") {
+      await refreshPlatformSession();
+      showToast("账户与 Agent 授权状态已刷新");
+    }
+
+    if (actionName === "revoke-ai-consent") {
+      const confirmed = window.confirm(
+        "撤回后，新的 Agent 请求会被服务端拒绝；本地关系记录不会被删除。是否继续？"
+      );
+      if (confirmed) await updateExternalAiConsent(false);
+    }
+
+    if (actionName === "sync-knowledge") {
+      await syncPersonalKnowledge();
+    }
+
+    if (actionName === "clear-knowledge") {
+      await clearPersonalKnowledge();
+    }
+
+    if (actionName === "agent-starter") {
+      const prompt = document.querySelector("#agent-prompt");
+      if (prompt) {
+        prompt.value = action.dataset.prompt || "";
+        prompt.focus();
+      }
+    }
+
+    if (actionName === "story-start") {
+      startStoryIntake();
+    }
+
+    if (actionName === "story-end") {
+      await endStoryIntake();
+    }
+
+    if (actionName === "story-skip") {
+      submitStoryAnswer("（跳过这一题）");
+    }
+
+    if (actionName === "story-voice") {
+      toggleStoryVoice();
+    }
+
+    if (actionName === "story-use-current-transcript") {
+      useCurrentStoryTranscript();
+    }
+
+    if (actionName === "contact-voice") {
+      toggleContactVoice();
+    }
+
+    if (actionName === "agent-voice") {
+      await toggleAgentVoice();
+    }
+
+    if (actionName === "contact-ai-organize") {
+      await organizeContactDraft();
+    }
+
   });
 
-  document.addEventListener("submit", (event) => {
+  document.addEventListener("change", async (event) => {
+    if (event.target.matches("#data-import")) {
+      const [file] = event.target.files || [];
+      if (file) await importData(file);
+      event.target.value = "";
+      return;
+    }
+
+    if (event.target.matches("#event-contact")) {
+      const contact = getContact(event.target.value);
+      const stage = document.querySelector("#event-stage");
+      if (contact && stage) stage.value = contact.stage;
+    }
+
+    if (event.target.matches("#story-archive-contact")) {
+      storyIntake.archiveContactId = clean(event.target.value);
+    }
+  });
+
+  document.addEventListener("input", (event) => {
+    if (event.target.matches("#story-answer")) {
+      storyIntake.draftInput = clean(event.target.value).slice(0, 2_400);
+    }
+    if (event.target.matches("#agent-prompt")) {
+      agentVoice.voiceDraft = clean(event.target.value).slice(0, 4_000);
+    }
+    if (event.target.matches("#contact-voice-input")) {
+      contactEditor.voiceDraft = clean(event.target.value).slice(0, 2_400);
+    }
+  });
+
+  document.addEventListener("submit", async (event) => {
     if (event.target.matches("#profile-form")) {
       event.preventDefault();
       saveProfile(new FormData(event.target));
     }
 
-    if (event.target.matches("#contact-form")) {
+    if (event.target.matches("#contact-editor-form")) {
       event.preventDefault();
-      createContact(new FormData(event.target));
+      saveContactEditor(event.target, new FormData(event.target));
     }
 
     if (event.target.matches("#event-form")) {
@@ -173,33 +562,122 @@ function bindGlobalEvents() {
 
     if (event.target.matches("#review-form")) {
       event.preventDefault();
-      saveReview(new FormData(event.target));
+      saveReview(event.target, new FormData(event.target));
+    }
+
+    if (event.target.matches("#platform-login-form")) {
+      event.preventDefault();
+      await authenticatePlatform(event.target, "login");
+    }
+
+    if (event.target.matches("#platform-register-form")) {
+      event.preventDefault();
+      await authenticatePlatform(event.target, "register");
+    }
+
+    if (event.target.matches("#agent-form")) {
+      event.preventDefault();
+      await submitAgentPrompt(event.target, new FormData(event.target));
+    }
+
+    if (event.target.matches("#story-answer-form")) {
+      event.preventDefault();
+      await submitStoryAnswer(clean(new FormData(event.target).get("answer")));
+    }
+
+    if (event.target.matches("#external-ai-consent-form")) {
+      event.preventDefault();
+      const formData = new FormData(event.target);
+      await updateExternalAiConsent(
+        formData.get("accepted") === "on",
+        String(formData.get("policyVersion") || ""),
+        event.target
+      );
     }
   });
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && sidebar.classList.contains("is-open")) {
-      sidebar.classList.remove("is-open");
-      mobileMenu.setAttribute("aria-expanded", "false");
-      mobileMenu.focus();
+      setMobileMenu(false, true);
+    }
+    if (
+      event.key.toLowerCase() === "r" &&
+      currentView === "new-event" &&
+      storyIntake.active &&
+      !isTypingTarget(event.target)
+    ) {
+      event.preventDefault();
+      toggleStoryVoice({ fromKeyboard: true });
+    }
+
+    const card = event.target.closest('[data-action="open-contact-editor"]');
+    if (card && (event.key === "Enter" || event.key === " ")) {
+      event.preventDefault();
+      openContactEditor(card.dataset.contactId);
+    }
+  });
+
+  document.addEventListener("cancel", (event) => {
+    if (event.target?.matches?.("#contact-editor-dialog")) closeContactEditor();
+    if (event.target?.matches?.("#platform-auth-dialog")) {
+      event.preventDefault();
+      closePlatformAuthDialog();
     }
   });
 }
 
 function navigate(view) {
   if (!viewTitles[view]) view = "dashboard";
+  if (view !== "agent") stopAgentVoice({ discard: true });
   currentView = view;
   if (view !== "analysis") currentEventId = null;
   if (view !== "review") reviewEventId = null;
-  sidebar.classList.remove("is-open");
-  mobileMenu.setAttribute("aria-expanded", "false");
+  setMobileMenu(false);
+  homeSceneInput.transitioning = false;
   renderCurrentView();
+  window.gameAnalytics?.page(view, document.title);
   window.scrollTo({ top: 0, behavior: "smooth" });
   requestAnimationFrame(() => main.focus({ preventScroll: true }));
 }
 
+function setAppAvailability(available) {
+  appShell.setAttribute("aria-hidden", String(!available));
+  if (available) appShell.removeAttribute("inert");
+  else appShell.setAttribute("inert", "");
+}
+
+function setMobileMenu(open, restoreFocus = false) {
+  const isMobile = window.matchMedia("(max-width: 980px)").matches;
+  if (!isMobile) open = false;
+  sidebar.classList.toggle("is-open", open);
+  sidebarScrim.hidden = !open;
+  mobileMenu.setAttribute("aria-expanded", String(open));
+  mobileMenu.setAttribute("aria-label", open ? "关闭导航" : "打开导航");
+  document.body.classList.toggle("menu-open", open);
+
+  if (isMobile && !open) {
+    sidebar.setAttribute("aria-hidden", "true");
+    sidebar.setAttribute("inert", "");
+  } else {
+    sidebar.removeAttribute("aria-hidden");
+    sidebar.removeAttribute("inert");
+  }
+
+  if (isMobile && open) {
+    workspace.setAttribute("aria-hidden", "true");
+    workspace.setAttribute("inert", "");
+    requestAnimationFrame(() => sidebar.querySelector("button")?.focus());
+  } else {
+    workspace.removeAttribute("aria-hidden");
+    workspace.removeAttribute("inert");
+  }
+
+  if (!open && restoreFocus) mobileMenu.focus();
+}
+
 function renderCurrentView() {
   updateNavigation();
+  document.body.classList.toggle("scene-home-active", currentView === "dashboard");
 
   switch (currentView) {
     case "new-event":
@@ -220,76 +698,1161 @@ function renderCurrentView() {
     case "analysis":
       main.innerHTML = renderAnalysis(currentEventId);
       break;
+    case "agent":
+      main.innerHTML = renderAgent();
+      break;
     default:
       main.innerHTML = renderDashboard();
   }
+  if (currentView !== "dashboard") {
+    main.insertAdjacentHTML("beforeend", renderSitePolicyFooter());
+  }
+  localizePage();
+  document.body.classList.toggle(
+    "agent-conversation-active",
+    Boolean(main.querySelector(".agent-page")),
+  );
+
+  if (currentView === "dashboard") {
+    requestAnimationFrame(() => setHomeSceneIndex(homeSceneIndex, { announce: false }));
+  }
+}
+
+function currentHomeScene() {
+  return localizeHomeScene(homeSceneCatalog[homeSceneIndex] || homeSceneCatalog[0]);
+}
+
+function localizeHomeScene(scene) {
+  if (detectLocale() !== "en" || !scene.en) return scene;
+  return { ...scene, ...scene.en };
+}
+
+function setHomeSceneIndex(nextIndex, { announce = true } = {}) {
+  const previousIndex = homeSceneIndex;
+  homeSceneIndex = (nextIndex + homeSceneCatalog.length) % homeSceneCatalog.length;
+  const scene = document.querySelector(".scene-home");
+  if (!scene) return;
+
+  scene.dataset.sceneIndex = String(homeSceneIndex);
+  scene.dataset.sceneDirection = String(nextIndex === previousIndex ? 0 : nextIndex > previousIndex ? 1 : -1);
+  scene.style.setProperty("--scene-rotation", `${homeSceneIndex * -120}deg`);
+  const activeScene = currentHomeScene();
+  const status = scene.querySelector("[data-scene-current]");
+  const liveStatus = scene.querySelector("[data-scene-live]");
+  const counter = scene.querySelector("[data-scene-counter]");
+  if (status) status.textContent = activeScene.title;
+  if (counter) counter.textContent = `${activeScene.index} / 0${homeSceneCatalog.length}`;
+  if (announce && liveStatus) liveStatus.textContent = `已切换到${activeScene.title}：${activeScene.subtitle}`;
+  scene.querySelectorAll(".scene-home-dots i").forEach((dot, dotIndex) => {
+    dot.classList.toggle("is-active", dotIndex === homeSceneIndex);
+  });
+  scene.querySelectorAll("[data-scene-atmosphere]").forEach((layer, layerIndex) => {
+    layer.classList.toggle("is-active", layerIndex === homeSceneIndex);
+  });
+
+  scene.querySelectorAll("[data-home-scene-open]").forEach((card, cardIndex) => {
+    const slot = (cardIndex - homeSceneIndex + homeSceneCatalog.length) % homeSceneCatalog.length;
+    card.classList.toggle("is-active", slot === 0);
+    card.classList.toggle("is-next", slot === 1);
+    card.classList.toggle("is-prev", slot === homeSceneCatalog.length - 1);
+    card.setAttribute("aria-current", slot === 0 ? "true" : "false");
+    card.tabIndex = slot === 0 ? 0 : -1;
+  });
+
+  const copy = scene.querySelector("[data-scene-copy]");
+  if (copy) {
+    copy.querySelector("[data-scene-copy-kicker]").textContent = `${activeScene.index} / ${activeScene.kicker}`;
+    copy.querySelector("[data-scene-copy-title]").innerHTML = renderSceneLetters(activeScene.title);
+    copy.querySelector("[data-scene-copy-title]").setAttribute("aria-label", activeScene.title);
+    copy.querySelector("[data-scene-copy-subtitle]").textContent = activeScene.subtitle;
+    copy.querySelector("[data-scene-copy-description]").textContent = activeScene.description;
+    const cta = copy.querySelector("[data-scene-copy-cta]");
+    if (cta) {
+      cta.dataset.view = activeScene.view;
+      cta.querySelector("[data-scene-copy-cta-label]").textContent = activeScene.cue;
+    }
+  }
+}
+
+function renderSceneLetters(text) {
+  if (detectLocale() === "en") {
+    let letterIndex = 0;
+    return String(text)
+      .trim()
+      .split(/\s+/)
+      .map((word) => {
+        const letters = Array.from(word)
+          .map(
+            (letter) =>
+              `<span class="scene-title-letter" style="--letter-index:${letterIndex++}" aria-hidden="true">${escapeHTML(letter)}</span>`,
+          )
+          .join("");
+        return `<span class="scene-title-word" aria-hidden="true">${letters}</span>`;
+      })
+      .join("");
+  }
+  return Array.from(text)
+    .map(
+      (letter, index) =>
+        `<span class="scene-title-letter" style="--letter-index:${index}" aria-hidden="true">${escapeHTML(letter === " " ? " " : letter)}</span>`,
+    )
+    .join("");
+}
+
+function handleHomeSceneWheel(event) {
+  if (currentView !== "dashboard" || event.ctrlKey || ageGate.open) return;
+  if (
+    document.querySelector("dialog[open]") ||
+    event.target.closest("#primary-sidebar, textarea, input, select, [data-scroll-region]")
+  ) return;
+  const scene = document.querySelector(".scene-home");
+  if (!scene || homeSceneInput.transitioning) return;
+  if (Math.abs(event.deltaY) < Math.abs(event.deltaX) * 0.8) return;
+  event.preventDefault();
+  homeSceneInput.wheelDelta += event.deltaY;
+  if (Math.abs(homeSceneInput.wheelDelta) < 28) return;
+  const direction = homeSceneInput.wheelDelta > 0 ? 1 : -1;
+  homeSceneInput.wheelDelta = 0;
+  setHomeSceneIndex(homeSceneIndex + direction);
+}
+
+function handleHomeSceneTouchStart(event) {
+  if (currentView !== "dashboard" || ageGate.open) return;
+  if (window.matchMedia("(max-width: 700px)").matches) return;
+  homeSceneInput.touchStartY = event.touches[0]?.clientY ?? null;
+}
+
+function handleHomeSceneTouchMove(event) {
+  if (currentView !== "dashboard" || homeSceneInput.touchStartY === null || ageGate.open) return;
+  if (window.matchMedia("(max-width: 700px)").matches) return;
+  event.preventDefault();
+}
+
+function handleHomeSceneTouchEnd(event) {
+  if (currentView !== "dashboard" || homeSceneInput.touchStartY === null || ageGate.open) return;
+  if (window.matchMedia("(max-width: 700px)").matches) {
+    homeSceneInput.touchStartY = null;
+    return;
+  }
+  const endY = event.changedTouches[0]?.clientY ?? homeSceneInput.touchStartY;
+  const distance = homeSceneInput.touchStartY - endY;
+  homeSceneInput.touchStartY = null;
+  if (Math.abs(distance) < 40) return;
+  setHomeSceneIndex(homeSceneIndex + (distance > 0 ? 1 : -1));
+}
+
+function handleHomeScenePointerMove(event) {
+  const scene = document.querySelector(".scene-home");
+  if (!scene) return;
+  const bounds = scene.getBoundingClientRect();
+  const x = ((event.clientX - bounds.left) / Math.max(1, bounds.width)) * 100;
+  const y = ((event.clientY - bounds.top) / Math.max(1, bounds.height)) * 100;
+  scene.style.setProperty("--pointer-x", `${Math.max(0, Math.min(100, x))}%`);
+  scene.style.setProperty("--pointer-y", `${Math.max(0, Math.min(100, y))}%`);
+}
+
+function openHomeScene(view) {
+  if (!viewTitles[view] || homeSceneInput.transitioning) return;
+  const scene = document.querySelector(".scene-home");
+  const overlay = document.querySelector("#scene-transition");
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!scene || !overlay || reducedMotion) {
+    navigate(view);
+    return;
+  }
+
+  const target = localizeHomeScene(
+    homeSceneCatalog.find((item) => item.view === view) || currentHomeScene()
+  );
+  homeSceneInput.transitioning = true;
+  overlay.querySelector("[data-transition-index]").textContent = target.index;
+  overlay.querySelector("[data-transition-title]").textContent = target.title;
+  overlay.classList.add("is-active");
+  scene.classList.add("is-exiting");
+  document.body.classList.add("scene-transitioning");
+  window.setTimeout(() => {
+    overlay.classList.remove("is-active");
+    scene.classList.remove("is-exiting");
+    document.body.classList.remove("scene-transitioning");
+    navigate(view);
+  }, 560);
+}
+
+function captureStoryThreadScroll() {
+  const thread = document.querySelector(".story-thread");
+  if (!thread) return null;
+  return {
+    top: thread.scrollTop,
+    distanceFromBottom: Math.max(0, thread.scrollHeight - thread.scrollTop - thread.clientHeight),
+  };
+}
+
+function restoreStoryThreadScroll(snapshot, { followLatest = false } = {}) {
+  const thread = document.querySelector(".story-thread");
+  if (!thread) return;
+  const maxTop = Math.max(0, thread.scrollHeight - thread.clientHeight);
+  const shouldFollowLatest = followLatest ||
+    (snapshot && snapshot.distanceFromBottom <= STORY_SCROLL_BOTTOM_THRESHOLD);
+  thread.scrollTop = shouldFollowLatest
+    ? maxTop
+    : Math.min(snapshot?.top ?? thread.scrollTop, maxTop);
+}
+
+function renderStoryViewPreservingScroll(snapshot = captureStoryThreadScroll(), options = {}) {
+  renderCurrentView();
+  requestAnimationFrame(() => restoreStoryThreadScroll(snapshot, options));
 }
 
 function updateNavigation() {
-  document.querySelector("#topbar-title").textContent = viewTitles[currentView] || "Signal Lab";
+  const localizedTitle = detectLocale() === "en"
+    ? englishViewTitles[currentView] || "Signal Lab"
+    : viewTitles[currentView] || "Signal Lab";
+  document.querySelector("#topbar-title").textContent = localizedTitle;
+  document.title = `${localizedTitle} · GAME Signal Lab`;
   document.querySelectorAll(".nav-item[data-view]").forEach((item) => {
-    item.classList.toggle("is-active", item.dataset.view === currentView);
+    const isCurrent = item.dataset.view === currentView;
+    item.classList.toggle("is-active", isCurrent);
+    if (isCurrent) item.setAttribute("aria-current", "page");
+    else item.removeAttribute("aria-current");
   });
 }
 
-function renderDashboard() {
-  const completedReviews = state.events.filter((item) => item.review?.result).length;
-  const strongSignals = state.events.filter((item) => item.analysis.strength === "strong").length;
-  const latestEvents = [...state.events]
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-    .slice(0, 4);
-  const greeting = state.profile.name ? `${escapeHTML(state.profile.name)}，` : "";
+async function refreshPlatformSession() {
+  if (window.__GAME_RUNTIME__?.apiEnabled !== true) {
+    platform.available = false;
+    platform.user = null;
+    platform.membership = null;
+    platform.externalAiConsent = null;
+    platform.capabilities = null;
+    platform.knowledge = null;
+    platform.knowledgeSignature = "";
+    syncPlatformStatus();
+    if (currentView === "agent") {
+      currentView = "dashboard";
+      renderCurrentView();
+      requestAnimationFrame(openPlatformAuthDialog);
+    }
+    return;
+  }
+  try {
+    const payload = await platformClient.me();
+    platform.available = true;
+    platform.user = payload.user || null;
+    platform.membership = payload.membership || null;
+    platform.externalAiConsent = payload.externalAiConsent || null;
+    platform.capabilities = payload.capabilities || null;
+    try {
+      platform.knowledge = (await platformClient.knowledgeStatus()).knowledge || null;
+    } catch {
+      platform.knowledge = null;
+      platform.knowledgeSignature = "";
+    }
+  } catch (error) {
+    if (error instanceof PlatformError && error.status === 401) {
+      platform.available = true;
+      platform.user = null;
+      platform.membership = null;
+      platform.externalAiConsent = null;
+      platform.capabilities = null;
+      platform.knowledge = null;
+      platform.knowledgeSignature = "";
+    } else {
+      platform.available = false;
+      platform.user = null;
+      platform.membership = null;
+      platform.externalAiConsent = null;
+      platform.capabilities = null;
+      platform.knowledge = null;
+      platform.knowledgeSignature = "";
+    }
+  }
+  syncPlatformStatus();
+  if (currentView === "agent" && !platform.user) {
+    currentView = "dashboard";
+    renderCurrentView();
+    requestAnimationFrame(openPlatformAuthDialog);
+  } else if (currentView === "agent") {
+    renderCurrentView();
+  }
+}
+
+function syncPlatformStatus() {
+  const status = document.querySelector("#platform-status");
+  if (!status) return;
+  if (platform.user) {
+    status.textContent = `${platform.user.username} · ${
+      platform.membership?.plan === "member" ? "会员" : "账户"
+    }`;
+    status.classList.add("is-online");
+  } else if (platform.available === false) {
+    status.textContent = t("localMode");
+    status.classList.remove("is-online");
+  } else {
+    status.textContent = detectLocale() === "en" ? "Sign In" : "登录";
+    status.classList.remove("is-online");
+  }
+}
+
+function renderAgent() {
+  if (platform.available === null) {
+    return `
+      <div class="page">
+        ${pageHeading("一起想想", "我先确认一下房间是否准备好。", "只有在你同意并发起 Agent 提问时，匿名档案才会同步到账号专属空间。")}
+        <section class="panel agent-loading" aria-live="polite">正在连接同源服务…</section>
+      </div>
+    `;
+  }
+
+  if (!platform.user) return renderAgentAuth();
+
+  if (!platform.externalAiConsent?.current) return renderExternalAiConsent();
+
+  if (!platform.capabilities?.agent) return renderAgentAccessPending();
+
+  const speechSupported = Boolean(canRecordAudio());
+  const messages = platform.agentMessages.length
+    ? platform.agentMessages.map(renderAgentMessage).join("")
+    : `
+      <div class="agent-empty">
+        <p class="eyebrow">A QUIET PLACE TO THINK</p>
+        <h2>先坐下来，<br />听听自己真正担心什么。</h2>
+        <p>把一段关系里的困惑交给我一起理一理吧。我会陪你看看发生过什么、你感受到了什么，以及还有哪些地方值得直接问一问。</p>
+        <div class="agent-starters">
+          <button type="button" data-action="agent-starter" data-prompt="我有点分不清发生过的事和自己的猜测，可以陪我一起理一理吗？">我有点分不清了</button>
+          <button type="button" data-action="agent-starter" data-prompt="我想自然地表达想见面，也想让对方很容易拒绝，能帮我写得像我一点吗？">帮我说得自然一点</button>
+          <button type="button" data-action="agent-starter" data-prompt="我好像感受到对方的不舒服了。现在应该先停下来、留一点空间，还是直接确认？">我想先确认边界</button>
+        </div>
+      </div>
+    `;
 
   return `
-    <div class="page">
-      <section class="hero-grid">
-        <article class="hero-card">
-          <p class="eyebrow">从混乱走向清晰</p>
-          <h2>${greeting}先写下发生了什么。</h2>
-          <p>把事实与猜测分开，再决定要不要行动。明确表达和真实反馈，始终比任何信号推断更可靠。</p>
-          <button class="button" data-view="new-event">
-            记录一件互动
-            <span aria-hidden="true">→</span>
-          </button>
-        </article>
-        <article class="lens-card">
-          <div class="signal-lens" aria-label="信号透镜图形">
-            <span class="lens-core">WHY?</span>
-          </div>
-          <p class="lens-caption">信号不是答案，<br />而是需要放回情境的证据。</p>
-        </article>
-      </section>
-
-      <section class="metric-grid" aria-label="使用数据概览">
-        <article class="metric-card">
-          <span>已记录事件</span>
-          <strong>${state.events.length.toString().padStart(2, "0")}</strong>
-          <small>每条记录都可以继续补充结果</small>
-        </article>
-        <article class="metric-card">
-          <span>已完成复盘</span>
-          <strong>${completedReviews.toString().padStart(2, "0")}</strong>
-          <small>真实反馈会修正原来的判断</small>
-        </article>
-        <article class="metric-card">
-          <span>强信号记录</span>
-          <strong>${strongSignals.toString().padStart(2, "0")}</strong>
-          <small>仍需以对方明确表达为准</small>
-        </article>
-      </section>
-
-      <section class="section">
-        <div class="section-title">
-          <h2>最近事件</h2>
-          ${state.events.length ? '<button class="text-button" data-view="review">查看全部复盘 →</button>' : ""}
+    <div class="page agent-page">
+      <header class="agent-masthead">
+        <div>
+          <p class="eyebrow">GAME · FIELD NOTES / AI</p>
+          <h1>关系思考<br /><em>Agent</em></h1>
         </div>
-        ${
-          latestEvents.length
-            ? `<div class="card-list">${latestEvents.map(renderEventCard).join("")}</div>`
-            : renderDashboardEmpty()
-        }
+        <div class="agent-account">
+          <span>已登录</span>
+          <strong>${escapeHTML(platform.user.username)}</strong>
+          <small>${escapeHTML(membershipLabel(platform.membership))}</small>
+          <small>${escapeHTML(agentUsageLabel(platform.capabilities?.agentUsage))}</small>
+          <small>${platform.knowledge?.documentCount ? `个人档案 ${platform.knowledge.documentCount} 条` : "首次提问时同步匿名档案"}</small>
+          <button class="text-button" type="button" data-action="revoke-ai-consent">撤回 AI 同意</button>
+          <button class="text-button" type="button" data-action="platform-logout">退出账户</button>
+        </div>
+      </header>
+
+      <div class="agent-layout">
+        <section class="agent-thread" aria-label="Agent 对话">
+          <div class="agent-thread-head">
+            <span>VOL. 01 · 当前会话</span>
+            <button class="text-button" type="button" data-action="clear-agent-chat" ${
+              platform.agentBusy ? "disabled" : ""
+            }>清空临时会话</button>
+          </div>
+          <div class="agent-messages" id="agent-messages" aria-live="polite">
+            ${messages}
+          </div>
+        </section>
+
+        <aside class="agent-compose">
+          <p class="eyebrow">给未来的自己留一句话</p>
+          <h2>写下此刻最想弄清楚的事。</h2>
+          <form id="agent-form">
+            <label class="visually-hidden" for="agent-prompt">发送给关系思考 Agent 的内容</label>
+            <textarea
+              id="agent-prompt"
+              name="prompt"
+              maxlength="4000"
+              placeholder="不用组织得很漂亮。写下必要信息即可，请用代号，不要粘贴姓名、地址、账号或完整聊天记录。"
+              required
+              ${platform.agentBusy || agentVoice.recording || agentVoice.finalizingVoice ? "disabled" : ""}
+            >${escapeHTML(agentVoice.voiceDraft)}</textarea>
+            <div class="agent-compose-tools">
+              <button
+                class="story-voice-button agent-voice-button ${agentVoice.recording ? "is-recording" : ""} ${agentVoice.finalizingVoice ? "is-processing" : ""}"
+                type="button"
+                data-action="agent-voice"
+                aria-label="${agentVoice.recording ? "结束录音并整理文字" : agentVoice.finalizingVoice ? "正在整理语音文字" : "用语音输入 Agent 问题"}"
+                ${platform.agentBusy || agentVoice.finalizingVoice || !speechSupported ? "disabled" : ""}
+              >
+                <span class="voice-recording-visual ${agentVoice.recording ? "is-live" : agentVoice.finalizingVoice ? "is-processing" : ""}" aria-hidden="true">${agentVoice.recording ? "<i></i><i></i><i></i><i></i><i></i>" : agentVoice.finalizingVoice ? "<b></b><b></b><b></b>" : "◉"}</span>
+                ${agentVoice.recording ? "结束录音并整理" : agentVoice.finalizingVoice ? "语音整理中…" : speechSupported ? "语音输入" : "浏览器不支持语音"}
+              </button>
+              <span class="agent-voice-status" id="agent-voice-status" role="status" aria-live="polite">${escapeHTML(agentVoice.voiceStatus || "录音结束后会先由 DeepSeek 整理句读，再进入对话。")}</span>
+            </div>
+            <p class="form-error" id="agent-error" role="alert" aria-live="assertive"></p>
+            <div class="button-row">
+              <button class="button button--primary" type="submit" ${platform.agentBusy || agentVoice.recording || agentVoice.finalizingVoice ? "disabled" : ""}>
+                陪我理一理
+              </button>
+              ${
+                platform.agentBusy
+                  ? '<button class="button button--quiet" type="button" data-action="cancel-agent">停止生成</button>'
+                  : ""
+              }
+            </div>
+          </form>
+          <p class="agent-privacy-note">
+            发送问题时，当前浏览器里的匿名对象档案会先更新到该账号的隔离知识库，再由 DeepSeek 只检索这个账号的数据。你主动发送的消息与模型回复会在服务端加密存档，并可由授权管理员在审计后台查看；对象档案正文仍保持账户隔离。
+          </p>
+        </aside>
+      </div>
+    </div>
+  `;
+}
+
+function renderExternalAiConsent() {
+  const policyVersion =
+    platform.externalAiConsent?.policyVersion || "current";
+  return `
+    <div class="page">
+      <header class="auth-masthead">
+        <p class="eyebrow">EXTERNAL AI · CONSENT NOTE</p>
+        <h1>发送之前，<br /><em>先把数据去向说清楚。</em></h1>
+        <p>登录或打开页面不会上传本地日记。你确认本说明并提交 Agent 问题时，匿名 profile/contact/event 的最少必要字段会更新到账号专属空间，让 Agent 只检索你的资料。</p>
+      </header>
+      <div class="consent-layout">
+        <section>
+          <p class="eyebrow">处理说明 · ${escapeHTML(policyVersion)}</p>
+          <h2>这项同意与会员资格分开。</h2>
+          <ul>
+            <li>请只使用代号和最少必要上下文，不发送姓名、账号、地址、定位或完整聊天记录。</li>
+            <li>你主动发送的 Agent/故事消息与模型回复会在 GAME 服务端使用 AES-256-GCM 加密存档，供授权管理员排查服务与处理用户支持；管理员读取会写入审计日志。</li>
+            <li>你发起 Agent 提问时，当前匿名档案会同步到自己的隔离知识库，供本次和后续提问检索；不同账户之间不能互相检索。</li>
+            <li>DeepSeek 作为外部模型提供方会接收你明确发送的文字；其处理受相应服务政策约束。</li>
+            <li>你可以随时撤回。撤回后新的 Agent 请求会被服务端拒绝，并清空服务器个人知识库；本地日记不受影响。</li>
+          </ul>
+        </section>
+        <form id="external-ai-consent-form">
+          <input type="hidden" name="policyVersion" value="${escapeAttribute(policyVersion)}" />
+          <label class="check-row consent-check">
+            <input type="checkbox" name="accepted" required />
+            <span>我已阅读并同意：发起 Agent 或故事对话时，将我主动发送的文字与模型回复加密存档，并将当前匿名档案同步到账号专属知识库、交给 DeepSeek 处理。</span>
+          </label>
+          <p class="form-error" data-consent-error role="alert" aria-live="assertive"></p>
+          <button class="button button--primary" type="submit">同意并继续</button>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function renderAgentAccessPending() {
+  const usage = platform.capabilities?.agentUsage;
+  return `
+    <div class="page">
+      <header class="auth-masthead">
+        <p class="eyebrow">MEMBERSHIP · ACCESS</p>
+        <h1>账户已准备，<br /><em>Agent 尚未开放。</em></h1>
+        <p>管理员需要同时启用全局 Agent 服务、有效会员资格与此账户的单独授权。当前状态不会影响本地关系记录。</p>
+      </header>
+      <section class="privacy-spread">
+        <p class="eyebrow">ACCOUNT NOTE</p>
+        <h2>${escapeHTML(platform.user.username)}</h2>
+        <div>
+          <p><strong>会员状态</strong> — ${escapeHTML(membershipLabel(platform.membership))}</p>
+          <p><strong>AI 调用额度</strong> — ${escapeHTML(agentUsageLabel(usage))}</p>
+          <p><strong>外部 AI 同意</strong> — 已确认，可随时撤回。</p>
+          <div class="button-row">
+            <button class="button button--quiet" type="button" data-action="refresh-platform">刷新授权</button>
+            <button class="text-button" type="button" data-action="revoke-ai-consent">撤回外部 AI 同意</button>
+            <button class="text-button" type="button" data-action="platform-logout">退出账户</button>
+          </div>
+        </div>
       </section>
     </div>
+  `;
+}
+
+function renderAgentAuth() {
+  const serviceNote =
+    platform.available === false
+      ? "当前以纯静态方式打开，账号服务不可用；本地记录功能仍可正常使用。请通过 Node 服务启动后再登录。"
+      : "登录本身不会上传档案；同意外部 AI 并发起 Agent 提问后，匿名档案才会同步到账号专属空间。";
+  return `
+    <div class="page">
+      <header class="auth-masthead">
+        <p class="eyebrow">GAME · MEMBERS' EDITION</p>
+        <h1>把不确定写成<br /><em>可以讨论的问题。</em></h1>
+        <p>${serviceNote}</p>
+      </header>
+
+      <div class="auth-grid">
+        <form class="auth-panel" id="platform-login-form">
+          <span class="editorial-number">01</span>
+          <p class="eyebrow">已有账户</p>
+          <h2>登录 Agent</h2>
+          ${authFields("login")}
+          <p class="form-error" data-auth-error role="alert" aria-live="assertive"></p>
+          <button class="button button--primary" type="submit" ${
+            platform.available === false ? "disabled" : ""
+          }>登录</button>
+        </form>
+
+        <form class="auth-panel auth-panel--ink" id="platform-register-form">
+          <span class="editorial-number">02</span>
+          <p class="eyebrow">创建账户</p>
+          <h2>从一页空白开始</h2>
+          ${authFields("register")}
+          <p class="form-error" data-auth-error role="alert" aria-live="assertive"></p>
+          <button class="button button--light" type="submit" ${
+            platform.available === false ? "disabled" : ""
+          }>注册并登录</button>
+        </form>
+      </div>
+
+      <section class="privacy-spread">
+        <p class="eyebrow">DATA NOTE</p>
+        <h2>两个空间，清楚分开。</h2>
+        <div>
+          <p><strong>本地日记</strong> — 匿名档案、事件、分析和复盘保留在浏览器里。</p>
+          <p><strong>显式 Agent 对话</strong> — 只有你按下发送的内容才进入模型请求；消息与回复会加密存档，并可由授权管理员审计查看。</p>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function ensurePlatformAuthDialog() {
+  let dialog = document.querySelector("#platform-auth-dialog");
+  if (dialog) return dialog;
+  dialog = document.createElement("dialog");
+  dialog.id = "platform-auth-dialog";
+  dialog.className = "platform-auth-dialog";
+  dialog.setAttribute("aria-labelledby", "platform-auth-title");
+  document.body.append(dialog);
+  return dialog;
+}
+
+function renderPlatformAuthDialog() {
+  const english = detectLocale() === "en";
+  const serviceUnavailable = platform.available === false;
+  const serviceNote = serviceUnavailable
+    ? english
+      ? "Account services are unavailable in this preview. Your local journal still works."
+      : "当前预览未连接账号服务；本地记录功能仍可正常使用。"
+    : english
+      ? "Sign in here without leaving your current page. Nothing in your local journal is uploaded just by signing in."
+      : "在这里登录，无需离开当前页面。仅登录不会上传你的本地日记。";
+  return `
+    <button class="platform-auth-close" type="button" data-action="close-platform-auth" aria-label="${english ? "Close sign-in" : "关闭登录窗口"}">×</button>
+    <header class="platform-auth-head">
+      <p class="eyebrow">GAME · ACCOUNT ACCESS</p>
+      <h1 id="platform-auth-title">${english ? "Stay where you are." : "留在当前页面。"}</h1>
+      <p>${serviceNote}</p>
+    </header>
+    <div class="platform-auth-grid">
+      <form class="platform-auth-panel" id="platform-login-form">
+        <span class="editorial-number">01</span>
+        <p class="eyebrow">${english ? "WELCOME BACK" : "已有账户"}</p>
+        <h2>${english ? "Sign in" : "登录"}</h2>
+        ${authFields("login")}
+        <p class="form-error" data-auth-error role="alert" aria-live="assertive"></p>
+        <button class="button button--primary" type="submit" ${serviceUnavailable ? "disabled" : ""}>${english ? "Sign In" : "登录"}</button>
+      </form>
+      <form class="platform-auth-panel platform-auth-panel--register" id="platform-register-form">
+        <span class="editorial-number">02</span>
+        <p class="eyebrow">${english ? "NEW HERE" : "创建账户"}</p>
+        <h2>${english ? "Create an account" : "创建账户"}</h2>
+        ${authFields("register")}
+        <p class="form-error" data-auth-error role="alert" aria-live="assertive"></p>
+        <button class="button button--quiet" type="submit" ${serviceUnavailable ? "disabled" : ""}>${english ? "Create Account" : "注册并登录"}</button>
+      </form>
+    </div>
+    <p class="platform-auth-foot">${english ? "Your anonymous profiles remain on this device until you explicitly consent to AI processing and send a request." : "匿名档案仍保留在当前设备；只有你明确同意外部 AI 处理并主动发送请求后，才会同步最少必要内容。"}</p>
+  `;
+}
+
+function openPlatformAuthDialog(opener = document.activeElement) {
+  if (platform.user) {
+    navigate("agent");
+    return;
+  }
+  if (opener instanceof HTMLElement && !opener.closest("dialog")) {
+    platformAuthOpener = opener;
+  }
+  const dialog = ensurePlatformAuthDialog();
+  dialog.classList.remove("is-closing");
+  dialog.innerHTML = renderPlatformAuthDialog();
+  if (!dialog.open) dialog.showModal();
+  localizePage();
+  requestAnimationFrame(() => dialog.querySelector("#login-username")?.focus());
+}
+
+function closePlatformAuthDialog({ restoreFocus = true } = {}) {
+  const dialog = document.querySelector("#platform-auth-dialog");
+  if (!dialog?.open || dialog.classList.contains("is-closing")) return Promise.resolve();
+  dialog.classList.add("is-closing");
+  return new Promise((resolve) => {
+    window.setTimeout(() => {
+      dialog.close();
+      dialog.classList.remove("is-closing");
+      if (restoreFocus) {
+        const focusTarget = platformAuthOpener?.isConnected
+          ? platformAuthOpener
+          : document.querySelector("#platform-status");
+        focusTarget?.focus({ preventScroll: true });
+      }
+      platformAuthOpener = null;
+      resolve();
+    }, window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 170);
+  });
+}
+
+function authFields(prefix) {
+  return `
+    <div class="field">
+      <label for="${prefix}-username">用户名</label>
+      <input
+        id="${prefix}-username"
+        name="username"
+        minlength="3"
+        maxlength="40"
+        autocomplete="username"
+        autocapitalize="none"
+        spellcheck="false"
+        required
+      />
+    </div>
+    <div class="field">
+      <label for="${prefix}-password">密码</label>
+      <input
+        id="${prefix}-password"
+        name="password"
+        type="password"
+        minlength="12"
+        maxlength="128"
+        autocomplete="${prefix === "register" ? "new-password" : "current-password"}"
+        required
+      />
+      <small>至少 12 个字符；密码只提交给同源服务。</small>
+    </div>
+  `;
+}
+
+function renderAgentMessage(message, index) {
+  const assistant = message.role === "assistant";
+  return `
+    <article class="agent-message agent-message--${assistant ? "assistant" : "user"}">
+      <header>
+        <span>${assistant ? "GAME / AGENT" : "YOU / NOTE"}</span>
+        <small>${String(index + 1).padStart(2, "0")}</small>
+      </header>
+      <p ${assistant && index === platform.agentMessages.length - 1 ? 'id="agent-response-last"' : ""}>${
+        message.content ? escapeHTML(normalizeAssistantText(message.content)) : "正在组织回应…"
+      }</p>
+    </article>
+  `;
+}
+
+function membershipLabel(membership) {
+  const english = detectLocale() === "en";
+  if (!membership) return english ? "Membership unavailable" : "未读取会员状态";
+  const plan = membership.plan === "member" ? (english ? "Member" : "会员") : (english ? "Free account" : "普通账户");
+  const status = membership.status === "active" ? (english ? "Active" : "有效") : membership.status || (english ? "Unknown" : "未知");
+  return `${plan} · ${status}`;
+}
+
+function agentUsageLabel(usage) {
+  const english = detectLocale() === "en";
+  if (!usage) return english ? "AI usage unavailable" : "AI 调用次数暂不可用";
+  if (usage.unlimited) return english ? "Ongoing AI access enabled" : "已开通持续 AI 权限";
+  const remaining = Math.max(0, Number(usage.remaining) || 0);
+  const limit = Math.max(0, Number(usage.limit) || 50);
+  return english
+    ? `${remaining} of ${limit} included AI calls remaining`
+    : `剩余 ${remaining} / ${limit} 次 AI 调用`;
+}
+
+async function authenticatePlatform(form, mode) {
+  const errorNode = form.querySelector("[data-auth-error]");
+  const submit = form.querySelector('button[type="submit"]');
+  errorNode.textContent = "";
+  submit.disabled = true;
+  const formData = new FormData(form);
+  const username = clean(formData.get("username"));
+  const password = String(formData.get("password") || "");
+
+  try {
+    const payload =
+      mode === "register"
+        ? await platformClient.register(username, password)
+        : await platformClient.login(username, password);
+    platform.available = true;
+    platform.user = payload.user;
+    platform.membership = payload.membership;
+    await refreshPlatformSession();
+    syncPlatformStatus();
+    const english = detectLocale() === "en";
+    showToast(
+      mode === "register"
+        ? english
+          ? "Account created. You're signed in."
+          : "账户已创建并安全登录"
+        : english
+          ? "You're signed in."
+          : "已登录",
+    );
+    await closePlatformAuthDialog({ restoreFocus: false });
+    requestAnimationFrame(() => {
+      if (currentView === "agent") document.querySelector("#agent-prompt")?.focus();
+      else main.focus({ preventScroll: true });
+    });
+  } catch (error) {
+    errorNode.textContent =
+      error instanceof PlatformError ? error.message : "登录请求未完成，请稍后重试。";
+    submit.disabled = false;
+  }
+}
+
+async function logoutPlatform() {
+  stopAgentVoice({ discard: true });
+  try {
+    await platformClient.logout();
+  } catch (error) {
+    if (!(error instanceof PlatformError && error.status === 401)) {
+      showToast(error instanceof Error ? error.message : "退出未完成", 4200);
+      return;
+    }
+  }
+  platform.user = null;
+  platform.membership = null;
+  platform.externalAiConsent = null;
+  platform.capabilities = null;
+  platform.knowledge = null;
+  platform.knowledgeSignature = "";
+  platform.agentMessages = [];
+  platform.agentController?.abort();
+  platform.agentBusy = false;
+  if (currentView === "agent") currentView = "dashboard";
+  syncPlatformStatus();
+  renderCurrentView();
+  showToast("已退出账户；本地关系记录未受影响");
+}
+
+async function updateExternalAiConsent(accepted, policyVersion = "", form = null) {
+  const errorNode = form?.querySelector("[data-consent-error]");
+  const submit = form?.querySelector('button[type="submit"]');
+  if (errorNode) errorNode.textContent = "";
+  if (submit) submit.disabled = true;
+  try {
+    await platformClient.setExternalAiConsent(accepted, policyVersion);
+    await refreshPlatformSession();
+    showToast(accepted ? "外部 AI 处理同意已记录" : "外部 AI 处理同意已撤回");
+  } catch (error) {
+    const message =
+      error instanceof PlatformError ? error.message : "同意状态未能更新，请稍后重试。";
+    if (errorNode) {
+      errorNode.textContent = message;
+      submit.disabled = false;
+    } else {
+      showToast(message, 4600);
+    }
+  }
+}
+
+async function syncPersonalKnowledge() {
+  if (!platform.user) {
+    showToast("请先登录，再同步你的个人档案", 3600);
+    openPlatformAuthDialog();
+    return;
+  }
+  if (!platform.externalAiConsent?.current) {
+    showToast("同步前需要先确认外部 AI 数据处理说明", 3600);
+    navigate("agent");
+    return;
+  }
+  if (platform.knowledgeBusy) return;
+  platform.knowledgeBusy = true;
+  renderCurrentView();
+  try {
+    const documents = buildKnowledgeDocuments();
+    const payload = await platformClient.syncKnowledge(documents);
+    platform.knowledge = payload.knowledge || null;
+    platform.knowledgeSignature = knowledgeDocumentsSignature(documents);
+    showToast(
+      `已把 ${payload.knowledge?.documentCount ?? 0} 条档案同步到你的个人知识库`
+    );
+  } catch (error) {
+    showToast(
+      error instanceof PlatformError ? error.message : "个人档案同步未完成，请稍后重试。",
+      4600
+    );
+  } finally {
+    platform.knowledgeBusy = false;
+    renderCurrentView();
+  }
+}
+
+async function clearPersonalKnowledge() {
+  if (!platform.user || platform.knowledgeBusy) return;
+  const confirmed = window.confirm(
+    "这会删除服务器上的个人知识库，不会删除本机关系记录。是否继续？"
+  );
+  if (!confirmed) return;
+  platform.knowledgeBusy = true;
+  renderCurrentView();
+  try {
+    const payload = await platformClient.clearKnowledge();
+    platform.knowledge = payload.knowledge || null;
+    platform.knowledgeSignature = knowledgeDocumentsSignature([]);
+    showToast("服务器个人知识库已清空");
+  } catch (error) {
+    showToast(
+      error instanceof PlatformError ? error.message : "清空未完成，请稍后重试。",
+      4600
+    );
+  } finally {
+    platform.knowledgeBusy = false;
+    renderCurrentView();
+  }
+}
+
+function buildKnowledgeDocuments() {
+  const documents = [];
+  const profileContent = [
+    state.profile.goal ? `我想要：${state.profile.goal}` : "",
+    state.profile.boundaries ? `我的边界：${state.profile.boundaries}` : "",
+    state.profile.anxiety ? `我容易在这些时候不安：${state.profile.anxiety}` : "",
+    state.profile.voice ? `我更自然的表达方式：${state.profile.voice}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  if (profileContent) {
+    documents.push({
+      externalId: "profile",
+      kind: "profile",
+      title: "我的表达与边界",
+      content: profileContent.slice(0, 6000),
+    });
+  }
+
+  for (const contact of state.contacts) {
+    const content = [
+      `关系代号：${contact.alias}`,
+      `当前阶段：${contact.stage || "未填写"}`,
+      `认识背景：${contact.context || "未填写"}`,
+      `对方已表达的目标：${contact.goal || "未知"}`,
+      `已知边界：${contact.boundary || "未记录"}`,
+    ].join("\n");
+    documents.push({
+      externalId: `contact:${contact.id}`,
+      kind: "contact",
+      title: `${contact.alias} · 对象档案`,
+      content: content.slice(0, 6000),
+    });
+  }
+
+  const contactAliases = new Map(state.contacts.map((contact) => [contact.id, contact.alias]));
+  for (const event of state.events) {
+    const alias = contactAliases.get(event.contactId) || "匿名对象";
+    const content = [
+      `对象：${alias}`,
+      `日期：${event.date || "未填写"}`,
+      `场景：${event.scene || "未填写"}`,
+      `事实：${event.fact || "未填写"}`,
+      `我的解释：${event.interpretation || "未填写"}`,
+      `当时的感受：${event.feeling || "未填写"}`,
+      `我的回应：${event.reply || "未填写"}`,
+      `边界状态：${event.boundaryStatus || "未填写"}`,
+    ].join("\n");
+    documents.push({
+      externalId: `event:${event.id}`,
+      kind: "event",
+      title: `${alias} · ${event.scene || event.date || "一次互动"}`,
+      content: content.slice(0, 6000),
+    });
+  }
+  return documents.slice(0, 500);
+}
+
+function knowledgeDocumentsSignature(documents) {
+  let hash = 2166136261;
+  const source = JSON.stringify(documents);
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${documents.length}:${(hash >>> 0).toString(16)}`;
+}
+
+async function ensurePersonalKnowledgeForAgent() {
+  const documents = buildKnowledgeDocuments();
+  const signature = knowledgeDocumentsSignature(documents);
+  if (
+    platform.knowledgeSignature === signature
+    && Number(platform.knowledge?.documentCount || 0) === documents.length
+  ) return;
+  if (!documents.length && Number(platform.knowledge?.documentCount || 0) === 0) {
+    platform.knowledgeSignature = signature;
+    return;
+  }
+  const payload = await platformClient.syncKnowledge(documents);
+  platform.knowledge = payload.knowledge || null;
+  platform.knowledgeSignature = signature;
+}
+
+async function submitAgentPrompt(form, formData) {
+  if (!platform.user || platform.agentBusy) return;
+  const prompt = clean(formData.get("prompt"));
+  const errorNode = form.querySelector("#agent-error");
+  if (!prompt) {
+    errorNode.textContent = "请先写下一个想讨论的问题。";
+    return;
+  }
+
+  const submit = form.querySelector('button[type="submit"]');
+  if (submit) submit.disabled = true;
+  try {
+    await ensurePersonalKnowledgeForAgent();
+  } catch (error) {
+    errorNode.textContent = error instanceof PlatformError
+      ? `对象档案未能进入专属知识库：${error.message}`
+      : "对象档案同步失败，请稍后重试。";
+    if (submit) submit.disabled = false;
+    return;
+  }
+
+  const conversation = [
+    ...platform.agentMessages,
+    { role: "user", content: prompt },
+  ]
+    .filter((message) => message.content)
+    .slice(-12)
+    .map(({ role, content }) => ({ role, content: content.slice(0, 12000) }));
+
+  agentVoice.voiceDraft = "";
+  agentVoice.voiceStatus = "";
+  platform.agentMessages.push({ role: "user", content: prompt });
+  platform.agentMessages.push({ role: "assistant", content: "" });
+  platform.agentMessages = platform.agentMessages.slice(-14);
+  platform.agentBusy = true;
+  platform.agentController = new AbortController();
+  renderCurrentView();
+  requestAnimationFrame(() => {
+    document.querySelector("#agent-response-last")?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  });
+
+  try {
+    const complete = await platformClient.streamAgent(conversation, {
+      signal: platform.agentController.signal,
+      channel: "agent",
+      archiveText: prompt,
+      onText(chunk, fullText) {
+        const target = platform.agentMessages.at(-1);
+        if (target?.role === "assistant") target.content = fullText.slice(0, 20000);
+        const node = document.querySelector("#agent-response-last");
+        if (node) node.textContent = normalizeAssistantText(target?.content || "");
+      },
+    });
+    const target = platform.agentMessages.at(-1);
+    if (target?.role === "assistant" && !target.content) {
+      target.content = complete || "这次没有收到可显示的文本，请稍后再试。";
+    }
+  } catch (error) {
+    const target = platform.agentMessages.at(-1);
+    if (target?.role === "assistant") {
+      target.content =
+        error?.name === "AbortError"
+          ? "生成已由你停止。"
+          : error instanceof PlatformError
+            ? error.message
+            : "这次回应没有完成，请稍后重试。";
+    }
+  } finally {
+    platform.agentBusy = false;
+    platform.agentController = null;
+    renderCurrentView();
+    requestAnimationFrame(() => {
+      document.querySelector("#agent-response-last")?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+      document.querySelector("#agent-prompt")?.focus({ preventScroll: true });
+    });
+  }
+}
+
+function renderDashboard() {
+  const activeScene = currentHomeScene();
+  const english = detectLocale() === "en";
+  return `
+    <div class="page scene-home-page">
+      ${renderStorageRecoveryNotice()}
+      <section class="scene-home" data-scene-index="${homeSceneIndex}" style="--scene-rotation:${homeSceneIndex * -120}deg" aria-labelledby="scene-home-title">
+        ${renderSceneAtmosphere()}
+        <div class="scene-home-noise" aria-hidden="true"></div>
+        <div class="scene-home-glow scene-home-glow--one" aria-hidden="true"></div>
+        <div class="scene-home-glow scene-home-glow--two" aria-hidden="true"></div>
+
+        <header class="scene-home-header">
+          <div>
+            <p class="eyebrow">GAME / LOCAL SIGNAL LAB</p>
+            <p class="scene-home-intro">一间只属于你的关系工作室</p>
+          </div>
+          <div class="scene-home-index">
+            <span data-scene-counter>${activeScene.index} / 0${homeSceneCatalog.length}</span>
+            <strong data-scene-current>${escapeHTML(activeScene.title)}</strong>
+          </div>
+        </header>
+
+        <div class="scene-home-stage">
+          <div class="scene-ring-wrap" aria-label="主页场景卡片轮播">
+            <div class="scene-ring-orbit scene-ring-orbit--outer" aria-hidden="true"></div>
+            <div class="scene-ring-orbit scene-ring-orbit--inner" aria-hidden="true"></div>
+            <div class="scene-ring">
+              ${homeSceneCatalog
+                .map(
+                  (sourceItem, index) => {
+                    const item = localizeHomeScene(sourceItem);
+                    return `
+                    <button
+                      class="scene-card ${index === homeSceneIndex ? "is-active" : index === (homeSceneIndex + 1) % homeSceneCatalog.length ? "is-next" : "is-prev"}"
+                      type="button"
+                      data-action="home-scene-open"
+                      data-view="${item.view}"
+                      data-home-scene-open
+                      aria-current="${index === homeSceneIndex ? "true" : "false"}"
+                      aria-label="打开${escapeAttribute(item.title)}"
+                      tabindex="${index === homeSceneIndex ? "0" : "-1"}"
+                      style="--scene-tone:var(--${item.tone});--scene-art:url('${escapeAttribute(item.art)}')"
+                    >
+                      <span class="scene-card-art" aria-hidden="true"></span>
+                      <span class="scene-card-index">${item.index}</span>
+                      <span class="scene-card-kicker">${escapeHTML(item.kicker)}</span>
+                      <span class="scene-card-title">${renderSceneLetters(item.title)}</span>
+                      <span class="scene-card-subtitle">${escapeHTML(item.subtitle)}</span>
+                      <span class="scene-card-edge" aria-hidden="true">↗</span>
+                    </button>
+                  `;
+                  },
+                )
+                .join("")}
+            </div>
+          </div>
+
+          <div class="scene-home-copy" data-scene-copy>
+            <p class="scene-home-kicker" data-scene-copy-kicker>${activeScene.index} / ${activeScene.kicker}</p>
+            <h1 id="scene-home-title" data-scene-copy-title aria-label="${escapeAttribute(activeScene.title)}">${renderSceneLetters(activeScene.title)}</h1>
+            <p class="scene-home-subtitle" data-scene-copy-subtitle>${escapeHTML(activeScene.subtitle)}</p>
+            <p class="scene-home-description" data-scene-copy-description>${escapeHTML(activeScene.description)}</p>
+            <button class="scene-home-cta" type="button" data-action="home-scene-open" data-view="${activeScene.view}" data-scene-copy-cta>
+              <span data-scene-copy-cta-label>${escapeHTML(activeScene.cue)}</span>
+              <b aria-hidden="true">↗</b>
+            </button>
+          </div>
+        </div>
+
+        <footer class="scene-home-footer">
+          <div class="scene-home-controls" aria-label="场景切换">
+            <button type="button" class="scene-arrow" data-action="home-scene-prev" aria-label="上一个场景">←</button>
+            <span class="scene-home-dots" aria-hidden="true">
+              ${homeSceneCatalog.map((_, index) => `<i class="${index === homeSceneIndex ? "is-active" : ""}"></i>`).join("")}
+            </span>
+            <button type="button" class="scene-arrow" data-action="home-scene-next" aria-label="下一个场景">→</button>
+          </div>
+          <p class="scene-home-wheel-hint"><span>SCROLL</span> 滚轮切换场景 · 点击卡片进入</p>
+          <p class="scene-home-safety">
+            ${english ? "On-device first · Respect boundaries" : "本地优先 · 尊重边界"}
+            · <a href="${english ? "/en/privacy/" : "/privacy/"}">${english ? "Privacy notice" : "隐私保护说明"}</a>
+          </p>
+        </footer>
+        <p class="visually-hidden" data-scene-live aria-live="polite">当前场景：${escapeHTML(activeScene.title)}</p>
+      </section>
+    </div>
+  `;
+}
+
+function renderSceneAtmosphere() {
+  return `
+    <svg class="scene-atmosphere" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">
+      <defs>
+        <linearGradient id="scene-intake-wash" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#f8f1e4" />
+          <stop offset=".5" stop-color="#eadfd3" />
+          <stop offset="1" stop-color="#d8e4e2" />
+        </linearGradient>
+        <linearGradient id="scene-archive-wash" x1="0" y1="1" x2="1" y2="0">
+          <stop offset="0" stop-color="#e8eee9" />
+          <stop offset=".55" stop-color="#d9e5e7" />
+          <stop offset="1" stop-color="#eee7d8" />
+        </linearGradient>
+        <linearGradient id="scene-agent-wash" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#e6e1ea" />
+          <stop offset=".48" stop-color="#d7dce9" />
+          <stop offset="1" stop-color="#e9dfd3" />
+        </linearGradient>
+        <pattern id="scene-archive-grid" width="54" height="54" patternUnits="userSpaceOnUse">
+          <path d="M54 0H0V54" fill="none" stroke="#1749c6" stroke-opacity=".13" stroke-width="1" />
+          <circle cx="0" cy="0" r="2" fill="#1749c6" fill-opacity=".25" />
+        </pattern>
+        <pattern id="scene-agent-dots" width="42" height="42" patternUnits="userSpaceOnUse">
+          <circle cx="4" cy="4" r="1.5" fill="#422d72" fill-opacity=".22" />
+        </pattern>
+      </defs>
+
+      <g class="scene-atmosphere-layer scene-atmosphere-layer--intake ${homeSceneIndex === 0 ? "is-active" : ""}" data-scene-atmosphere>
+        <rect width="1600" height="900" fill="url(#scene-intake-wash)" />
+        <g class="scene-svg-enter">
+          <path class="scene-svg-flow scene-svg-flow--one" d="M-120 610C210 390 420 720 715 490S1190 190 1730 400" pathLength="1" />
+          <path class="scene-svg-flow scene-svg-flow--two" d="M-80 680C260 500 470 810 785 555S1250 295 1700 475" pathLength="1" />
+          <path class="scene-svg-wave" d="M0 355C72 355 72 315 144 315S216 405 288 405 360 275 432 275 504 410 576 410 648 332 720 332 792 370 864 370 936 300 1008 300 1080 390 1152 390 1224 338 1296 338 1368 364 1440 364 1512 326 1600 326" pathLength="1" />
+          <g class="scene-svg-dialog scene-svg-dialog--a"><rect x="150" y="120" width="300" height="122" rx="4" /><path d="M192 242l-18 35 62-35" /></g>
+          <g class="scene-svg-dialog scene-svg-dialog--b"><rect x="1120" y="610" width="320" height="130" rx="4" /><path d="M1350 740l34 38-82-38" /></g>
+          <g class="scene-svg-pulse" transform="translate(800 455)"><circle r="118" /><circle r="72" /><circle r="12" /></g>
+        </g>
+      </g>
+
+      <g class="scene-atmosphere-layer scene-atmosphere-layer--archive ${homeSceneIndex === 1 ? "is-active" : ""}" data-scene-atmosphere>
+        <rect width="1600" height="900" fill="url(#scene-archive-wash)" />
+        <rect width="1600" height="900" fill="url(#scene-archive-grid)" />
+        <g class="scene-svg-enter">
+          <g class="scene-svg-file scene-svg-file--one"><rect x="150" y="95" width="360" height="510" /><path d="M205 165h190M205 205h248M205 245h218M205 488h126" /><circle cx="420" cy="490" r="38" /></g>
+          <g class="scene-svg-file scene-svg-file--two"><rect x="1080" y="250" width="350" height="475" /><path d="M1135 330h180M1135 370h232M1135 410h205M1135 590h150" /><path d="M1324 612l45 45 88-118" /></g>
+          <path class="scene-svg-route" d="M460 690C660 510 668 248 900 230S1260 400 1420 120" pathLength="1" />
+          <g class="scene-svg-node scene-svg-node--a" transform="translate(648 498)"><circle r="44" /><circle r="8" /></g>
+          <g class="scene-svg-node scene-svg-node--b" transform="translate(920 232)"><circle r="58" /><circle r="9" /></g>
+          <g class="scene-svg-scan"><line x1="-200" y1="0" x2="540" y2="900" /><line x1="-150" y1="0" x2="590" y2="900" /></g>
+        </g>
+      </g>
+
+      <g class="scene-atmosphere-layer scene-atmosphere-layer--agent ${homeSceneIndex === 2 ? "is-active" : ""}" data-scene-atmosphere>
+        <rect width="1600" height="900" fill="url(#scene-agent-wash)" />
+        <rect width="1600" height="900" fill="url(#scene-agent-dots)" />
+        <g class="scene-svg-enter">
+          <g transform="translate(800 450)"><g class="scene-svg-orbit">
+              <ellipse rx="420" ry="205" />
+              <ellipse rx="300" ry="330" transform="rotate(57)" />
+              <ellipse rx="180" ry="410" transform="rotate(-48)" />
+              <circle cx="420" cy="0" r="12" />
+              <circle cx="-212" cy="235" r="9" />
+              <circle cx="88" cy="-355" r="7" />
+          </g></g>
+          <g class="scene-svg-network">
+            <path d="M250 620L445 470 625 565 800 370 1010 500 1250 300 1430 410" />
+            <path d="M300 250L520 360 740 210 990 330 1210 190 1400 270" />
+            <g><circle cx="250" cy="620" r="8" /><circle cx="445" cy="470" r="11" /><circle cx="625" cy="565" r="7" /><circle cx="800" cy="370" r="14" /><circle cx="1010" cy="500" r="8" /><circle cx="1250" cy="300" r="12" /><circle cx="1430" cy="410" r="7" /></g>
+          </g>
+          <g class="scene-svg-core" transform="translate(800 450)"><circle r="116" /><circle r="74" /><path d="M-34 0h68M0-34v68" /></g>
+          <path class="scene-svg-thought" d="M170 760C390 650 510 790 690 680S1010 550 1180 680 1430 760 1640 620" pathLength="1" />
+        </g>
+      </g>
+    </svg>
+  `;
+}
+
+function renderSitePolicyFooter() {
+  const english = detectLocale() === "en";
+  return `
+    <footer class="site-policy-footer" aria-label="${english ? "Legal and privacy" : "隐私与法律信息"}">
+      <span>© 2026 GAME Signal Lab · ${english ? "Beta" : "测试版"}</span>
+      <a href="${english ? "/en/privacy/" : "/privacy/"}">${english ? "Privacy notice" : "隐私保护说明"} →</a>
+    </footer>
   `;
 }
 
@@ -298,22 +1861,942 @@ function renderDashboardEmpty() {
     <div class="empty-state">
       <div>
         <div class="empty-symbol" aria-hidden="true">＋</div>
-        <h3>从一个真实事件开始</h3>
-        <p>如果暂时没有可记录的事件，可以先加载一组匿名示例，看看分析和复盘如何工作。</p>
+        <h3>从一句话开始就好</h3>
+        <p>你不需要先把事情想完整。打开“开始记录”，我会先听你说，再问一个温和的问题。</p>
         <div class="button-row" style="justify-content:center">
-          <button class="button button--primary" data-view="new-event">创建第一条记录</button>
-          <button class="button button--quiet" data-action="load-sample">载入匿名示例</button>
+          <button class="button button--primary" data-view="new-event">开始记录</button>
+          <button class="button button--quiet" data-action="load-sample">看看匿名示例</button>
         </div>
       </div>
     </div>
   `;
 }
 
+function renderStoryIntake() {
+  const hasStory = storyIntake.messages.length > 0;
+  const canUseAgent = Boolean(platform.user && platform.externalAiConsent?.current && platform.capabilities?.agent);
+  const speechSupported = Boolean(canRecordAudio());
+  const archiveTarget = storyIntake.archiveContactId || preferredContactId || "";
+  return `
+    <section class="story-intake panel panel--dark ${storyIntake.active ? "is-active" : ""}" aria-labelledby="story-intake-title">
+      <div class="story-intake-topline">
+        <p class="eyebrow">STORY INTAKE · ${storyIntake.active ? "LIVE" : "01"}</p>
+        <div class="story-target-control">
+          <label for="story-archive-contact">归档对象</label>
+          <select id="story-archive-contact" name="archiveContactId">
+            <option value="" ${archiveTarget ? "" : "selected"}>结束后新建匿名对象</option>
+            ${state.contacts.map((contact) => `<option value="${escapeAttribute(contact.id)}" ${contact.id === archiveTarget ? "selected" : ""}>${escapeHTML(contact.alias)}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <div class="story-intake-copy">
+        <h2 id="story-intake-title">我在听，你慢慢说。</h2>
+        <p>不用准备好答案，也不用从头讲起。我会听着你的线索，一次只问一个最有帮助的问题；不想回答，就跳过去。</p>
+      </div>
+      ${hasStory ? `
+        <div class="story-thread" aria-live="polite">
+          ${storyIntake.messages.slice(-8).map((message) => `
+            <div class="story-bubble story-bubble--${message.role}">
+              <span>${message.role === "assistant" ? "我" : "你"}</span>
+              <p>${escapeHTML(normalizeAssistantText(message.content))}</p>
+            </div>
+          `).join("")}
+        </div>
+      ` : `
+        <div class="story-prompt-note"><span>你可以从这里开始</span><strong>告诉我你的故事。你们在哪里认识？那天发生了什么？</strong></div>
+      `}
+      ${storyIntake.active ? `
+        <form class="story-answer-form" id="story-answer-form">
+          <label class="visually-hidden" for="story-answer">告诉我你的故事</label>
+          <textarea id="story-answer" name="answer" maxlength="2400" placeholder="想到哪儿说到哪儿…" ${storyIntake.busy || storyIntake.recording || storyIntake.finalizingVoice ? "disabled" : ""}>${escapeHTML(storyIntake.draftInput)}</textarea>
+          ${storyIntake.recording ? renderStoryRecordingPanel() : ""}
+          <div class="story-controls">
+            <button class="story-voice-button ${storyIntake.recording ? "is-recording" : ""} ${storyIntake.finalizingVoice ? "is-processing" : ""} ${storyIntake.motionSuppressed ? "motion-suppressed" : ""}" type="button" data-action="story-voice" aria-label="${storyIntake.recording ? "结束录音" : storyIntake.finalizingVoice ? "正在转写录音" : "开始录音"}" ${storyIntake.finalizingVoice ? "disabled" : ""}>
+              <span class="voice-recording-visual ${storyIntake.recording ? "is-live" : storyIntake.finalizingVoice ? "is-processing" : ""}" aria-hidden="true">${storyIntake.recording ? "<i></i><i></i><i></i><i></i><i></i>" : storyIntake.finalizingVoice ? "<b></b><b></b><b></b>" : "◉"}</span>
+              ${storyIntake.recording ? "结束录音" : storyIntake.finalizingVoice ? "转写中…" : speechSupported ? "开始录音" : "浏览器不支持录音"}
+            </button>
+            <span class="story-shortcut">边说边识别 · 结束后整段校正并整理句读 · 电脑端按 R</span>
+            ${storyIntake.voiceStatus ? `<span class="story-voice-status" role="status" aria-live="polite">${escapeHTML(storyIntake.voiceStatus)}</span>` : ""}
+            ${storyIntake.finalizingVoice && storyIntake.draftInput ? '<button class="text-button story-use-current" type="button" data-action="story-use-current-transcript">立即使用当前文字</button>' : ""}
+            <button class="button button--light button--small" type="submit" ${storyIntake.busy || storyIntake.recording || storyIntake.finalizingVoice ? "disabled" : ""}>发送</button>
+            <button class="text-button text-button--light" type="button" data-action="story-skip" ${storyIntake.busy || storyIntake.recording || storyIntake.finalizingVoice ? "disabled" : ""}>先跳过</button>
+            <button class="text-button text-button--light" type="button" data-action="story-end" ${storyIntake.recording || storyIntake.finalizingVoice ? "disabled" : ""}>归档并结束</button>
+          </div>
+        </form>
+      ` : `
+        <div class="story-actions">
+          <button class="button button--light" type="button" data-action="story-start">${hasStory ? "继续说" : "告诉我你的故事"} <span aria-hidden="true">→</span></button>
+          <button class="story-voice-button" type="button" data-action="story-voice" aria-label="${speechSupported ? "用语音开始记录" : "当前浏览器不支持语音输入"}" ${speechSupported ? "" : "disabled"}>
+            <span aria-hidden="true">◉</span>${speechSupported ? "语音输入" : "浏览器不支持语音"}
+          </button>
+          ${!canUseAgent ? '<small class="story-access-note">需要登录并同意外部 AI 处理说明后开始。</small>' : ""}
+        </div>
+      `}
+      <small class="story-privacy">录音期间只保存在当前设备；结束后 WAV 会发送给语音识别服务，可自行选择 DeepSeek 整理句读。仅使用本地 FunASR，失败直接提示重试，不向云端发送录音；你点击“发送”后才进入对话。</small>
+    </section>
+  `;
+}
+
+function renderStoryRecordingPanel() {
+  const levels = Array.from({ length: 44 }, (_, index) => {
+    const offset = storyIntake.waveformLevels.length - 44 + index;
+    if (offset >= 0) return storyIntake.waveformLevels[offset];
+    return storyIntake.waveformLevels.length ? 4 : 12 + ((index * 17) % 34);
+  });
+  const progress = Math.min(1, storyIntake.recordingDurationMs / 300_000);
+  return `
+    <section class="story-recording-panel" aria-label="正在录音">
+      <div class="story-recording-meta">
+        <span class="story-recording-live"><i aria-hidden="true"></i>REC · WAV</span>
+        <time id="story-recording-time" datetime="PT${Math.floor(storyIntake.recordingDurationMs / 1000)}S">${formatRecordingDuration(storyIntake.recordingDurationMs)}</time>
+      </div>
+      <div class="story-recording-waveform" id="story-recording-waveform" aria-hidden="true">
+        ${levels.map((level) => `<i style="transform:scaleY(${Math.max(0.08, Math.min(1, level / 100)).toFixed(2)})"></i>`).join("")}
+      </div>
+      <div class="story-recording-timeline" aria-hidden="true">
+        <span id="story-recording-progress" style="transform:scaleX(${progress.toFixed(4)})"></span>
+      </div>
+      <div class="story-recording-foot"><span>00:00</span><strong>录音中尝试实时识别，结束后再整段校正</strong><span>05:00</span></div>
+    </section>
+  `;
+}
+
+function formatRecordingDuration(milliseconds = 0) {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function startStoryIntake({ beginVoice = false } = {}) {
+  if (!platform.user) {
+    showToast("请先登录，再开始故事记录", 3600);
+    openPlatformAuthDialog();
+    return;
+  }
+  if (!platform.externalAiConsent?.current) {
+    showToast("开始前需要先确认外部 AI 数据处理说明", 3600);
+    navigate("agent");
+    return;
+  }
+  if (!platform.capabilities?.agent) {
+    showToast("当前账户还没有 Agent 使用权限", 3600);
+    navigate("agent");
+    return;
+  }
+  storyIntake.active = true;
+  storyIntake.remaining = null;
+  storyIntake.startedAt = Date.now();
+  storyIntake.draftInput = "";
+  storyIntake.voiceStatus = "";
+  if (!storyIntake.messages.length) {
+    storyIntake.messages.push({
+      role: "assistant",
+      content: "告诉我你的故事。你可以从你们在哪里认识、那天发生了什么开始，也可以从此刻最让你在意的地方说起。",
+    });
+  }
+  renderCurrentView();
+  requestAnimationFrame(() => {
+    if (beginVoice) toggleStoryVoice();
+    else document.querySelector("#story-answer")?.focus();
+  });
+}
+
+async function endStoryIntake() {
+  if (storyIntake.recording || storyIntake.finalizingVoice) {
+    showToast("请先结束录音并确认转写文字，再归档故事", 3600);
+    return;
+  }
+  window.clearInterval(storyIntake.timer);
+  storyIntake.active = false;
+  const pendingInput = clean(storyIntake.draftInput).slice(0, 2400);
+  stopStoryVoice();
+  storyIntake.voiceStatus = "";
+  storyIntake.controller?.abort();
+  if (pendingInput) {
+    storyIntake.messages.push({ role: "user", content: pendingInput });
+  }
+  storyIntake.draftInput = "";
+  const storyText = storyIntake.messages
+    .filter((message) => message.role === "user")
+    .map((message) => message.content)
+    .join("\n")
+    .trim();
+  storyIntake.busy = false;
+  storyIntake.draft = storyIntake.messages
+    .filter((message) => message.role === "user")
+    .map((message) => message.content)
+    .join("\n");
+  storyIntake.draftInput = "";
+  if (!storyText) {
+    renderCurrentView();
+    showToast("记录已结束；还没有可归档的故事");
+    return;
+  }
+  const archived = await archiveStoryAsContact(storyText);
+  renderCurrentView();
+  if (archived) {
+    showToast("故事已整理并归档到对象档案");
+    navigate("people");
+  } else {
+    showToast("故事已留在当前浏览器，可以继续整理");
+  }
+}
+
+async function archiveStoryAsContact(storyText) {
+  if (state.contacts.length >= MAX_CONTACTS && !getContact(storyIntake.archiveContactId || preferredContactId)) {
+    showToast(`最多保存 ${MAX_CONTACTS} 个匿名档案；请先整理现有档案`, 4600);
+    return false;
+  }
+  const targetId = storyIntake.archiveContactId || preferredContactId || "";
+  const target = getContact(targetId);
+  const summary = await summarizeStoryForArchive(storyText);
+  const block = [
+    `故事记录（${todayISO()}）`,
+    `认识背景：${summary.context || "未提及"}`,
+    `已表达目标或需求：${summary.goal || "未提及"}`,
+    `边界或待确认点：${summary.boundary || "未提及"}`,
+    `\n原始片段\n${storyText.slice(0, 280)}`,
+  ].join("\n").slice(0, 1200);
+  let archivedId = target?.id || "";
+  if (!commitState((next) => {
+    if (target) {
+      const contact = next.contacts.find((item) => item.id === target.id);
+      if (contact) {
+        contact.context = `${contact.context ? `${contact.context}\n\n` : ""}${block}`.slice(-1200);
+        if (summary.goal && summary.goal !== "未提及") contact.goal = summary.goal.slice(0, 600);
+        if (summary.boundary && summary.boundary !== "未提及") contact.boundary = summary.boundary.slice(0, 600);
+      }
+      return;
+    }
+    archivedId = uid();
+    next.contacts.push({
+      id: archivedId,
+      alias: nextArchiveAlias(next.contacts),
+      stage: "刚认识",
+      context: block,
+      goal: summary.goal || "",
+      boundary: summary.boundary || "",
+      createdAt: new Date().toISOString(),
+    });
+  })) return false;
+  preferredContactId = archivedId || target.id;
+  storyIntake.archiveContactId = preferredContactId;
+  return true;
+}
+
+function nextArchiveAlias(contacts) {
+  const used = new Set(contacts.map((contact) => contact.alias.toLocaleLowerCase("zh-CN")));
+  const base = `对象-${todayISO().replaceAll("-", "")}`;
+  let alias = base;
+  let index = 2;
+  while (used.has(alias.toLocaleLowerCase("zh-CN"))) {
+    alias = `${base}-${index}`;
+    index += 1;
+  }
+  return alias.slice(0, 40);
+}
+
+async function summarizeStoryForArchive(storyText) {
+  const fallback = storyIntake.messages
+    .filter((message) => message.role === "assistant" && message.content)
+    .at(-1)?.content || storyText;
+  const fallbackSummary = { context: fallback, goal: "", boundary: "" };
+  const canUseAgent = Boolean(platform.user && platform.externalAiConsent?.current && platform.capabilities?.agent);
+  if (!canUseAgent) return fallbackSummary;
+  try {
+    showToast("正在整理故事并归档…", 2200);
+    const transcript = storyIntake.messages
+      .slice(-12)
+      .map((message) => `${message.role === "user" ? "用户" : "回应"}：${message.content}`)
+      .join("\n")
+      .slice(-10000);
+    const complete = await platformClient.streamAgent([
+      {
+        role: "user",
+        content: `请把下面这段匿名关系故事整理成对象档案字段。只根据原文，不推断对方的想法，也不要给建议。只输出 JSON，不要 Markdown：{"context":"认识背景和可观察事实","goal":"已表达目标或需求；没有就写未提及","boundary":"明确边界、拒绝或待确认点；没有就写未提及"}。\n\n${transcript}`,
+      },
+    ]);
+    return parseContactDraft(complete) || { context: clean(complete || fallback).slice(0, 1050) || fallback, goal: "", boundary: "" };
+  } catch {
+    return fallbackSummary;
+  }
+}
+
+async function submitStoryAnswer(answer) {
+  if (!storyIntake.active || storyIntake.busy) return;
+  const normalized = clean(answer).slice(0, 2400);
+  storyIntake.draftInput = "";
+  if (!normalized) {
+    showToast("可以写一句，也可以选择跳过", 2600);
+    return;
+  }
+  storyIntake.messages.push({ role: "user", content: normalized });
+  if (storyIntake.messages.filter((message) => message.role === "user").length === 1) {
+    window.clearInterval(storyIntake.timer);
+    storyIntake.timer = null;
+    storyIntake.remaining = null;
+  }
+  storyIntake.busy = true;
+  storyIntake.controller = new AbortController();
+  const conversation = storyIntake.messages.slice(-12).map((message, index, list) => {
+    if (message.role === "user" && index === list.length - 1) {
+      return {
+        role: "user",
+        content: `这是故事访谈中的一次回答：${message.content}
+你的目标是逐步建立一个可核对的对象档案。优先检查这些信息是否出现：认识背景（时间/地点/场景）、可观察事实与原话、用户当时的状态和感受、对方可观察的回应、已表达目标或需求、明确边界/拒绝/不确定性、用户想要厘清的问题。
+保持温和，不替任何人下结论，不把沉默、回避或隐性信号当成同意。每次只追问一个最缺失、最具体的问题，最多两句话；如果用户说“不想回答”就接受并换一个问题。如果仍有关键空白，不要急着总结；只有信息已经覆盖或用户明确想结束时，才用几句事实摘要收束，并邀请用户选择继续或归档。只输出自然的纯文本中文，不要使用 Markdown、星号、标题符号、列表符号或引号包裹。`,
+      };
+    }
+    return message;
+  });
+  storyIntake.messages.push({ role: "assistant", content: "" });
+  const threadScroll = captureStoryThreadScroll();
+  const followLatest = !threadScroll || threadScroll.distanceFromBottom <= STORY_SCROLL_BOTTOM_THRESHOLD;
+  renderStoryViewPreservingScroll(threadScroll, { followLatest });
+  try {
+    const complete = await platformClient.streamAgent(conversation, {
+      signal: storyIntake.controller.signal,
+      channel: "story",
+      archiveText: normalized,
+      onText(chunk, fullText) {
+        const target = storyIntake.messages.at(-1);
+        if (target?.role === "assistant") {
+          target.content = normalizeAssistantText(fullText).slice(0, 5000);
+        }
+        const node = document.querySelector(".story-thread .story-bubble--assistant:last-child p");
+        if (node) node.textContent = target?.content || "";
+        if (followLatest) restoreStoryThreadScroll(null, { followLatest: true });
+      },
+    });
+    const target = storyIntake.messages.at(-1);
+    if (target?.role === "assistant" && !target.content) {
+      target.content = normalizeAssistantText(complete) || "你还想补充哪一个具体片段？";
+    }
+  } catch (error) {
+    storyIntake.messages.push({
+      role: "assistant",
+      content: error instanceof PlatformError ? error.message : "这次没有接上回应，你可以继续写下去。",
+    });
+  } finally {
+    storyIntake.busy = false;
+    storyIntake.controller = null;
+    storyIntake.voiceStatus = "";
+    renderStoryViewPreservingScroll(threadScroll, { followLatest });
+    requestAnimationFrame(() => document.querySelector("#story-answer")?.focus());
+  }
+}
+
+async function startStoryAudioRecording() {
+  if (!canRecordAudio()) return false;
+  if (!(await checkMicrophonePermission())) return true;
+  const input = document.querySelector("#story-answer");
+  storyIntake.draftInput = clean(input?.value || storyIntake.draftInput).slice(0, 2400);
+  storyIntake.recordingBaseText = storyIntake.draftInput;
+  storyIntake.recordingAsrText = "";
+  storyIntake.lastAsrChunkIndex = 0;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        sampleRate: 16_000,
+        sampleSize: 16,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+  } catch {
+    showToast("无法取得麦克风权限，请允许录音后重试", 3600);
+    return true;
+  }
+  let recorder;
+  try {
+    recorder = await createWavRecorder(stream, { onProcess: updateStoryRecordingVisual });
+  } catch {
+    stream.getTracks().forEach((track) => track.stop());
+    showToast("当前浏览器无法建立 WAV 录音，请改用文字输入", 4200);
+    return true;
+  }
+  storyIntake.audioRecorder = recorder;
+  storyIntake.recordingStream = stream;
+  storyIntake.finalizingVoice = false;
+  storyIntake.recording = true;
+  storyIntake.recordingDurationMs = 0;
+  storyIntake.waveformLevels = [];
+  storyIntake.voiceStatus = "实时识别中 · 结束后校正最终文字";
+  renderStoryViewPreservingScroll();
+  // Transcribe only after Stop; no repeated offline inference while recording.
+  return true;
+}
+
+async function toggleStoryVoice({ fromKeyboard = false } = {}) {
+  if (!storyIntake.active) {
+    startStoryIntake({ beginVoice: true });
+    return;
+  }
+  if (storyIntake.recording) {
+    stopStoryVoice();
+    return;
+  }
+  storyIntake.motionSuppressed = fromKeyboard;
+  if (await startStoryAudioRecording()) return;
+  storyIntake.motionSuppressed = false;
+  showToast("当前浏览器无法录音，请改用文字输入", 3600);
+}
+
+function stopStoryVoice() {
+  if (storyIntake.audioRecorder) {
+    const recorder = storyIntake.audioRecorder;
+    const stream = storyIntake.recordingStream;
+    const preview = clean(storyIntake.recordingBaseText).slice(0, 2400);
+    const livePreview = clean(storyIntake.draftInput).slice(0, 2400);
+    const durationMs = Number(recorder.durationMs?.()) || 0;
+    const liveAsrPromise = storyIntake.liveAsrPromise;
+    stopStoryLiveAsr();
+    storyIntake.audioRecorder = null;
+    storyIntake.recordingStream = null;
+    storyIntake.recording = false;
+    storyIntake.finalizingVoice = true;
+    storyIntake.voiceStatus = "正在完成整段识别 · 通常需要 3–8 秒";
+    storyIntake.finalizeController?.abort();
+    const finalizeController = new AbortController();
+    const generation = ++storyIntake.finalizeGeneration;
+    storyIntake.finalizeController = finalizeController;
+    let blob;
+    try {
+      blob = recorder.stop();
+    } catch (error) {
+      stream?.getTracks().forEach((track) => track.stop());
+      void handleStoryRecordingFailure(error, livePreview || preview);
+      return;
+    }
+    stream?.getTracks().forEach((track) => track.stop());
+    renderStoryViewPreservingScroll();
+    void finalizeStoryRecording(blob, {
+      preview,
+      livePreview,
+      durationMs,
+      liveAsrPromise,
+      signal: finalizeController.signal,
+      generation,
+    });
+    return;
+  }
+  storyIntake.recording = false;
+  storyIntake.voiceStatus = "";
+}
+
+async function finalizeStoryRecording(blob, {
+  preview,
+  livePreview = "",
+  durationMs = 0,
+  liveAsrPromise = null,
+  signal,
+  generation,
+}) {
+  let transcript = livePreview || preview;
+  let slowStatusTimer = null;
+  try {
+    // Do not start the final full-WAV request while the last incremental
+    // request is still occupying the single local FunASR slot.
+    await waitForLiveAsrRequest(liveAsrPromise);
+    if (!blob?.size) throw new Error("audio_empty");
+    slowStatusTimer = window.setTimeout(() => {
+      if (storyIntake.finalizingVoice && storyIntake.finalizeGeneration === generation) {
+        updateStoryVoiceStatus("本地识别中 · 当前文字已保留，可取消后重试短录音");
+      }
+    }, 5_000);
+    const recognized = await streamTranscribeRecordedAudio(blob, {
+      timeoutMs: livePreview ? FINAL_ASR_WITH_PREVIEW_TIMEOUT_MS : FINAL_ASR_WITHOUT_PREVIEW_TIMEOUT_MS,
+      signal,
+      onText(partial) {
+        if (storyIntake.finalizeGeneration !== generation) return;
+        transcript = appendVoiceTranscript(preview, partial).slice(0, 2400);
+        storyIntake.draftInput = transcript;
+        const input = document.querySelector("#story-answer");
+        if (input) input.value = transcript;
+        updateStoryVoiceStatus("整段识别完成 · 正在校正文字");
+      },
+    });
+    window.clearTimeout(slowStatusTimer);
+    slowStatusTimer = null;
+    if (storyIntake.finalizeGeneration !== generation) return;
+    transcript = appendVoiceTranscript(preview, recognized).slice(0, 2400);
+    if (transcript && storyIntake.active) {
+      storyIntake.draftInput = transcript;
+      storyIntake.recordingDurationMs = durationMs;
+      storyIntake.voiceStatus = "识别完成 · 可直接发送，或选择整理标点";
+      renderStoryViewPreservingScroll();
+      requestAnimationFrame(() => {
+        const input = document.querySelector("#story-answer");
+        input?.focus();
+        input?.setSelectionRange(input.value.length, input.value.length);
+      });
+    }
+  } catch (error) {
+    if (storyIntake.finalizeGeneration !== generation) return;
+    const fallback = livePreview || preview;
+    if (fallback && storyIntake.active) {
+      storyIntake.draftInput = fallback.slice(0, 2400);
+      storyIntake.voiceStatus = "已保留原文字 · 可编辑后发送";
+    } else if (storyIntake.active) {
+      showToast(error instanceof PlatformError ? error.message : "语音识别未完成，请改用文字输入", 4200);
+    }
+  } finally {
+    window.clearTimeout(slowStatusTimer);
+    if (storyIntake.finalizeGeneration !== generation) return;
+    stopStoryLiveAsr();
+    storyIntake.recordingBaseText = "";
+    storyIntake.recordingAsrText = "";
+    storyIntake.lastAsrChunkIndex = 0;
+    storyIntake.finalizingVoice = false;
+    storyIntake.finalizeController = null;
+    storyIntake.motionSuppressed = false;
+    if (!storyIntake.draftInput) storyIntake.voiceStatus = "";
+    renderStoryViewPreservingScroll();
+    offerVoicePunctuation("#story-answer", {
+      isCurrent: () => storyIntake.active && storyIntake.finalizeGeneration === generation && !storyIntake.recording && !storyIntake.finalizingVoice,
+      apply: text => { storyIntake.draftInput = text; },
+      maxLength: 2400,
+    });
+  }
+}
+
+function useCurrentStoryTranscript() {
+  if (!storyIntake.finalizingVoice) return;
+  storyIntake.finalizeGeneration += 1;
+  storyIntake.finalizeController?.abort();
+  storyIntake.finalizeController = null;
+  storyIntake.finalizingVoice = false;
+  storyIntake.recordingBaseText = "";
+  storyIntake.recordingAsrText = "";
+  storyIntake.lastAsrChunkIndex = 0;
+  storyIntake.voiceStatus = storyIntake.draftInput
+    ? "已采用当前文字 · 可编辑并发送"
+    : "";
+  renderStoryViewPreservingScroll();
+  requestAnimationFrame(() => {
+    const input = document.querySelector("#story-answer");
+    input?.focus();
+    input?.setSelectionRange(input.value.length, input.value.length);
+  });
+}
+
+function offerVoicePunctuation(selector, {isCurrent, apply, maxLength}) {
+  const input = document.querySelector(selector);
+  if (!input || !input.value.trim()) return;
+  document.querySelector(`[data-punctuation-for="${selector}"]`)?.remove();
+  const button = document.createElement("button");
+  button.type = "button";
+  button.dataset.punctuationFor = selector;
+  button.textContent = detectLocale() === "en" ? "Tidy punctuation (optional)" : "整理标点（可选）";
+  input.after(button);
+  button.onclick = async () => {
+    if (button.disabled || !input.isConnected || !isCurrent()) return;
+    const base = input.value;
+    const controller = new AbortController();
+    let edited = false;
+    const edit = () => { edited = true; controller.abort(); };
+    input.addEventListener("input", edit);
+    button.disabled = true;
+    try {
+      const result = await organizeRecognizedVoice(base, {maxLength, signal:controller.signal});
+      if (!edited && input.isConnected && isCurrent() && input.value === base) {
+        input.value = result.text;
+        apply(result.text);
+      }
+    } finally {
+      input.removeEventListener("input", edit);
+      button.disabled = false;
+    }
+  };
+}
+
+async function organizeRecognizedVoice(text, { maxLength = 2_400, onStatus, signal } = {}) {
+  const raw = clean(text).slice(0, maxLength);
+  if (!raw) return { text: "", organized: false };
+  const canUseAgent = Boolean(
+    platform.user && platform.externalAiConsent?.current && platform.capabilities?.agent
+  );
+  if (!canUseAgent) return { text: raw, organized: false };
+  onStatus?.("正在补全句读并修正明显错字 · 最多 10 秒");
+  const controller = new AbortController();
+  const abortFromCaller = () => controller.abort(signal?.reason);
+  if (signal?.aborted) abortFromCaller();
+  else signal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timeout = window.setTimeout(() => controller.abort(new Error("voice_organize_timeout")), VOICE_ORGANIZE_CLIENT_TIMEOUT_MS);
+  try {
+    const organized = clean(await platformClient.organizeVoiceText(raw, { signal: controller.signal })).slice(0, maxLength);
+    return { text: organized || raw, organized: Boolean(organized) };
+  } catch {
+    return { text: raw, organized: false };
+  } finally {
+    window.clearTimeout(timeout);
+    signal?.removeEventListener("abort", abortFromCaller);
+  }
+}
+
+async function waitForLiveAsrRequest(promise) {
+  if (!promise) return;
+  await Promise.race([
+    promise.catch(() => {}),
+    new Promise((resolve) => window.setTimeout(resolve, 1_500)),
+  ]);
+}
+
+function updateStoryVoiceStatus(message) {
+  storyIntake.voiceStatus = message;
+  const status = document.querySelector(".story-voice-status");
+  if (status) status.textContent = t(message);
+}
+
+function updateStoryLiveDraft(text) {
+  const live = clean(text).slice(0, 2400);
+  if (!live) return;
+  storyIntake.draftInput = live;
+  const input = document.querySelector("#story-answer");
+  if (input && input.value !== live) input.value = live;
+}
+
+function startStoryLiveAsr() {
+  stopStoryLiveAsr();
+  storyIntake.liveAsrTimer = window.setInterval(() => {
+    const pending = refreshStoryLiveAsr();
+    storyIntake.liveAsrPromise = pending;
+    void pending.then(
+      () => {
+        if (storyIntake.liveAsrPromise === pending) storyIntake.liveAsrPromise = null;
+      },
+      () => {
+        if (storyIntake.liveAsrPromise === pending) storyIntake.liveAsrPromise = null;
+      }
+    );
+  }, 2_200);
+}
+
+function stopStoryLiveAsr() {
+  window.clearInterval(storyIntake.liveAsrTimer);
+  storyIntake.liveAsrTimer = null;
+  storyIntake.liveAsrController?.abort();
+  storyIntake.liveAsrController = null;
+  // Do not let a promise from the previous recording be captured by the
+  // next stop cycle before its first live-ASR tick has started.
+  storyIntake.liveAsrPromise = null;
+  storyIntake.lastAsrChunkIndex = 0;
+}
+
+async function refreshStoryLiveAsr() {
+  const recorder = storyIntake.audioRecorder;
+  if (!storyIntake.recording || !recorder || storyIntake.liveAsrController) return;
+  if (recorder.durationMs() < 1_200) return;
+
+  const fromIndex = storyIntake.lastAsrChunkIndex || 0;
+  const endIndex = recorder.chunkCount();
+  const snapshot = recorder.snapshot(fromIndex);
+  if (snapshot.size <= 44) return;
+
+  const controller = new AbortController();
+  storyIntake.liveAsrController = controller;
+  try {
+    let corrected = "";
+    let streamed = "";
+    try {
+      corrected = await streamTranscribeRecordedAudio(snapshot, {
+        timeoutMs: 12_000,
+        signal: controller.signal,
+        priority: "live",
+        onText(partial) {
+          if (!storyIntake.recording || storyIntake.liveAsrController !== controller) return;
+          streamed = partial;
+          const current = appendVoiceTranscript(storyIntake.recordingAsrText, streamed);
+          updateStoryLiveDraft(appendVoiceTranscript(storyIntake.recordingBaseText, current));
+          updateStoryVoiceStatus("实时识别中 · 正在校正当前片段…");
+        },
+      });
+    } catch (error) {
+      if (error?.code === "asr_stream_failed" || error?.code === "asr_stream_incomplete") {
+        corrected = await transcribeRecordedAudio(snapshot, {
+          timeoutMs: 18_000,
+          signal: controller.signal,
+          priority: "live",
+        });
+      } else throw error;
+    }
+
+    corrected = clean(corrected).slice(0, 2400);
+    if (!corrected || !storyIntake.recording || storyIntake.liveAsrController !== controller) return;
+
+    // Commit exactly the audio range that was captured for this request. Any
+    // chunks recorded while FunASR was working are left for the next request.
+    storyIntake.lastAsrChunkIndex = endIndex;
+    const newTail = extractNewTranscript(storyIntake.recordingAsrText, corrected);
+    if (newTail) {
+      storyIntake.recordingAsrText = appendVoiceTranscript(
+        storyIntake.recordingAsrText,
+        newTail
+      ).slice(0, 2400);
+      updateStoryLiveDraft(
+        appendVoiceTranscript(storyIntake.recordingBaseText, storyIntake.recordingAsrText)
+      );
+    }
+    updateStoryVoiceStatus("已实时识别 · 继续说即可");
+    window.setTimeout(() => {
+      if (storyIntake.recording) updateStoryVoiceStatus("实时识别中 · 结束后校正最终文字");
+    }, 1_200);
+  } catch {
+    // The final full-WAV pass still runs on stop, so a slow incremental request
+    // must never interrupt recording or erase the text already shown.
+  } finally {
+    if (storyIntake.liveAsrController === controller) storyIntake.liveAsrController = null;
+  }
+}
+
+async function handleStoryRecordingFailure(error, preview) {
+  storyIntake.finalizingVoice = false;
+  storyIntake.motionSuppressed = false;
+  storyIntake.voiceStatus = "";
+  storyIntake.draftInput = preview;
+  renderStoryViewPreservingScroll();
+  showToast(error?.message || "录音没有成功结束，请重试", 4200);
+}
+
+function createMp3Recorder({ onProcess } = {}) {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return Promise.reject(new Error("浏览器不支持录音功能"));
+  }
+  const constraints = { audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } };
+  return navigator.mediaDevices.getUserMedia(constraints).then((stream) => {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const source = audioCtx.createMediaStreamSource(stream);
+    const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    const chunks = [];
+    let startTime = Date.now();
+
+    source.connect(processor);
+    processor.connect(audioCtx.destination);
+
+    processor.onaudioprocess = (e) => {
+      if (chunks.length === 0) startTime = Date.now();
+      const input = e.inputBuffer.getChannelData(0);
+      const pcm = new Int16Array(input.length);
+      for (let i = 0; i < input.length; i++) {
+        pcm[i] = Math.max(-32768, Math.min(32767, input[i] * 32768));
+      }
+      chunks.push(pcm);
+
+      const durationMs = Date.now() - startTime;
+      const rms = Math.sqrt(input.reduce((s,x) => s + x*x, 0) / input.length);
+      onProcess?.(Math.round(rms * 1000), durationMs);
+    };
+
+    return {
+      stop() {
+        source.disconnect();
+        processor.disconnect();
+        const sr = audioCtx.sampleRate;
+        audioCtx.close();
+        stream.getTracks().forEach(t => t.stop());
+
+        // Build WAV blob
+        const totalSamples = chunks.reduce((s, c) => s + c.length, 0);
+        const wav = new ArrayBuffer(44 + totalSamples * 2);
+        const view = new DataView(wav);
+        writeWavHeader(view, sr, 1, 16, totalSamples);
+        let offset = 44;
+        for (const chunk of chunks) {
+          new Int16Array(wav, offset, chunk.length).set(chunk);
+          offset += chunk.length * 2;
+        }
+        const blob = new Blob([wav], { type: "audio/wav" });
+        const durationMs = Date.now() - startTime;
+        return Promise.resolve({ blob, durationMs });
+      },
+    };
+  });
+}
+
+function writeWavHeader(view, sampleRate, numChannels, bitsPerSample, numSamples) {
+  const byteRate = sampleRate * numChannels * bitsPerSample / 8;
+  const blockAlign = numChannels * bitsPerSample / 8;
+  view.setUint32(0, 0x52494646, false); // "RIFF"
+  view.setUint32(4, 36 + numSamples * blockAlign, true);
+  view.setUint32(8, 0x57415645, false); // "WAVE"
+  view.setUint32(12, 0x666d7420, false); // "fmt "
+  view.setUint32(16, 16, true); // chunk size
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  view.setUint32(36, 0x64617461, false); // "data"
+  view.setUint32(40, numSamples * blockAlign, true);
+}
+
+function updateStoryRecordingVisual(powerLevel, durationMs) {
+  if (!storyIntake.recording) return;
+  const level = Math.max(4, Math.min(100, Number(powerLevel) || 0));
+  storyIntake.recordingDurationMs = Math.max(0, Number(durationMs) || 0);
+  storyIntake.waveformLevels = [...storyIntake.waveformLevels.slice(-43), level];
+
+  const time = document.querySelector("#story-recording-time");
+  if (time) {
+    time.textContent = formatRecordingDuration(storyIntake.recordingDurationMs);
+    time.setAttribute("datetime", `PT${Math.floor(storyIntake.recordingDurationMs / 1000)}S`);
+  }
+  const bars = document.querySelectorAll("#story-recording-waveform > i");
+  const levels = storyIntake.waveformLevels;
+  bars.forEach((bar, index) => {
+    const value = levels.at(index - bars.length) || 4;
+    bar.style.transform = `scaleY(${Math.max(0.08, value / 100).toFixed(2)})`;
+  });
+  const progress = Math.min(1, storyIntake.recordingDurationMs / 300_000);
+  const progressBar = document.querySelector("#story-recording-progress");
+  if (progressBar) progressBar.style.transform = `scaleX(${progress.toFixed(4)})`;
+}
+
+async function createWavRecorder(stream, { onProcess } = {}) {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) throw new Error("audio_context_unavailable");
+  const context = new AudioContextClass();
+  if (context.state === "suspended") await context.resume();
+  const source = context.createMediaStreamSource(stream);
+  const processor = context.createScriptProcessor(4096, 1, 1);
+  const silentGain = context.createGain();
+  silentGain.gain.value = 0;
+  const chunks = [];
+  let sampleCount = 0;
+  processor.onaudioprocess = (event) => {
+    const chunk = new Float32Array(event.inputBuffer.getChannelData(0));
+    chunks.push(chunk);
+    sampleCount += chunk.length;
+    let sumSquares = 0;
+    for (const value of chunk) sumSquares += value * value;
+    const rms = Math.sqrt(sumSquares / Math.max(1, chunk.length));
+    const powerLevel = Math.max(4, Math.min(100, Math.round(Math.sqrt(rms) * 100)));
+    onProcess?.(powerLevel, Math.round((sampleCount / context.sampleRate) * 1000));
+  };
+  source.connect(processor);
+  processor.connect(silentGain);
+  silentGain.connect(context.destination);
+  let stopped = false;
+  return {
+    snapshot(fromIndex = 0) {
+      return encodeMonoWav(chunks.slice(fromIndex), context.sampleRate);
+    },
+    chunkCount() {
+      return chunks.length;
+    },
+    durationMs() {
+      return Math.round((sampleCount / context.sampleRate) * 1000);
+    },
+    stop() {
+      if (stopped) return new Blob([], { type: "audio/wav" });
+      stopped = true;
+      processor.onaudioprocess = null;
+      try { source.disconnect(); } catch { /* already disconnected */ }
+      try { processor.disconnect(); } catch { /* already disconnected */ }
+      try { silentGain.disconnect(); } catch { /* already disconnected */ }
+      const blob = encodeMonoWav(chunks, context.sampleRate);
+      void context.close().catch(() => {});
+      return blob;
+    },
+  };
+}
+
+async function checkMicrophonePermission() {
+  try {
+    const permission = await navigator.permissions?.query({ name: "microphone" });
+    if (permission?.state === "denied") {
+      showToast("麦克风权限已被拒绝，请在浏览器地址栏设置中允许后重试", 4200);
+      return false;
+    }
+  } catch {
+    // getUserMedia below will surface any permission problem.
+  }
+  return true;
+}
+
+function canRecordAudio() {
+  return Boolean(
+    navigator.mediaDevices?.getUserMedia
+    && (window.AudioContext || window.webkitAudioContext)
+  );
+}
+
+function voiceRecognitionLanguage() {
+  return detectLocale() === "en" ? "en" : "zh";
+}
+
+async function transcribeRecordedAudio(blob, { timeoutMs = 35_000, signal, priority = "final" } = {}) {
+  const controller = new AbortController();
+  const abortFromCaller = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await platformClient.transcribeVoice(blob, {
+      signal: controller.signal,
+      priority,
+      language: voiceRecognitionLanguage(),
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new PlatformError("语音识别响应超时，已保留已有文字。", {
+        code: "asr_timeout",
+        status: 504,
+      });
+    }
+    throw error instanceof PlatformError
+      ? error
+      : new PlatformError("语音识别未完成，请改用文字输入。", { code: "asr_failed" });
+  } finally {
+    window.clearTimeout(timeout);
+    signal?.removeEventListener("abort", abortFromCaller);
+  }
+}
+
+async function streamTranscribeRecordedAudio(blob, {
+  timeoutMs = 35_000,
+  signal,
+  onText,
+  priority = "final",
+} = {}) {
+  const controller = new AbortController();
+  const abortFromCaller = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await platformClient.streamTranscribeVoice(blob, {
+      signal: controller.signal,
+      onText,
+      priority,
+      language: voiceRecognitionLanguage(),
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new PlatformError("语音识别响应超时，已保留实时识别结果。", {
+        code: "asr_timeout",
+        status: 504,
+      });
+    }
+    throw error instanceof PlatformError
+      ? error
+      : new PlatformError("语音识别未完成，请改用文字输入。", { code: "asr_failed" });
+  } finally {
+    window.clearTimeout(timeout);
+    signal?.removeEventListener("abort", abortFromCaller);
+  }
+}
+
 function renderEventCard(item) {
   const contact = getContact(item.contactId);
   const signal = signalMeta[item.analysis.strength] || signalMeta.weak;
   return `
-    <button class="event-card" data-action="open-analysis" data-event-id="${item.id}">
+    <button class="event-card" data-action="open-analysis" data-event-id="${escapeAttribute(item.id)}">
       <span class="signal-pill signal-pill--${signal.className}">${signal.short}</span>
       <span class="event-copy">
         <strong>${escapeHTML(contact?.alias || "已删除档案")} · ${escapeHTML(item.scene || item.stage)}</strong>
@@ -328,131 +2811,10 @@ function renderEventCard(item) {
 }
 
 function renderNewEvent() {
-  if (!state.contacts.length) {
-    return `
-      <div class="page">
-        ${pageHeading("记录事件", "先建立一个匿名关系档案", "只用代号记录必要信息，避免保存真实姓名或可识别的隐私。")}
-        <div class="empty-state">
-          <div>
-            <div class="empty-symbol" aria-hidden="true">◎</div>
-            <h3>还没有关系档案</h3>
-            <p>建立匿名代号后，就可以把互动事件放回具体关系和阶段中分析。</p>
-            <button class="button button--primary" data-view="people">新建关系档案</button>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  const contactOptions = state.contacts
-    .map((item) => `<option value="${item.id}">${escapeHTML(item.alias)} · ${escapeHTML(item.stage)}</option>`)
-    .join("");
-
   return `
     <div class="page">
-      ${pageHeading(
-        "记录事件",
-        "把观察与解释分开。",
-        "分析越依赖具体事实，越不容易被期待、焦虑或单次行为带偏。"
-      )}
-
-      <div class="form-layout">
-        <form class="panel" id="event-form">
-          <div class="form-section">
-            <h3>事件背景</h3>
-            <p>选择关系档案，并说明这次互动发生在什么阶段与场景。</p>
-            <div class="form-grid">
-              <div class="field">
-                <label for="event-contact">关系代号</label>
-                <select id="event-contact" name="contactId" required>${contactOptions}</select>
-              </div>
-              <div class="field">
-                <label for="event-date">发生日期</label>
-                <input id="event-date" name="date" type="date" value="${todayISO()}" required />
-              </div>
-              <div class="field">
-                <label for="event-stage">互动阶段</label>
-                <select id="event-stage" name="stage" required>
-                  <option>刚认识</option>
-                  <option>持续了解</option>
-                  <option>第一次见面</option>
-                  <option>约会中</option>
-                  <option>稳定交往</option>
-                  <option>关系降温</option>
-                  <option>关系结束</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="event-scene">场景</label>
-                <input id="event-scene" name="scene" placeholder="例如：咖啡店见面后 / 微信聊天" required />
-              </div>
-            </div>
-          </div>
-
-          <div class="form-section">
-            <h3>事实与解释</h3>
-            <p>“对方说今天很忙”是事实；“对方不想见我”是解释。</p>
-            <div class="form-grid">
-              <div class="field field--full">
-                <label for="event-fact">观察到的事实</label>
-                <textarea id="event-fact" name="fact" placeholder="尽量记录原话、行为、时间与上下文，不写结论。" required></textarea>
-              </div>
-              <div class="field field--full">
-                <label for="event-interpretation">你当时的解释</label>
-                <textarea id="event-interpretation" name="interpretation" placeholder="你认为这件事可能意味着什么？" required></textarea>
-              </div>
-              <div class="field">
-                <label for="event-feeling">当时的感受</label>
-                <input id="event-feeling" name="feeling" placeholder="例如：期待、紧张、失落" />
-              </div>
-              <div class="field">
-                <label for="event-reply">你如何回应</label>
-                <input id="event-reply" name="reply" placeholder="尚未回应也可以写“还没有”" />
-              </div>
-            </div>
-          </div>
-
-          <div class="form-section">
-            <h3>证据线索</h3>
-            <p>只勾选你能从实际互动中确认的项目。单次行为通常不足以下结论。</p>
-            <div class="choice-grid">
-              ${signalCheckbox("directInterest", "对方明确表达兴趣", "清楚说出想继续了解、喜欢或期待见面")}
-              ${signalCheckbox("futurePlan", "主动安排下一次互动", "提出具体时间、地点或共同计划")}
-              ${signalCheckbox("repeatedInitiative", "多次主动联系或投入", "不是单次礼貌，而是持续出现的模式")}
-              ${signalCheckbox("detailedFollowup", "记得细节并继续追问", "对你的生活和表达有持续关注")}
-              ${signalCheckbox("politeOnly", "目前只有普通礼貌", "没有超出常规社交的投入或明确表达")}
-              ${signalCheckbox("delayAvoidance", "持续回避或多次失约", "长期模糊、推迟，且没有替代安排", true)}
-              ${signalCheckbox("explicitDecline", "已明确拒绝", "对方清楚表示不愿意继续或不感兴趣", true)}
-              ${signalCheckbox("discomfort", "出现不舒服或边界提醒", "对方表现紧张、抗拒，或要求停止", true)}
-            </div>
-          </div>
-
-          <div class="form-section">
-            <label class="check-row">
-              <input type="checkbox" name="consent" required />
-              <span>我确认只记录合法、必要的信息；如涉及第三方原话或聊天内容，我有权保存和处理这些内容。</span>
-            </label>
-            <div class="button-row" style="margin-top:20px">
-              <button class="button button--primary" type="submit">生成结构化分析 →</button>
-              <button class="button button--quiet" type="button" data-view="dashboard">暂不记录</button>
-            </div>
-          </div>
-        </form>
-
-        <aside class="panel panel--dark helper-card">
-          <div>
-            <p class="eyebrow" style="color:rgba(255,255,255,.5)">记录提示</p>
-            <h3>像摄像机一样写事实</h3>
-          </div>
-          <ol>
-            <li>写能被录音或录像看到的内容。</li>
-            <li>把“我觉得”放进解释，而不是事实。</li>
-            <li>记录频率和变化，不放大一次行为。</li>
-            <li>如果对方已经拒绝，停止寻找反向证据。</li>
-          </ol>
-          <p class="helper-quote">“对方看了三次手机”是事实；“对方觉得我无聊”仍然只是一个可能解释。</p>
-        </aside>
-      </div>
+      ${renderStorageRecoveryNotice()}
+      ${renderStoryIntake()}
     </div>
   `;
 }
@@ -469,64 +2831,9 @@ function signalCheckbox(name, title, description, risk = false) {
 function renderPeople() {
   return `
     <div class="page">
-      ${pageHeading(
-        "关系档案",
-        "用代号，而不是真名。",
-        "只记录理解互动所需的信息。不要记录身份证、住址、定位或与关系判断无关的隐私。"
-      )}
-
-      <div class="form-layout">
-        <form class="panel" id="contact-form">
-          <h2 class="panel-title">新建匿名档案</h2>
-          <div class="form-grid">
-            <div class="field">
-              <label for="contact-alias">匿名代号</label>
-              <input id="contact-alias" name="alias" placeholder="例如：A-17 / 山茶" maxlength="20" required />
-              <small>请不要使用真实姓名、手机号或账号。</small>
-            </div>
-            <div class="field">
-              <label for="contact-stage">当前阶段</label>
-              <select id="contact-stage" name="stage" required>
-                <option>刚认识</option>
-                <option>持续了解</option>
-                <option>约会中</option>
-                <option>稳定交往</option>
-                <option>关系降温</option>
-                <option>关系结束</option>
-              </select>
-            </div>
-            <div class="field field--full">
-              <label for="contact-context">认识背景</label>
-              <textarea id="contact-context" name="context" placeholder="例如：读书会认识，目前见过两次。"></textarea>
-            </div>
-            <div class="field">
-              <label for="contact-goal">已公开表达的关系目标</label>
-              <input id="contact-goal" name="goal" placeholder="未知也可以直接写未知" />
-            </div>
-            <div class="field">
-              <label for="contact-boundary">已明确的边界</label>
-              <input id="contact-boundary" name="boundary" placeholder="例如：不喜欢临时见面" />
-            </div>
-          </div>
-          <div class="button-row" style="margin-top:20px">
-            <button class="button button--primary" type="submit">保存匿名档案</button>
-          </div>
-        </form>
-
-        <aside class="panel panel--flat">
-          <p class="eyebrow">隐私最小化</p>
-          <h2 class="panel-title" style="margin-top:10px">少记一点，更安全。</h2>
-          <ul class="principle-list">
-            <li><span>01</span><div>使用代号，避免保存可识别信息。</div></li>
-            <li><span>02</span><div>只记录对理解事件有必要的内容。</div></li>
-            <li><span>03</span><div>对方要求停止或删除时，尊重其边界。</div></li>
-          </ul>
-        </aside>
-      </div>
-
       <section class="section">
         <div class="section-title">
-          <h2>已保存档案</h2>
+          <h2>对象卡片</h2>
           <span class="tag"><i></i>${state.contacts.length} 个匿名对象</span>
         </div>
         ${
@@ -537,30 +2844,909 @@ function renderPeople() {
                 <div>
                   <div class="empty-symbol" aria-hidden="true">◎</div>
                   <h3>还没有档案</h3>
-                  <p>完成上方表单后，匿名档案会显示在这里。</p>
+                  <p>在“开始记录”里结束一段故事，AI 会自动建立匿名档案。</p>
                 </div>
               </div>
             `
         }
       </section>
+      ${renderContactEditor()}
     </div>
   `;
 }
 
 function renderPersonCard(item) {
-  const count = state.events.filter((event) => event.contactId === item.id).length;
+  const events = state.events
+    .filter((event) => event.contactId === item.id)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const latest = events[0] || null;
+  const insights = contactInsights(events);
+  const latestSignal = latest
+    ? signalMeta[latest.analysis?.strength] || signalMeta.weak
+    : signalMeta.weak;
   return `
-    <article class="person-card">
-      <div class="person-avatar">${escapeHTML(item.alias.slice(0, 2).toUpperCase())}</div>
-      <h3>${escapeHTML(item.alias)}</h3>
-      <span class="person-stage">${escapeHTML(item.stage)}</span>
-      <p>${escapeHTML(item.context || "尚未添加认识背景。")}</p>
+    <article
+      class="person-card"
+      data-action="open-contact-editor"
+      data-contact-id="${escapeAttribute(item.id)}"
+      role="button"
+      tabindex="0"
+      aria-label="编辑对象档案：${escapeAttribute(item.alias)}"
+    >
+      <header class="person-card-head">
+        <div class="person-avatar">${escapeHTML(item.alias.slice(0, 2).toUpperCase())}</div>
+        <div>
+          <p class="person-kicker">对象档案 · ${escapeHTML(formatDate(item.createdAt?.slice(0, 10)))}</p>
+          <h3>${escapeHTML(item.alias)}</h3>
+          <span class="person-stage">${escapeHTML(item.stage || "阶段未填写")}</span>
+        </div>
+      </header>
+
+      <div class="person-summary">
+        <span>认识背景</span>
+        <p>${escapeHTML(item.context || "尚未添加认识背景。")}</p>
+      </div>
+
+      <dl class="person-details">
+        <div><dt>已表达目标</dt><dd>${escapeHTML(item.goal || "未知")}</dd></div>
+        <div><dt>已知边界</dt><dd>${escapeHTML(item.boundary || "暂未记录")}</dd></div>
+      </dl>
+
+      <div class="person-depth-grid" aria-label="档案完整度">
+        <div><span>具体程度</span><strong>${escapeHTML(insights.specificity)}</strong></div>
+        <div><span>话题深度</span><strong>${escapeHTML(insights.topicDepth)}</strong></div>
+        <div><span>情绪深度</span><strong>${escapeHTML(insights.emotionalDepth)}</strong></div>
+        <div><span>信号验证</span><strong>${escapeHTML(insights.verification)}</strong></div>
+      </div>
+
+      <div class="person-recent">
+        <div class="person-recent-head">
+          <span>最近互动 · ${events.length} 条记录</span>
+          <b class="signal-pill signal-pill--${latestSignal.className}">${latest ? latestSignal.label : "待记录"}</b>
+        </div>
+        ${latest ? `
+          <strong>${escapeHTML(latest.scene || latest.stage || "未命名场景")} · ${escapeHTML(formatDate(latest.date))}</strong>
+          <p>${escapeHTML(latest.fact)}</p>
+          <small>${escapeHTML(latest.analysis?.informationQuality || "信息质量有限")} · ${escapeHTML(latest.boundaryStatus === "stop" ? "已标记边界" : "持续观察")}</small>
+        ` : `<p class="person-empty-note">还没有互动记录，先从一次具体事件开始。</p>`}
+      </div>
+
+      ${events.length ? `
+        <details class="person-history" open>
+          <summary>全部互动记录 <span>${events.length}</span></summary>
+          <div class="person-history-list">
+            ${events.map((event) => `
+              <article>
+                <header><strong>${escapeHTML(event.scene || event.stage || "未命名场景")}</strong><time>${escapeHTML(formatDate(event.date))}</time></header>
+                <p><b>事实</b>${escapeHTML(event.fact)}</p>
+                <p><b>解释</b>${escapeHTML(event.interpretation || "未填写")}</p>
+                <p><b>感受</b>${escapeHTML(event.feeling || "未填写")} · <b>回应</b>${escapeHTML(event.reply || "未填写")}</p>
+                <small>${escapeHTML(event.analysis?.informationQuality || "信息质量有限")} · ${escapeHTML(event.boundaryStatus === "stop" ? "已标记边界" : "继续观察")}</small>
+              </article>
+            `).join("")}
+          </div>
+        </details>
+      ` : ""}
+
       <div class="person-footer">
-        <span>${count} 条事件</span>
-        <button class="text-button" data-view="new-event">记录互动 →</button>
+        <span>${escapeHTML(insights.lastSeen)}</span>
+        <span class="inline-actions">
+          <button
+            class="text-button"
+            data-action="open-contact-editor"
+            data-contact-id="${escapeAttribute(item.id)}"
+          >编辑档案 →</button>
+          <button
+            class="text-button text-button--danger"
+            data-action="delete-contact"
+            data-contact-id="${escapeAttribute(item.id)}"
+            aria-label="删除 ${escapeAttribute(item.alias)} 及其相关事件"
+          >删除</button>
+        </span>
       </div>
     </article>
   `;
+}
+
+function renderContactEditor() {
+  const contact = getContact(editingContactId);
+  if (!contact) return "";
+  const speechSupported = Boolean(canRecordAudio());
+  return `
+    <dialog class="contact-editor-dialog" id="contact-editor-dialog" aria-labelledby="contact-editor-title">
+      <form class="contact-editor" id="contact-editor-form">
+        <header class="contact-editor-head">
+          <div>
+            <p class="eyebrow">OBJECT PROFILE · EDIT</p>
+            <h2 id="contact-editor-title">编辑 ${escapeHTML(contact.alias)}</h2>
+          </div>
+          <button class="text-button" type="button" data-action="close-contact-editor" aria-label="关闭对象档案编辑">关闭</button>
+        </header>
+        <div class="contact-editor-grid">
+          <div class="field">
+            <label for="editor-contact-alias">匿名代号</label>
+            <input id="editor-contact-alias" name="alias" value="${escapeAttribute(contact.alias)}" maxlength="40" required />
+          </div>
+          <div class="field">
+            <label for="editor-contact-stage">当前阶段</label>
+            <select id="editor-contact-stage" name="stage">
+              ${["刚认识", "持续了解", "第一次见面", "约会中", "稳定交往", "关系降温", "关系结束"].map((stage) => `<option ${stage === contact.stage ? "selected" : ""}>${stage}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field field--full">
+            <label for="editor-contact-context">认识背景</label>
+            <textarea id="editor-contact-context" name="context" maxlength="1200">${escapeHTML(contact.context)}</textarea>
+          </div>
+          <div class="field">
+            <label for="editor-contact-goal">已表达目标</label>
+            <textarea id="editor-contact-goal" name="goal" maxlength="600">${escapeHTML(contact.goal)}</textarea>
+          </div>
+          <div class="field">
+            <label for="editor-contact-boundary">已知边界</label>
+            <textarea id="editor-contact-boundary" name="boundary" maxlength="600">${escapeHTML(contact.boundary)}</textarea>
+          </div>
+        </div>
+        <section class="contact-editor-voice" aria-labelledby="contact-voice-title">
+          <div>
+            <p class="eyebrow" id="contact-voice-title">VOICE NOTE · OPTIONAL</p>
+            <p>说出想补充的内容，先留在草稿里；点击 AI 整理后再写入上面的档案字段。</p>
+          </div>
+          <textarea id="contact-voice-input" name="voiceDraft" maxlength="2400" placeholder="例如：她最近主动提到下周的展览，但说临时安排不太方便。">${escapeHTML(contactEditor.voiceDraft)}</textarea>
+          <div class="contact-editor-actions">
+            <button class="story-voice-button ${contactEditor.recording ? "is-recording" : ""} ${contactEditor.finalizingVoice ? "is-processing" : ""}" id="contact-voice-button" type="button" data-action="contact-voice" ${speechSupported && !contactEditor.finalizingVoice ? "" : "disabled"}>
+              <span class="voice-recording-visual ${contactEditor.recording ? "is-live" : contactEditor.finalizingVoice ? "is-processing" : ""}" aria-hidden="true">${contactEditor.recording ? "<i></i><i></i><i></i><i></i><i></i>" : contactEditor.finalizingVoice ? "<b></b><b></b><b></b>" : "◉"}</span>${contactEditor.recording ? "停止并校正" : contactEditor.finalizingVoice ? "语音校正中…" : speechSupported ? "语音输入" : "浏览器不支持语音"}
+            </button>
+            <button class="button button--quiet" type="button" data-action="contact-ai-organize" ${speechSupported || contactEditor.voiceDraft ? "" : ""}>AI 整理补充</button>
+            <button class="button button--primary" type="submit">保存档案</button>
+          </div>
+          <p class="contact-editor-status" id="contact-editor-status" role="status" aria-live="polite">${escapeHTML([contactEditor.voiceStatus, contactEditor.nextQuestion ? `建议继续确认：${contactEditor.nextQuestion}` : ""].filter(Boolean).join(" · ") )}</p>
+        </section>
+      </form>
+    </dialog>
+  `;
+}
+
+function openContactEditor(contactId) {
+  if (!getContact(contactId)) return;
+  stopContactVoice({ discard: true });
+  editingContactId = contactId;
+  contactEditor.voiceDraft = "";
+  contactEditor.busy = false;
+  contactEditor.organized = false;
+  contactEditor.nextQuestion = "";
+  contactEditor.voiceStatus = "";
+  renderCurrentView();
+  requestAnimationFrame(() => {
+    const dialog = document.querySelector("#contact-editor-dialog");
+    if (dialog && !dialog.open) dialog.showModal();
+    dialog?.querySelector("#editor-contact-alias")?.focus({ preventScroll: true });
+  });
+}
+
+function closeContactEditor() {
+  stopContactVoice({ discard: true });
+  const dialog = document.querySelector("#contact-editor-dialog");
+  if (dialog?.open) dialog.close();
+  editingContactId = null;
+  contactEditor.voiceDraft = "";
+  contactEditor.busy = false;
+  contactEditor.organized = false;
+  contactEditor.nextQuestion = "";
+  contactEditor.voiceStatus = "";
+  contactEditor.recordingBaseText = "";
+  contactEditor.recordingAsrText = "";
+  if (currentView === "people") renderCurrentView();
+}
+
+async function toggleContactVoice() {
+  if (contactEditor.recording) {
+    stopContactVoice({ autoOrganize: true });
+    return;
+  }
+  if (await startContactAudioRecording()) return;
+  showToast("当前浏览器无法录音，请改用文字输入", 3600);
+}
+
+async function startContactAudioRecording() {
+  if (!canRecordAudio()) return false;
+  if (!(await checkMicrophonePermission())) return true;
+  const input = document.querySelector("#contact-voice-input");
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        sampleRate: 16_000,
+        sampleSize: 16,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+  } catch {
+    showToast("无法取得麦克风权限，请允许录音后重试", 3600);
+    return true;
+  }
+  let recorder;
+  try {
+    recorder = await createWavRecorder(stream);
+  } catch {
+    stream.getTracks().forEach((track) => track.stop());
+    showToast("当前浏览器无法建立 WAV 录音，将改用实时语音识别", 3600);
+    return false;
+  }
+  contactEditor.audioRecorder = recorder;
+  contactEditor.recordingStream = stream;
+  contactEditor.recordingBaseText = clean(input?.value || contactEditor.voiceDraft).slice(0, 2400);
+  contactEditor.voiceDraft = contactEditor.recordingBaseText;
+  contactEditor.recordingAsrText = "";
+  contactEditor.finalizingVoice = false;
+  contactEditor.recording = true;
+  contactEditor.voiceAutoOrganize = true;
+  contactEditor.voiceStatus = "实时识别中 · 结束后将校正最终文本";
+  contactEditor.voiceTimeout = window.setTimeout(
+    () => stopContactVoice({ autoOrganize: true }),
+    30_000
+  );
+  // Transcribe only after Stop; no repeated offline inference while recording.
+  updateContactVoiceButton();
+  return true;
+}
+
+function stopContactVoice({ autoOrganize = false, discard = false } = {}) {
+  window.clearTimeout(contactEditor.voiceTimeout);
+  if (discard) contactEditor.voiceAutoOrganize = false;
+  else if (autoOrganize) contactEditor.voiceAutoOrganize = true;
+  if (contactEditor.audioRecorder) {
+    const recorder = contactEditor.audioRecorder;
+    const stream = contactEditor.recordingStream;
+    const shouldOrganize = !discard && contactEditor.voiceAutoOrganize;
+    const preview = clean(contactEditor.recordingBaseText).slice(0, 2400);
+    const livePreview = clean(contactEditor.voiceDraft).slice(0, 2400);
+    const liveAsrPromise = contactEditor.liveAsrPromise;
+    stopContactLiveAsr();
+    contactEditor.audioRecorder = null;
+    contactEditor.recordingStream = null;
+    contactEditor.recording = false;
+    contactEditor.voiceAutoOrganize = false;
+    contactEditor.finalizingVoice = true;
+    contactEditor.voiceStatus = "正在校正语音…";
+    const blob = recorder.stop();
+    stream?.getTracks().forEach((track) => track.stop());
+    updateContactVoiceButton();
+    if (discard) {
+      contactEditor.recordingBaseText = "";
+      contactEditor.recordingAsrText = "";
+      contactEditor.finalizingVoice = false;
+      contactEditor.voiceStatus = "";
+      return;
+    }
+    void finalizeContactRecording(blob, {
+      preview,
+      livePreview,
+      shouldOrganize,
+      liveAsrPromise,
+    });
+    return;
+  }
+  contactEditor.recording = false;
+  contactEditor.voiceStatus = "";
+  updateContactVoiceButton();
+}
+
+async function finalizeContactRecording(blob, {
+  preview,
+  livePreview = "",
+  shouldOrganize,
+  liveAsrPromise = null,
+}) {
+  let transcript = preview;
+  try {
+    await waitForLiveAsrRequest(liveAsrPromise);
+    let recognized = "";
+    if (blob?.size) {
+      try {
+        recognized = await streamTranscribeRecordedAudio(blob, {
+          timeoutMs: livePreview ? FINAL_ASR_WITH_PREVIEW_TIMEOUT_MS : FINAL_ASR_WITHOUT_PREVIEW_TIMEOUT_MS,
+          onText(partial) {
+            const live = appendVoiceTranscript(preview, partial).slice(0, 2400);
+            contactEditor.voiceDraft = live;
+            const input = document.querySelector("#contact-voice-input");
+            if (input) input.value = live;
+            contactEditor.voiceStatus = "正在校正整段语音…";
+            updateContactVoiceButton();
+          },
+        });
+      } catch (error) {
+        if (!livePreview) throw error;
+        recognized = livePreview;
+      }
+    }
+    if (recognized) {
+      const organized = await organizeRecognizedVoice(recognized, {
+        maxLength: 2_400,
+        onStatus(message) {
+          contactEditor.voiceStatus = message;
+          updateContactVoiceButton();
+        },
+      });
+      transcript = appendVoiceTranscript(preview, organized.text).slice(0, 2400);
+      contactEditor.voiceStatus = organized.organized
+        ? "句读整理完成 · 正在整理档案"
+        : "已保留识别文字 · 正在整理档案";
+    } else {
+      transcript = livePreview || preview;
+    }
+    if (transcript && editingContactId) {
+      contactEditor.voiceDraft = transcript;
+      if (!shouldOrganize) contactEditor.voiceStatus = "语音校正完成";
+      const input = document.querySelector("#contact-voice-input");
+      if (input) input.value = transcript;
+      updateContactVoiceButton();
+      if (shouldOrganize) await organizeContactDraft();
+    }
+  } catch (error) {
+    const fallback = livePreview || preview;
+    if (fallback && editingContactId) {
+      contactEditor.voiceDraft = fallback;
+      const input = document.querySelector("#contact-voice-input");
+      if (input) input.value = fallback;
+      showToast("语音校正未完成，已保留实时识别文字", 3800);
+      if (shouldOrganize) await organizeContactDraft();
+    } else if (editingContactId) {
+      showToast(error instanceof PlatformError ? error.message : "语音识别未完成，请改用文字输入", 4200);
+    }
+  } finally {
+    contactEditor.recordingBaseText = "";
+    contactEditor.recordingAsrText = "";
+    contactEditor.finalizingVoice = false;
+    contactEditor.voiceStatus = "";
+    updateContactVoiceButton();
+  }
+}
+
+async function toggleAgentVoice() {
+  if (!platform.user || platform.agentBusy) return;
+  if (agentVoice.recording) {
+    stopAgentVoice();
+    return;
+  }
+  if (await startAgentAudioRecording()) return;
+  showToast("当前浏览器无法录音，请改用文字输入", 3600);
+}
+
+async function startAgentAudioRecording() {
+  if (!canRecordAudio()) return false;
+  if (!(await checkMicrophonePermission())) return true;
+  const input = document.querySelector("#agent-prompt");
+  agentVoice.voiceDraft = clean(input?.value || agentVoice.voiceDraft).slice(0, 4_000);
+  agentVoice.recordingBaseText = agentVoice.voiceDraft;
+  agentVoice.recordingAsrText = "";
+  agentVoice.lastAsrChunkIndex = 0;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        sampleRate: 16_000,
+        sampleSize: 16,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+  } catch {
+    showToast("无法取得麦克风权限，请允许录音后重试", 3600);
+    return true;
+  }
+  let recorder;
+  try {
+    recorder = await createWavRecorder(stream);
+  } catch {
+    stream.getTracks().forEach((track) => track.stop());
+    showToast("当前浏览器无法建立 WAV 录音，请改用文字输入", 4200);
+    return true;
+  }
+  agentVoice.audioRecorder = recorder;
+  agentVoice.recordingStream = stream;
+  agentVoice.finalizingVoice = false;
+  agentVoice.recording = true;
+  agentVoice.voiceStatus = "实时识别中 · 结束后校正并整理句读";
+  updateAgentVoiceButton();
+  // Transcribe only after Stop; no repeated offline inference while recording.
+  return true;
+}
+
+function stopAgentVoice({ discard = false } = {}) {
+  window.clearInterval(agentVoice.voiceTimeout);
+  agentVoice.voiceTimeout = null;
+  if (discard) agentVoice.generation += 1;
+  if (agentVoice.audioRecorder) {
+    const recorder = agentVoice.audioRecorder;
+    const stream = agentVoice.recordingStream;
+    const preview = clean(agentVoice.recordingBaseText).slice(0, 4_000);
+    const livePreview = clean(agentVoice.voiceDraft).slice(0, 4_000);
+    const liveAsrPromise = agentVoice.liveAsrPromise;
+    const generation = ++agentVoice.generation;
+    stopAgentLiveAsr();
+    agentVoice.audioRecorder = null;
+    agentVoice.recordingStream = null;
+    agentVoice.recording = false;
+    agentVoice.finalizingVoice = true;
+    agentVoice.voiceStatus = "正在校正整段语音…";
+    let blob;
+    try {
+      blob = recorder.stop();
+    } catch (error) {
+      stream?.getTracks().forEach((track) => track.stop());
+      agentVoice.finalizingVoice = false;
+      agentVoice.voiceStatus = livePreview ? "已保留实时识别文字" : "录音没有成功结束";
+      updateAgentVoiceButton();
+      return;
+    }
+    stream?.getTracks().forEach((track) => track.stop());
+    updateAgentVoiceButton();
+    if (discard) {
+      agentVoice.recordingBaseText = "";
+      agentVoice.recordingAsrText = "";
+      agentVoice.finalizingVoice = false;
+      agentVoice.voiceDraft = "";
+      agentVoice.voiceStatus = "";
+      updateAgentVoiceButton();
+      return;
+    }
+    void finalizeAgentRecording(blob, {
+      preview,
+      livePreview,
+      liveAsrPromise,
+      generation,
+    });
+    return;
+  }
+  agentVoice.recording = false;
+  if (discard) {
+    agentVoice.voiceDraft = "";
+    agentVoice.voiceStatus = "";
+    agentVoice.recordingBaseText = "";
+    agentVoice.recordingAsrText = "";
+    agentVoice.finalizingVoice = false;
+  }
+  updateAgentVoiceButton();
+}
+
+async function finalizeAgentRecording(blob, {
+  preview,
+  livePreview = "",
+  liveAsrPromise = null,
+  generation,
+}) {
+  let transcript = livePreview || preview;
+  try {
+    await waitForLiveAsrRequest(liveAsrPromise);
+    if (agentVoice.generation !== generation) return;
+    if (!blob?.size) throw new Error("audio_empty");
+    let recognized = "";
+    try {
+      recognized = await streamTranscribeRecordedAudio(blob, {
+        timeoutMs: livePreview ? FINAL_ASR_WITH_PREVIEW_TIMEOUT_MS : FINAL_ASR_WITHOUT_PREVIEW_TIMEOUT_MS,
+        onText(partial) {
+          if (agentVoice.generation !== generation) return;
+          updateAgentVoiceDraft(appendVoiceTranscript(preview, partial));
+          updateAgentVoiceStatus("正在校正整段语音…");
+        },
+      });
+    } catch (error) {
+      if (!livePreview) throw error;
+      recognized = livePreview;
+    }
+    if (agentVoice.generation !== generation) return;
+    transcript = appendVoiceTranscript(preview, recognized).slice(0, 4_000);
+    if (transcript) {
+      updateAgentVoiceDraft(transcript);
+      updateAgentVoiceStatus(
+        "识别完成 · 可直接发送，或选择整理标点"
+      );
+      requestAnimationFrame(() => {
+        const input = document.querySelector("#agent-prompt");
+        input?.focus();
+        input?.setSelectionRange(input.value.length, input.value.length);
+      });
+    }
+  } catch (error) {
+    const fallback = livePreview || preview;
+    if (fallback && agentVoice.generation === generation) {
+      updateAgentVoiceDraft(fallback);
+      updateAgentVoiceStatus("语音校正未完成 · 已保留实时识别文字");
+    } else if (agentVoice.generation === generation) {
+      updateAgentVoiceStatus(error instanceof PlatformError ? error.message : "语音识别未完成，请改用文字输入");
+    }
+  } finally {
+    if (agentVoice.generation === generation) {
+      agentVoice.recordingBaseText = "";
+      agentVoice.recordingAsrText = "";
+      agentVoice.finalizingVoice = false;
+      updateAgentVoiceButton();
+      offerVoicePunctuation("#agent-prompt", {
+        isCurrent: () => agentVoice.generation === generation && !agentVoice.recording && !agentVoice.finalizingVoice,
+        apply: text => { agentVoice.voiceDraft = text; },
+        maxLength: 4000,
+      });
+    }
+  }
+}
+
+function updateAgentVoiceStatus(message) {
+  agentVoice.voiceStatus = message;
+  const status = document.querySelector("#agent-voice-status");
+  if (status) status.textContent = message;
+}
+
+function updateAgentVoiceDraft(text) {
+  const live = clean(text).slice(0, 4_000);
+  if (!live) return;
+  agentVoice.voiceDraft = live;
+  const input = document.querySelector("#agent-prompt");
+  if (input && input.value !== live) input.value = live;
+}
+
+function startAgentLiveAsr() {
+  stopAgentLiveAsr();
+  agentVoice.liveAsrTimer = window.setInterval(() => {
+    const pending = refreshAgentLiveAsr();
+    agentVoice.liveAsrPromise = pending;
+    void pending.then(
+      () => {
+        if (agentVoice.liveAsrPromise === pending) agentVoice.liveAsrPromise = null;
+      },
+      () => {
+        if (agentVoice.liveAsrPromise === pending) agentVoice.liveAsrPromise = null;
+      }
+    );
+  }, 2_200);
+}
+
+function stopAgentLiveAsr() {
+  window.clearInterval(agentVoice.liveAsrTimer);
+  agentVoice.liveAsrTimer = null;
+  agentVoice.liveAsrController?.abort();
+  agentVoice.liveAsrController = null;
+  agentVoice.liveAsrPromise = null;
+  agentVoice.lastAsrChunkIndex = 0;
+}
+
+async function refreshAgentLiveAsr() {
+  const recorder = agentVoice.audioRecorder;
+  if (!agentVoice.recording || !recorder || agentVoice.liveAsrController) return;
+  if (recorder.durationMs() < 1_200) return;
+  const fromIndex = agentVoice.lastAsrChunkIndex || 0;
+  const endIndex = recorder.chunkCount();
+  const snapshot = recorder.snapshot(fromIndex);
+  if (snapshot.size <= 44) return;
+  const controller = new AbortController();
+  agentVoice.liveAsrController = controller;
+  try {
+    let corrected = "";
+    let streamed = "";
+    try {
+      corrected = await streamTranscribeRecordedAudio(snapshot, {
+        timeoutMs: 12_000,
+        signal: controller.signal,
+        priority: "live",
+        onText(partial) {
+          if (!agentVoice.recording || agentVoice.liveAsrController !== controller) return;
+          streamed = partial;
+          const current = appendVoiceTranscript(agentVoice.recordingAsrText, streamed);
+          updateAgentVoiceDraft(appendVoiceTranscript(agentVoice.recordingBaseText, current));
+          updateAgentVoiceStatus("实时识别中 · 正在校正当前片段…");
+        },
+      });
+    } catch (error) {
+      if (error?.code === "asr_stream_failed" || error?.code === "asr_stream_incomplete") {
+        corrected = await transcribeRecordedAudio(snapshot, {
+          timeoutMs: 18_000,
+          signal: controller.signal,
+          priority: "live",
+        });
+      } else {
+        throw error;
+      }
+    }
+    corrected = clean(corrected).slice(0, 4_000);
+    if (!corrected || !agentVoice.recording || agentVoice.liveAsrController !== controller) return;
+    agentVoice.lastAsrChunkIndex = endIndex;
+    const newTail = extractNewTranscript(agentVoice.recordingAsrText, corrected);
+    if (newTail) {
+      agentVoice.recordingAsrText = appendVoiceTranscript(
+        agentVoice.recordingAsrText,
+        newTail
+      ).slice(0, 4_000);
+      updateAgentVoiceDraft(
+        appendVoiceTranscript(agentVoice.recordingBaseText, agentVoice.recordingAsrText)
+      );
+    }
+    updateAgentVoiceStatus("已实时识别 · 继续说即可");
+    window.setTimeout(() => {
+      if (agentVoice.recording) updateAgentVoiceStatus("实时识别中 · 结束后校正并整理句读");
+    }, 1_200);
+  } catch {
+    // The final full-WAV pass still runs on stop.
+  } finally {
+    if (agentVoice.liveAsrController === controller) agentVoice.liveAsrController = null;
+  }
+}
+
+function updateAgentVoiceButton() {
+  const button = document.querySelector('[data-action="agent-voice"]');
+  if (!button) return;
+  button.classList.toggle("is-recording", agentVoice.recording);
+  button.classList.toggle("is-processing", agentVoice.finalizingVoice);
+  button.disabled = platform.agentBusy || agentVoice.finalizingVoice || !canRecordAudio();
+  button.innerHTML = `<span class="voice-recording-visual ${agentVoice.recording ? "is-live" : agentVoice.finalizingVoice ? "is-processing" : ""}" aria-hidden="true">${agentVoice.recording ? "<i></i><i></i><i></i><i></i><i></i>" : agentVoice.finalizingVoice ? "<b></b><b></b><b></b>" : "◉"}</span>${agentVoice.recording ? "结束录音并整理" : agentVoice.finalizingVoice ? "语音整理中…" : "语音输入"}`;
+  const input = document.querySelector("#agent-prompt");
+  if (input) input.disabled = platform.agentBusy || agentVoice.recording || agentVoice.finalizingVoice;
+  const submit = document.querySelector('#agent-form button[type="submit"]');
+  if (submit) submit.disabled = platform.agentBusy || agentVoice.recording || agentVoice.finalizingVoice;
+  const status = document.querySelector("#agent-voice-status");
+  if (status && agentVoice.voiceStatus) status.textContent = agentVoice.voiceStatus;
+}
+
+function startContactLiveAsr() {
+  stopContactLiveAsr();
+  contactEditor.liveAsrTimer = window.setInterval(() => {
+    const pending = refreshContactLiveAsr();
+    contactEditor.liveAsrPromise = pending;
+    void pending.then(
+      () => {
+        if (contactEditor.liveAsrPromise === pending) contactEditor.liveAsrPromise = null;
+      },
+      () => {
+        if (contactEditor.liveAsrPromise === pending) contactEditor.liveAsrPromise = null;
+      }
+    );
+  }, 2_200);
+}
+
+function stopContactLiveAsr() {
+  window.clearInterval(contactEditor.liveAsrTimer);
+  contactEditor.liveAsrTimer = null;
+  contactEditor.liveAsrController?.abort();
+  contactEditor.liveAsrController = null;
+  contactEditor.liveAsrPromise = null;
+  contactEditor.lastAsrChunkIndex = 0;
+}
+
+async function refreshContactLiveAsr() {
+  const recorder = contactEditor.audioRecorder;
+  if (!contactEditor.recording || !recorder || contactEditor.liveAsrController) return;
+  if (recorder.durationMs() < 1_200) return;
+  // Incremental snapshot: only the audio recorded since the last correction.
+  const fromIndex = contactEditor.lastAsrChunkIndex || 0;
+  const endIndex = recorder.chunkCount();
+  const snapshot = recorder.snapshot(fromIndex);
+  if (snapshot.size <= 44) return;
+  const controller = new AbortController();
+  contactEditor.liveAsrController = controller;
+  try {
+    let corrected = "";
+    let streamed = "";
+    try {
+      corrected = await streamTranscribeRecordedAudio(snapshot, {
+        timeoutMs: 12_000,
+        signal: controller.signal,
+        priority: "live",
+        onText(partial) {
+          if (!contactEditor.recording || contactEditor.liveAsrController !== controller) return;
+          streamed = partial;
+          const current = appendVoiceTranscript(contactEditor.recordingAsrText, streamed);
+          const live = appendVoiceTranscript(contactEditor.recordingBaseText, current).slice(0, 2400);
+          const input = document.querySelector("#contact-voice-input");
+          if (input) input.value = live;
+          contactEditor.voiceDraft = live;
+        },
+      });
+    } catch (error) {
+      if (error?.code === "asr_stream_failed" || error?.code === "asr_stream_incomplete") {
+        corrected = await transcribeRecordedAudio(snapshot, {
+          timeoutMs: 18_000,
+          signal: controller.signal,
+          priority: "live",
+        });
+      } else throw error;
+    }
+    corrected = corrected.slice(0, 2400);
+    if (!corrected || !contactEditor.recording || contactEditor.liveAsrController !== controller) return;
+    // Commit exactly the audio range captured for this request. Chunks recorded
+    // while FunASR was working are retained for the next request.
+    contactEditor.lastAsrChunkIndex = endIndex;
+    const newTail = extractNewTranscript(contactEditor.recordingAsrText, corrected);
+    if (newTail) {
+      contactEditor.recordingAsrText = appendVoiceTranscript(
+        contactEditor.recordingAsrText,
+        newTail
+      ).slice(0, 2400);
+      contactEditor.voiceDraft = appendVoiceTranscript(contactEditor.voiceDraft, newTail).slice(0, 2400);
+    }
+    const input = document.querySelector("#contact-voice-input");
+    if (input) input.value = contactEditor.voiceDraft;
+    contactEditor.voiceStatus = "已实时识别 · 继续说即可";
+    window.setTimeout(() => {
+      if (!contactEditor.recording) return;
+      contactEditor.voiceStatus = "实时识别中 · 将追加识别文本";
+      updateContactVoiceButton();
+    }, 1_200);
+    updateContactVoiceButton();
+  } catch {
+    // The final full-WAV pass still runs on stop.
+  } finally {
+    if (contactEditor.liveAsrController === controller) contactEditor.liveAsrController = null;
+  }
+}
+
+function updateContactVoiceButton() {
+  const button = document.querySelector("#contact-voice-button");
+  if (!button) return;
+  button.classList.toggle("is-recording", contactEditor.recording);
+  button.classList.toggle("is-processing", contactEditor.finalizingVoice);
+  button.disabled = contactEditor.finalizingVoice;
+  button.innerHTML = `<span class="voice-recording-visual ${contactEditor.recording ? "is-live" : contactEditor.finalizingVoice ? "is-processing" : ""}" aria-hidden="true">${contactEditor.recording ? "<i></i><i></i><i></i><i></i><i></i>" : contactEditor.finalizingVoice ? "<b></b><b></b><b></b>" : "◉"}</span>${contactEditor.recording ? "停止并校正" : contactEditor.finalizingVoice ? "语音校正中…" : "语音输入"}`;
+  const status = document.querySelector("#contact-editor-status");
+  if (status) {
+    status.textContent = [
+      contactEditor.voiceStatus,
+      contactEditor.nextQuestion ? `建议继续确认：${contactEditor.nextQuestion}` : "",
+    ].filter(Boolean).join(" · ");
+  }
+}
+
+async function organizeContactDraft() {
+  const input = document.querySelector("#contact-voice-input");
+  const status = document.querySelector("#contact-editor-status");
+  const contact = getContact(editingContactId);
+  const existing = {
+    context: clean(document.querySelector("#editor-contact-context")?.value || contact?.context),
+    goal: clean(document.querySelector("#editor-contact-goal")?.value || contact?.goal),
+    boundary: clean(document.querySelector("#editor-contact-boundary")?.value || contact?.boundary),
+  };
+  const draft = clean(input?.value).slice(0, 2400);
+  if (!draft) {
+    showToast("先输入或说一段想补充的内容", 2800);
+    input?.focus();
+    return;
+  }
+  contactEditor.voiceDraft = draft;
+  const canUseAgent = Boolean(platform.user && platform.externalAiConsent?.current && platform.capabilities?.agent);
+  if (!canUseAgent) {
+    const context = document.querySelector("#editor-contact-context");
+    if (context) context.value = `${context.value ? `${context.value}\n\n` : ""}${draft}`.slice(-1200);
+    contactEditor.organized = true;
+    if (status) status.textContent = "当前未连接 Agent，已把语音草稿放入认识背景。";
+    return;
+  }
+  contactEditor.busy = true;
+  setContactEditorBusy(true);
+  if (status) status.textContent = "正在用 Agent 整理这段补充…";
+  try {
+    const complete = await platformClient.streamAgent([
+      {
+        role: "user",
+        content: `请结合已有档案和这次补充，整理成 JSON。只允许包含 context、goal、boundary、question 四个字符串字段：context 写认识背景和可观察事实，goal 写用户已表达的目标，boundary 写明确边界/拒绝/待确认点，question 只提出一个当前最缺失且具体的事实问题；没有问题时 question 写空字符串。不确定的信息写“未提及”，不要推断对方想法，不要输出 markdown。不要丢失已有事实。\n\n已有档案：\n${JSON.stringify(existing)}\n\n本次补充：\n${draft}`,
+      },
+    ]);
+    const parsed = parseContactDraft(complete);
+    if (parsed) {
+      const context = document.querySelector("#editor-contact-context");
+      const goal = document.querySelector("#editor-contact-goal");
+      const boundary = document.querySelector("#editor-contact-boundary");
+      if (parsed.context) context.value = parsed.context;
+      if (parsed.goal) goal.value = parsed.goal;
+      if (parsed.boundary) boundary.value = parsed.boundary;
+      contactEditor.nextQuestion = parsed.question || "";
+      contactEditor.organized = true;
+      if (status) status.textContent = parsed.question
+        ? `已整理到档案字段。建议继续确认：${parsed.question}`
+        : "已整理到档案字段，确认无误后保存。";
+    } else {
+      const context = document.querySelector("#editor-contact-context");
+      if (context) context.value = `${context.value ? `${context.value}\n\n` : ""}${clean(complete || draft)}`.slice(-1200);
+      if (status) status.textContent = "模型返回了普通文本，已放入认识背景，请检查后保存。";
+    }
+  } catch (error) {
+    if (status) status.textContent = error instanceof PlatformError ? error.message : "AI 整理未完成，草稿仍保留在输入框。";
+  } finally {
+    contactEditor.busy = false;
+    setContactEditorBusy(false);
+  }
+}
+
+function parseContactDraft(text) {
+  const match = String(text || "").match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    const parsed = JSON.parse(match[0]);
+    if (!parsed || typeof parsed !== "object") return null;
+    return {
+      context: clean(parsed.context).slice(0, 1200),
+      goal: clean(parsed.goal).slice(0, 600),
+      boundary: clean(parsed.boundary).slice(0, 600),
+      question: clean(parsed.question).slice(0, 300),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function setContactEditorBusy(busy) {
+  document.querySelectorAll("#contact-editor-form input, #contact-editor-form textarea, #contact-editor-form select, #contact-editor-form button").forEach((node) => {
+    if (node.matches('[data-action="close-contact-editor"]')) return;
+    node.disabled = busy;
+  });
+}
+
+function saveContactEditor(form, formData) {
+  const contact = getContact(editingContactId);
+  if (!contact || contactEditor.busy) return;
+  const alias = clean(formData.get("alias")).slice(0, 40);
+  const duplicate = state.contacts.some((item) => item.id !== contact.id && item.alias.toLocaleLowerCase("zh-CN") === alias.toLocaleLowerCase("zh-CN"));
+  if (!alias) {
+    form.querySelector("#editor-contact-alias")?.focus();
+    showToast("请先填写匿名代号", 2800);
+    return;
+  }
+  if (duplicate) {
+    showToast("匿名代号已存在，请换一个可区分的代号", 3200);
+    form.querySelector("#editor-contact-alias")?.focus();
+    return;
+  }
+  const voiceDraft = clean(formData.get("voiceDraft")).slice(0, 2400);
+  const context = clean(formData.get("context"));
+  if (!commitState((next) => {
+    const target = next.contacts.find((item) => item.id === contact.id);
+    if (!target) return;
+    target.alias = alias;
+    target.stage = clean(formData.get("stage"));
+    target.context = (!contactEditor.organized && voiceDraft
+      ? `${context ? `${context}\n\n` : ""}语音补充\n${voiceDraft}`
+      : context).slice(-1200);
+    target.goal = clean(formData.get("goal")).slice(0, 600);
+    target.boundary = clean(formData.get("boundary")).slice(0, 600);
+  })) return;
+  preferredContactId = contact.id;
+  closeContactEditor();
+  showToast(`对象档案已更新：${alias}`);
+}
+
+function contactInsights(events) {
+  if (!events.length) {
+    return {
+      specificity: "待补充",
+      topicDepth: "待补充",
+      emotionalDepth: "待补充",
+      verification: "待补充",
+      lastSeen: "尚无互动",
+    };
+  }
+  const count = events.length;
+  const specificCount = events.filter(
+    (event) => event.scene && event.fact.length >= 30 && event.date
+  ).length;
+  const topicCount = events.filter(
+    (event) => event.interpretation.length >= 10 || event.reply.length >= 8
+  ).length;
+  const emotionalCount = events.filter(
+    (event) => event.feeling.length >= 2 || event.review?.learning
+  ).length;
+  const verifiedCount = events.filter(
+    (event) => event.signals.length >= 2 && event.boundaryStatus
+  ).length;
+  const level = (value) => value / count >= 0.66 ? "深入" : value / count >= 0.34 ? "展开" : "初步";
+  const latestDate = events[0].date || events[0].createdAt?.slice(0, 10);
+  return {
+    specificity: level(specificCount),
+    topicDepth: level(topicCount),
+    emotionalDepth: level(emotionalCount),
+    verification: verifiedCount / count >= 0.66 ? "充分" : verifiedCount ? "部分" : "不足",
+    lastSeen: latestDate ? `最近记录 ${formatDate(latestDate)}` : "最近记录日期未知",
+  };
 }
 
 function renderProfile() {
@@ -592,15 +3778,15 @@ function renderProfile() {
             </div>
             <div class="field field--full">
               <label for="profile-goal">当前关系目标</label>
-              <textarea id="profile-goal" name="goal" placeholder="例如：希望在不过度控制结果的前提下，更自然地认识合适的人。">${escapeHTML(profile.goal)}</textarea>
+              <textarea id="profile-goal" name="goal" maxlength="800" placeholder="例如：希望在不过度控制结果的前提下，更自然地认识合适的人。">${escapeHTML(profile.goal)}</textarea>
             </div>
             <div class="field">
               <label for="profile-anxiety">常见焦虑触发点</label>
-              <textarea id="profile-anxiety" name="anxiety" placeholder="例如：对方回复慢时容易反复猜测。">${escapeHTML(profile.anxiety)}</textarea>
+              <textarea id="profile-anxiety" name="anxiety" maxlength="800" placeholder="例如：对方回复慢时容易反复猜测。">${escapeHTML(profile.anxiety)}</textarea>
             </div>
             <div class="field">
               <label for="profile-boundaries">希望坚持的边界</label>
-              <textarea id="profile-boundaries" name="boundaries" placeholder="例如：不连续追问；不在情绪很强时发送长消息。">${escapeHTML(profile.boundaries)}</textarea>
+              <textarea id="profile-boundaries" name="boundaries" maxlength="800" placeholder="例如：不连续追问；不在情绪很强时发送长消息。">${escapeHTML(profile.boundaries)}</textarea>
             </div>
           </div>
           <div class="button-row" style="margin-top:22px">
@@ -638,7 +3824,7 @@ function renderAnalysis(eventId) {
 
   const contact = getContact(item.contactId);
   const analysis = item.analysis;
-  const signal = signalMeta[analysis.strength];
+  const signal = signalMeta[analysis.strength] || signalMeta.weak;
 
   return `
     <div class="page">
@@ -651,24 +3837,35 @@ function renderAnalysis(eventId) {
           <h1>${signal.label}</h1>
           <p>${escapeHTML(analysis.summary)}</p>
           <div class="confidence-row">
-            <span>证据分 ${analysis.score}</span>
-            <span>参考置信度 ${analysis.confidence}%</span>
+            <span>证据分 ${escapeHTML(analysis.score)}</span>
+            <span>信息完整度 ${escapeHTML(analysis.informationQuality)}</span>
+            <span>规则 v${escapeHTML(analysis.engineVersion || ENGINE_VERSION)}</span>
             <span>${formatDate(item.date)}</span>
           </div>
         </div>
       </section>
 
       ${
-        analysis.strength === "stop"
+        analysis.actionPolicy === "stop"
           ? `
             <div class="boundary-banner">
               <span aria-hidden="true">!</span>
               <div>
                 <strong>边界优先</strong>
-                <p>记录中包含明确拒绝、不舒服或持续回避信号。不要继续测试、说服或寻找“其实对方愿意”的证据。</p>
+                <p>记录中包含明确拒绝、不舒服或停止要求。不要继续测试、说服或寻找“其实对方愿意”的证据。</p>
               </div>
             </div>
           `
+          : analysis.actionPolicy === "deescalate"
+            ? `
+              <div class="boundary-banner boundary-banner--caution">
+                <span aria-hidden="true">↓</span>
+                <div>
+                  <strong>降低互动强度</strong>
+                  <p>持续回避、边界不确定或冲突信息出现时，不重复邀请、不追问；等待对方清楚、主动的反馈。</p>
+                </div>
+              </div>
+            `
           : ""
       }
 
@@ -684,25 +3881,46 @@ function renderAnalysis(eventId) {
         </article>
 
         <article class="analysis-panel">
-          <h2><span>03</span>其他可能解释</h2>
+          <h2><span>03</span>证据等级依据</h2>
+          <ul>${analysis.evidenceReasons.map((text) => `<li>${escapeHTML(text)}</li>`).join("")}</ul>
+        </article>
+
+        <article class="analysis-panel">
+          <h2><span>04</span>其他可能解释</h2>
           <ul>${analysis.alternatives.map((text) => `<li>${escapeHTML(text)}</li>`).join("")}</ul>
         </article>
 
         <article class="analysis-panel">
-          <h2><span>04</span>当前不确定性</h2>
+          <h2><span>05</span>当前不确定性</h2>
           <ul>${analysis.uncertainties.map((text) => `<li>${escapeHTML(text)}</li>`).join("")}</ul>
         </article>
 
         <article class="analysis-panel analysis-panel--wide">
-          <h2><span>05</span>${analysis.strength === "stop" ? "尊重边界的回应" : "自然、低压力的回应选项"}</h2>
+          <h2><span>06</span>${analysis.responseMode === "action" ? "尊重停止联系要求" : analysis.actionPolicy === "stop" ? "尊重边界的回应" : analysis.actionPolicy === "deescalate" ? "降级或暂停的回应选项" : "自然、低压力的回应选项"}</h2>
+          ${
+            analysis.personalNotes?.length
+              ? `<ul class="personal-notes">${analysis.personalNotes
+                  .map((text) => `<li>${escapeHTML(text)}</li>`)
+                  .join("")}</ul>`
+              : ""
+          }
           <div class="response-list">
             ${analysis.responses
               .map(
                 (text, index) => `
-                  <div class="response-option">
+                  <div class="response-option ${analysis.responseMode === "action" ? "response-option--action" : ""}">
                     <span>0${index + 1}</span>
                     <p>${escapeHTML(text)}</p>
-                    <button class="copy-button" data-action="copy-response" data-text="${escapeAttribute(text)}">复制</button>
+                    ${
+                      analysis.responseMode === "action"
+                        ? ""
+                        : `<button
+                            class="copy-button"
+                            data-action="copy-response"
+                            data-text="${escapeAttribute(text)}"
+                            aria-label="复制第 ${index + 1} 条回应"
+                          >复制</button>`
+                    }
                   </div>
                 `
               )
@@ -711,23 +3929,26 @@ function renderAnalysis(eventId) {
         </article>
 
         <article class="analysis-panel">
-          <h2><span>06</span>停止或降级条件</h2>
+          <h2><span>07</span>停止或降级条件</h2>
           <p>${escapeHTML(analysis.stopCondition)}</p>
         </article>
 
         <article class="analysis-panel">
-          <h2><span>07</span>后续复盘点</h2>
+          <h2><span>08</span>后续复盘点</h2>
           <p>记录你选择了什么行动、对方真实回应了什么，以及结果是否支持原来的判断。不要只记录符合期待的部分。</p>
         </article>
       </div>
 
       <div class="button-row" style="margin-top:20px">
-        <button class="button button--primary" data-action="open-review" data-event-id="${item.id}">
+        <button class="button button--primary" data-action="open-review" data-event-id="${escapeAttribute(item.id)}">
           记录后续结果
         </button>
         <button class="button button--quiet" data-view="dashboard">返回概览</button>
+        <button class="button button--danger" data-action="delete-event" data-event-id="${escapeAttribute(item.id)}">
+          删除这条事件
+        </button>
       </div>
-      <p class="microcopy" style="text-align:left">这是透明规则引擎生成的 MVP 分析，不是事实判决，也不具备读心能力。</p>
+      <p class="microcopy" style="text-align:left">这是透明规则引擎生成的 MVP 分析，不是概率、事实判决或读心结果。后续真实反馈会覆盖原来的行动策略。</p>
     </div>
   `;
 }
@@ -767,12 +3988,13 @@ function renderReview() {
 function renderReviewCard(item) {
   const contact = getContact(item.contactId);
   const done = Boolean(item.review?.result);
+  const signal = signalMeta[item.analysis.strength] || signalMeta.weak;
   return `
     <article class="review-card">
       <header>
         <h3>${escapeHTML(contact?.alias || "已删除档案")} · ${escapeHTML(item.scene)}</h3>
-        <span class="signal-pill signal-pill--${signalMeta[item.analysis.strength].className}" style="min-width:38px;height:38px;border-radius:12px">
-          ${signalMeta[item.analysis.strength].short}
+        <span class="signal-pill signal-pill--${signal.className}" style="min-width:38px;height:38px;border-radius:12px">
+          ${signal.short}
         </span>
       </header>
       <p>${escapeHTML(item.fact)}</p>
@@ -780,7 +4002,7 @@ function renderReviewCard(item) {
         <i></i>
         ${done ? `已复盘：${escapeHTML(item.review.result)}` : "等待真实反馈"}
       </div>
-      <button class="button button--small ${done ? "button--quiet" : "button--primary"}" data-action="open-review" data-event-id="${item.id}">
+      <button class="button button--small ${done ? "button--quiet" : "button--primary"}" data-action="open-review" data-event-id="${escapeAttribute(item.id)}">
         ${done ? "更新复盘" : "补充结果"}
       </button>
     </article>
@@ -789,24 +4011,43 @@ function renderReviewCard(item) {
 
 function renderReviewForm(item) {
   const review = item.review || {};
+  const defaultNextStep =
+    item.analysis.actionPolicy === "stop"
+      ? "尊重边界并停止"
+      : item.analysis.actionPolicy === "deescalate"
+        ? "降低互动强度"
+        : "继续自然了解";
+  const selectedNextStep = review.nextStep || defaultNextStep;
   return `
     <section class="section panel">
       <p class="eyebrow">结果反馈</p>
-      <h2 class="panel-title" style="margin-top:9px">复盘：${escapeHTML(getContact(item.contactId)?.alias || "匿名档案")} · ${escapeHTML(item.scene)}</h2>
+      <h2 class="panel-title" id="review-form-title" tabindex="-1" style="margin-top:9px">复盘：${escapeHTML(getContact(item.contactId)?.alias || "匿名档案")} · ${escapeHTML(item.scene)}</h2>
       <form id="review-form" class="review-form">
-        <input type="hidden" name="eventId" value="${item.id}" />
+        <input type="hidden" name="eventId" value="${escapeAttribute(item.id)}" />
         <div class="form-grid">
           <div class="field field--full">
             <label for="review-action">你最终选择了什么行动？</label>
-            <textarea id="review-action" name="actionTaken" placeholder="例如：我选择了一个低压力邀请，并明确说不方便也没关系。">${escapeHTML(review.actionTaken || "")}</textarea>
+            <textarea id="review-action" name="actionTaken" maxlength="1000" placeholder="例如：我选择了一个低压力邀请，并明确说不方便也没关系。">${escapeHTML(review.actionTaken || "")}</textarea>
           </div>
           <div class="field">
             <label for="review-result">对方的真实回应</label>
-            <textarea id="review-result" name="result" placeholder="尽量记录原话或可观察行为。" required>${escapeHTML(review.result || "")}</textarea>
+            <textarea id="review-result" name="result" maxlength="1600" placeholder="尽量记录原话或可观察行为。" required>${escapeHTML(review.result || "")}</textarea>
           </div>
           <div class="field">
             <label for="review-learning">这次判断需要如何调整？</label>
-            <textarea id="review-learning" name="learning" placeholder="哪些判断得到支持？哪些只是期待？">${escapeHTML(review.learning || "")}</textarea>
+            <textarea id="review-learning" name="learning" maxlength="1000" placeholder="哪些判断得到支持？哪些只是期待？">${escapeHTML(review.learning || "")}</textarea>
+          </div>
+          <div class="field">
+            <label for="review-outcome">真实结果中的边界信号</label>
+            <select id="review-outcome" name="outcome" required>
+              <option value="">请选择真实反馈</option>
+              ${outcomeOption("unknown", "仍不确定，信息不足", review.outcome)}
+              ${outcomeOption("continued", "双方愿意继续互动", review.outcome)}
+              ${outcomeOption("avoidance", "持续无回应、回避或无替代安排", review.outcome)}
+              ${outcomeOption("declined", "明确拒绝或要求停止", review.outcome)}
+              ${outcomeOption("discomfort", "表达不舒服或边界被触碰", review.outcome)}
+            </select>
+            <p class="form-error" id="review-outcome-error" role="alert" aria-live="polite"></p>
           </div>
           <div class="field">
             <label for="review-naturalness">行动是否符合你自己？</label>
@@ -820,11 +4061,11 @@ function renderReviewForm(item) {
           <div class="field">
             <label for="review-next">下一步</label>
             <select id="review-next" name="nextStep">
-              ${reviewOption("继续自然了解", review.nextStep)}
-              ${reviewOption("直接沟通确认", review.nextStep)}
-              ${reviewOption("降低互动强度", review.nextStep)}
-              ${reviewOption("尊重边界并停止", review.nextStep)}
-              ${reviewOption("不需要下一步", review.nextStep)}
+              ${reviewOption("继续自然了解", selectedNextStep)}
+              ${reviewOption("直接沟通确认", selectedNextStep)}
+              ${reviewOption("降低互动强度", selectedNextStep)}
+              ${reviewOption("尊重边界并停止", selectedNextStep)}
+              ${reviewOption("不需要下一步", selectedNextStep)}
             </select>
           </div>
         </div>
@@ -841,22 +4082,31 @@ function reviewOption(value, selected) {
   return `<option ${value === selected ? "selected" : ""}>${value}</option>`;
 }
 
+function outcomeOption(value, label, selected) {
+  return `<option value="${value}" ${value === selected ? "selected" : ""}>${label}</option>`;
+}
+
 function renderPrivacy() {
-  const serializedSize = new Blob([JSON.stringify(state)]).size;
+  const serializedSize = new Blob([JSON.stringify(toPortableState(state))]).size;
   return `
     <div class="page">
+      ${renderStorageRecoveryNotice()}
       ${pageHeading(
         "隐私与数据",
-        "你的关系记录，默认只属于你。",
-        "当前版本不包含账号、统计追踪或云端同步。所有数据都保存在这个浏览器的本地存储中。"
+        "关系日记留在本地，匿名档案只在你提交 Agent 问题时同步。",
+        "规则分析、复盘和完整本地日记不会上传；经同意后，Agent 会把匿名 profile/contact/event 的最少必要字段更新到当前账号的隔离知识库。"
       )}
 
       <div class="data-grid">
         <article class="data-card">
           <p class="eyebrow">本地数据</p>
-          <h2>导出一份可迁移备份</h2>
-          <p>导出包含个人设置、匿名档案、事件与复盘的 JSON 文件。请把它存放在安全位置。</p>
-          <button class="button button--dark" data-action="export-data">导出 JSON</button>
+          <h2>导出或恢复本地备份</h2>
+          <p>JSON 包含个人设置、匿名档案、事件与复盘，且是明文文件。请只存放在你控制的安全位置。</p>
+          <div class="button-row">
+            <button class="button button--dark" data-action="export-data">导出 JSON</button>
+            <button class="button button--quiet" data-action="import-data">导入 JSON</button>
+          </div>
+          <input class="visually-hidden" id="data-import" type="file" accept="application/json,.json" />
         </article>
 
         <article class="data-card">
@@ -864,6 +4114,13 @@ function renderPrivacy() {
           <h2>清空当前浏览器数据</h2>
           <p>会删除所有匿名档案、事件、分析和复盘。操作完成后无法在本站恢复。</p>
           <button class="button button--danger" data-action="clear-data">清空全部数据</button>
+        </article>
+
+        <article class="data-card">
+          <p class="eyebrow">匿名使用分析</p>
+          <h2>Google Analytics 偏好</h2>
+          <p>只统计页面和功能完成状态，不发送日记、档案、录音、AI 消息、用户名或用户 ID。你可以随时重新选择。</p>
+          <button class="button button--quiet" data-action="analytics-preferences">管理分析偏好</button>
         </article>
       </div>
 
@@ -884,11 +4141,28 @@ function renderPrivacy() {
             <small>包含事实、解释与分析</small>
           </article>
           <article class="metric-card">
-            <span>外部请求</span>
-            <strong>0</strong>
-            <small>当前版本不会把记录发送到服务器</small>
+            <span>本地关系记录自动上传</span>
+            <strong>关闭</strong>
+            <small>只有你在 Agent 页明确发送的文字会进入模型请求</small>
           </article>
         </div>
+      </section>
+
+      <section class="section panel panel--flat">
+        <h2 class="panel-title">本地存储风险</h2>
+        <p class="data-warning">
+          数据以明文保存在当前浏览器。共享设备、同一浏览器账户、浏览器清理、无痕模式和导出的 JSON
+          都可能造成丢失或泄露；请不要保存真实姓名、地址、定位、身份证明或不必要的完整聊天记录。
+        </p>
+      </section>
+
+      <section class="section panel panel--flat">
+        <h2 class="panel-title">账号、Agent 与最小审计</h2>
+        <p class="data-warning">
+          登录、会员授权、Agent 调用结果和管理操作会以最少必要元数据记录在服务端，用于安全、权限和故障排查；
+          不记录本地事件正文、系统提示词、IP 地址或浏览器标识。你显式发送给 Agent 的文字会转交
+          DeepSeek 生成实时回应；本服务会加密保存你主动发送的内容和模型回复，授权管理员可在审计后台查看。请仍使用代号并避免发送可识别信息。
+        </p>
       </section>
 
       <section class="section panel panel--flat">
@@ -916,10 +4190,53 @@ function pageHeading(eyebrow, title, description) {
   `;
 }
 
-function createContact(formData) {
+function renderStorageRecoveryNotice() {
+  if (!storageRecovery) return "";
+  const reason = {
+    future: "这份本地数据来自更新版本，当前应用不会将它降级或覆盖。",
+    capacity: "旧版本地数据超过当前自动迁移容量，当前应用不会截断或覆盖它。",
+    lossy: "自动迁移可能丢弃部分既有记录，当前应用已停止迁移且不会覆盖它。",
+    unreadable: "浏览器中的既有数据无法安全读取，当前应用不会用空白数据覆盖它。",
+  }[storageRecovery.reason] || "浏览器中的既有数据无法安全迁移，当前应用不会覆盖它。";
+  return `
+    <section class="boundary-banner storage-recovery" role="alert">
+      <span aria-hidden="true">!</span>
+      <div>
+        <strong>本地数据处于恢复保护状态</strong>
+        <p>${reason}请先导出原始副本，再到“隐私与数据”导入已知可用备份，或明确清空损坏数据。</p>
+        <div class="button-row">
+          ${
+            storageRecovery.raw
+              ? '<button class="button button--quiet" data-action="export-recovery-data">导出未读取的原始数据</button>'
+              : ""
+          }
+          <button class="button button--quiet" data-view="privacy">前往隐私与数据</button>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function createContact(form, formData) {
+  if (state.contacts.length >= MAX_CONTACTS) {
+    showToast(`最多保存 ${MAX_CONTACTS} 个匿名档案；请先导出并整理现有数据`, 4600);
+    return;
+  }
+  const alias = clean(formData.get("alias"));
+  const isDuplicate = state.contacts.some(
+    (contact) => contact.alias.localeCompare(alias, "zh-CN", { sensitivity: "accent" }) === 0
+  );
+  if (isDuplicate) {
+    const field = form.querySelector("#contact-alias");
+    field.setCustomValidity("匿名代号已存在，请使用一个可区分的新代号。");
+    field.reportValidity();
+    field.addEventListener("input", () => field.setCustomValidity(""), { once: true });
+    return;
+  }
+
   const contact = {
     id: uid(),
-    alias: clean(formData.get("alias")),
+    alias,
     stage: clean(formData.get("stage")),
     context: clean(formData.get("context")),
     goal: clean(formData.get("goal")),
@@ -927,13 +4244,17 @@ function createContact(formData) {
     createdAt: new Date().toISOString(),
   };
 
-  state.contacts.push(contact);
-  saveState();
+  if (!commitState((next) => next.contacts.push(contact))) return;
+  preferredContactId = contact.id;
   showToast(`已保存匿名档案：${contact.alias}`);
-  renderCurrentView();
+  navigate("people");
 }
 
 function createEvent(form, formData) {
+  if (state.events.length >= MAX_EVENTS) {
+    showToast(`最多保存 ${MAX_EVENTS} 条事件；请先导出并整理现有数据`, 4600);
+    return;
+  }
   const signalNames = [
     "directInterest",
     "futurePlan",
@@ -957,200 +4278,101 @@ function createEvent(form, formData) {
     feeling: clean(formData.get("feeling")),
     reply: clean(formData.get("reply")),
     signals,
+    boundaryStatus: clean(formData.get("boundaryStatus")),
     createdAt: new Date().toISOString(),
   };
 
-  item.analysis = analyzeEvent(item);
-  state.events.push(item);
-  saveState();
+  const validation = validateEventInput(item);
+  const error = form.querySelector("#event-signal-error");
+  if (!validation.valid) {
+    error.textContent = validation.issues.join(" ");
+    form.querySelector("#event-boundary-status")?.focus();
+    return;
+  }
+  error.textContent = "";
+
+  if (!commitState((next) => next.events.push(item))) return;
   currentEventId = item.id;
-  currentView = "analysis";
+  preferredContactId = null;
   showToast("事件已保存，结构化分析已生成");
-  renderCurrentView();
-  window.scrollTo({ top: 0, behavior: "smooth" });
-}
-
-function analyzeEvent(item) {
-  const weights = {
-    directInterest: 5,
-    futurePlan: 3,
-    repeatedInitiative: 2,
-    detailedFollowup: 1,
-    politeOnly: -1,
-    delayAvoidance: -3,
-    explicitDecline: -8,
-    discomfort: -8,
-  };
-  const score = item.signals.reduce((total, signal) => total + (weights[signal] || 0), 0);
-  const hasBoundaryRisk = item.signals.some((signal) => ["explicitDecline", "discomfort"].includes(signal));
-  const hasPersistentAvoidance = item.signals.includes("delayAvoidance");
-
-  let strength = "weak";
-  if (hasBoundaryRisk) {
-    strength = "stop";
-  } else if (score >= 6) {
-    strength = "strong";
-  } else if (score >= 3) {
-    strength = "medium";
-  }
-
-  const summaries = {
-    weak:
-      "目前证据更接近普通礼貌、单次行为或信息不足。不要把希望或担忧当成结论；更适合继续观察，或在合适时直接、低压力地确认。",
-    medium:
-      "记录中出现了持续投入、主动联系或未来安排等证据，但仍不能替代明确表达。可以选择自然回应，并给对方充分的选择空间。",
-    strong:
-      "记录中出现了明确兴趣或多个一致、持续的投入信号。即便如此，关系意愿仍应通过双方清楚沟通确认。",
-    stop:
-      "记录包含明确拒绝或不舒服信号。此时不应继续推进、说服或测试边界；最安全的行动是尊重表达并停止。",
-  };
-
-  const alternatives = buildAlternatives(item.signals, strength);
-  const uncertainties = buildUncertainties(item.signals, strength);
-  const confidence = Math.min(
-    92,
-    Math.round(38 + Math.abs(score) * 5 + item.signals.length * 4 + (hasBoundaryRisk ? 16 : 0))
-  );
-
-  return {
-    score,
-    strength,
-    confidence,
-    summary: summaries[strength],
-    alternatives,
-    uncertainties,
-    responses: buildResponses(strength, state.profile.voice),
-    stopCondition:
-      strength === "stop"
-        ? "对方已经明确拒绝或表达不舒服时，不需要再等待更多证据。停止推进，避免继续联系、试探或借他人施压。"
-        : hasPersistentAvoidance
-          ? "如果持续回避、重复失约且没有替代安排，或对方表达不舒服，应降低互动强度或停止推进。"
-          : "一旦对方明确拒绝、持续回避、表现不舒服或要求停止，应立即降低互动强度或停止推进。",
-  };
-}
-
-function buildAlternatives(signals, strength) {
-  if (strength === "stop") {
-    return [
-      "对方的表达本身已经足够，不需要寻找隐藏的相反含义。",
-      "拒绝可能来自匹配度、时机、精力或个人选择；不等同于对你整体价值的评价。",
-      "继续说服并不会让信号更清楚，只会增加对方压力。",
-    ];
-  }
-
-  const options = [];
-  if (signals.includes("futurePlan")) {
-    options.push("主动安排未来互动可能代表兴趣，也可能是友好、合作或群体活动中的自然安排。");
-  }
-  if (signals.includes("repeatedInitiative")) {
-    options.push("持续主动是值得观察的模式，但仍需结合内容、场景以及对方平时对其他人的方式。");
-  }
-  if (signals.includes("detailedFollowup")) {
-    options.push("记得细节可能说明关注，也可能来自对方本身细心或善于社交。");
-  }
-  if (signals.includes("politeOnly") || !signals.length) {
-    options.push("当前行为可能只是普通礼貌，暂时没有足够证据区分友好与特别兴趣。");
-  }
-  if (signals.includes("delayAvoidance")) {
-    options.push("推迟可能与忙碌或现实安排有关；如果多次发生且没有替代安排，也可能表示投入意愿有限。");
-  }
-
-  const defaults = [
-    "单次互动容易受到当天状态、场景和沟通习惯影响。",
-    "你的期待或焦虑可能会放大某些细节，同时忽略其他证据。",
-    "最准确的信息通常来自对方后续持续行为与明确表达。",
-  ];
-
-  return [...options, ...defaults].slice(0, 3);
-}
-
-function buildUncertainties(signals, strength) {
-  const items = [];
-  if (signals.length < 2) items.push("目前证据点较少，无法判断是否形成持续模式。");
-  if (!signals.includes("directInterest") && strength !== "stop") {
-    items.push("对方尚未明确表达关系兴趣，现阶段仍是推断。");
-  }
-  if (!signals.includes("futurePlan") && strength !== "stop") {
-    items.push("尚未看到具体的下一次互动安排或现实投入。");
-  }
-  if (signals.includes("delayAvoidance")) {
-    items.push("需要区分一次客观冲突与持续回避；是否提供替代安排很重要。");
-  }
-  if (strength === "stop") {
-    items.push("对方的边界不需要通过更多分析才能生效。");
-  }
-  items.push("你记录的是自己的视角，无法覆盖对方未表达的想法和处境。");
-  return items.slice(0, 3);
-}
-
-function buildResponses(strength, voice) {
-  if (strength === "stop") {
-    return [
-      "收到，谢谢你直接告诉我。我会尊重你的决定，之后不再推进。",
-      "我明白了，也谢谢你说清楚。祝你之后一切顺利。",
-      "了解，我会尊重这个边界。保重。",
-    ];
-  }
-
-  const sets = {
-    natural: [
-      "刚才和你聊天挺舒服的。如果你也愿意，我们下周可以再找个时间喝杯咖啡；不方便也没关系。",
-      "我想继续了解你。你有兴趣的话，我们可以挑个轻松的活动再见一次。",
-      "我不太想靠猜，所以直接问一下：你愿意继续认识看看吗？任何答案都可以。",
-    ],
-    gentle: [
-      "谢谢你今天愿意分享这些，我觉得相处很舒服。如果你也愿意，我们可以慢慢继续了解。",
-      "我有一点想再见你的期待，不过你按自己的节奏来就好；愿意的话，我们再约一个轻松的时间。",
-      "我不确定自己有没有理解对，所以想轻轻确认一下：你会愿意继续认识看看吗？",
-    ],
-    direct: [
-      "我对你有兴趣，想继续了解。你愿意的话，我们约下周再见；如果不想也可以直接告诉我。",
-      "我想邀请你周末喝咖啡。你愿意就一起，不方便或没兴趣也没关系。",
-      "我不想继续猜：你有继续了解的意愿吗？我会尊重你的答案。",
-    ],
-    humor: [
-      "这次聊天我给了高分，但不打算替你评分。你愿意的话，我们下周再喝杯咖啡？",
-      "我想申请一次续集：找个轻松的地方再见面。你没空或不想都可以直接说。",
-      "我的读心术显然没上线，所以直接问：你愿意继续认识看看吗？",
-    ],
-  };
-
-  return sets[voice] || sets.natural;
+  navigate("analysis");
 }
 
 function saveProfile(formData) {
-  state.profile = {
+  const profile = {
     name: clean(formData.get("name")),
     goal: clean(formData.get("goal")),
     voice: clean(formData.get("voice")) || "natural",
     boundaries: clean(formData.get("boundaries")),
     anxiety: clean(formData.get("anxiety")),
   };
-  saveState();
+  if (!commitState((next) => {
+    next.profile = profile;
+  })) return;
   syncProfileAvatar();
-  showToast("个人表达偏好已保存");
+  showToast("个人表达偏好已保存，历史回应已按当前规则刷新");
   navigate("dashboard");
 }
 
-function saveReview(formData) {
-  const item = state.events.find((event) => event.id === formData.get("eventId"));
-  if (!item) return;
+function saveReview(form, formData) {
+  const eventId = clean(formData.get("eventId"));
+  const outcome = clean(formData.get("outcome"));
+  let nextStep = clean(formData.get("nextStep"));
+  if (outcome === "declined" || outcome === "discomfort") nextStep = "尊重边界并停止";
+  if (outcome === "avoidance") nextStep = "降低互动强度";
 
-  item.review = {
+  const review = {
     actionTaken: clean(formData.get("actionTaken")),
     result: clean(formData.get("result")),
     learning: clean(formData.get("learning")),
     naturalness: clean(formData.get("naturalness")),
-    nextStep: clean(formData.get("nextStep")),
+    nextStep,
+    outcome,
     updatedAt: new Date().toISOString(),
   };
-  saveState();
+
+  const validation = validateReviewInput(review);
+  const error = form.querySelector("#review-outcome-error");
+  if (!validation.valid) {
+    error.textContent = validation.issues.join(" ");
+    form.querySelector("#review-outcome")?.focus();
+    return;
+  }
+  error.textContent = "";
+
+  if (!commitState((next) => {
+    const item = next.events.find((event) => event.id === eventId);
+    if (item) item.review = review;
+  })) return;
+
   reviewEventId = null;
-  showToast("复盘已保存，真实结果已加入记录");
+  const corrected = outcome === "declined" || outcome === "discomfort" || outcome === "avoidance";
+  showToast(corrected ? "复盘已保存，真实结果已修正当前行动策略" : "复盘已保存，真实结果已加入记录");
   renderCurrentView();
+  requestAnimationFrame(() => {
+    document
+      .querySelector(`[data-action="open-review"][data-event-id="${cssEscape(eventId)}"]`)
+      ?.focus();
+  });
 }
 
 function loadSampleData() {
+  const existing = state.contacts.find((contact) => contact.alias === "A-17");
+  if (existing) {
+    const event = state.events.find((item) => item.contactId === existing.id);
+    if (event) {
+      currentEventId = event.id;
+      showToast("匿名示例已经存在");
+      navigate("analysis");
+      return;
+    }
+  }
+
+  if (state.contacts.length >= MAX_CONTACTS || state.events.length >= MAX_EVENTS) {
+    showToast("当前数据已达到容量上限，无法载入匿名示例", 4200);
+    return;
+  }
+
   const contactId = uid();
   const eventId = uid();
   const sampleContact = {
@@ -1173,21 +4395,23 @@ function loadSampleData() {
     feeling: "期待，也有一点不确定",
     reply: "还没有回复",
     signals: ["repeatedInitiative", "futurePlan"],
+    boundaryStatus: "clear",
     createdAt: new Date().toISOString(),
   };
-  sampleEvent.analysis = analyzeEvent(sampleEvent);
-  state.contacts.push(sampleContact);
-  state.events.push(sampleEvent);
-  saveState();
+  if (!commitState((next) => {
+    next.contacts.push(sampleContact);
+    next.events.push(sampleEvent);
+  })) return;
   showToast("匿名示例已载入");
   renderCurrentView();
+  requestAnimationFrame(() => main.focus({ preventScroll: true }));
 }
 
 function exportData() {
   const payload = {
     exportedAt: new Date().toISOString(),
     application: "GAME Signal Lab",
-    data: state,
+    data: toPortableState(state),
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -1201,41 +4425,229 @@ function exportData() {
   showToast("本地数据已导出");
 }
 
+function exportRecoveryData() {
+  if (!storageRecovery?.raw) {
+    showToast("没有可导出的原始数据");
+    return;
+  }
+  const blob = new Blob([storageRecovery.raw], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `game-signal-lab-unreadable-${todayISO()}.json`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  showToast("未读取的原始数据已导出；请保留副本后再清理");
+}
+
+async function importData(file) {
+  if (file.size > MAX_BACKUP_BYTES) {
+    showToast("备份文件超过 20 MB，已取消导入", 4200);
+    return;
+  }
+
+  try {
+    const imported = reanalyzeState(parseBackup(await file.text()));
+    const confirmed = window.confirm(
+      `导入将替换当前浏览器中的 ${state.contacts.length} 个档案和 ${state.events.length} 条事件。是否继续？`
+    );
+    if (!confirmed) return;
+
+    imported.adultConfirmed = state.adultConfirmed;
+    imported.adultConfirmedAt = state.adultConfirmedAt;
+    imported.agePolicyVersion = state.agePolicyVersion;
+    if (!writeState(imported, { replaceRecovery: true })) return;
+    state = imported;
+    currentView = "dashboard";
+    currentEventId = null;
+    reviewEventId = null;
+    preferredContactId = null;
+    syncProfileAvatar();
+    renderCurrentView();
+    showToast("备份已导入并按当前规则重新分析");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "无法读取这个备份文件", 4600);
+  }
+}
+
 function clearData() {
-  const confirmed = window.confirm("确定清空所有匿名档案、事件和复盘吗？此操作无法撤销。");
+  const confirmed = window.confirm(
+    "确定清空所有本地数据吗？这会删除年龄确认、个人设置、匿名档案、事件和复盘，且无法恢复。"
+  );
   if (!confirmed) return;
 
-  const adultConfirmed = state.adultConfirmed;
-  state = structuredClone(defaultState);
-  state.adultConfirmed = adultConfirmed;
-  saveState();
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+    LEGACY_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+    storageRecovery = null;
+  } catch {
+    showToast("浏览器阻止了本地数据清理，请在站点设置中手动删除", 4800);
+    return;
+  }
+
+  state = createDefaultState();
   syncProfileAvatar();
   currentView = "dashboard";
   currentEventId = null;
   reviewEventId = null;
-  showToast("本地数据已全部清空");
+  preferredContactId = null;
   renderCurrentView();
+  adultCheck.checked = false;
+  enterApp.disabled = true;
+  setAppAvailability(false);
+  if (!ageGate.open) ageGate.showModal();
+  showToast("本地数据已全部清空");
+}
+
+function deleteEvent(eventId) {
+  const item = state.events.find((event) => event.id === eventId);
+  if (!item) return;
+  if (!window.confirm("确定删除这条事件及其复盘吗？此操作无法撤销。")) return;
+  if (!commitState((next) => {
+    next.events = next.events.filter((event) => event.id !== eventId);
+  })) return;
+  currentEventId = null;
+  reviewEventId = null;
+  showToast("事件及其复盘已删除");
+  navigate("dashboard");
+}
+
+function deleteContact(contactId) {
+  const contact = state.contacts.find((item) => item.id === contactId);
+  if (!contact) return;
+  const eventCount = state.events.filter((event) => event.contactId === contactId).length;
+  const confirmed = window.confirm(
+    eventCount
+      ? `确定删除匿名档案“${contact.alias}”及其 ${eventCount} 条事件和复盘吗？此操作无法撤销。`
+      : `确定删除匿名档案“${contact.alias}”吗？此操作无法撤销。`
+  );
+  if (!confirmed) return;
+  if (!commitState((next) => {
+    next.contacts = next.contacts.filter((item) => item.id !== contactId);
+    next.events = next.events.filter((event) => event.contactId !== contactId);
+  })) return;
+  showToast("匿名档案及其关联数据已删除");
+  navigate("people");
 }
 
 function loadState() {
+  let saved = null;
+  let sourceKey = STORAGE_KEY;
   try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (!saved) return structuredClone(defaultState);
+    saved = localStorage.getItem(STORAGE_KEY);
+    let migratedLegacy = false;
+    if (!saved) {
+      for (const key of LEGACY_STORAGE_KEYS) {
+        saved = localStorage.getItem(key);
+        if (saved) {
+          migratedLegacy = true;
+          sourceKey = key;
+          break;
+        }
+      }
+    }
+    if (!saved) return reanalyzeState(cloneValue(defaultState));
+
     const parsed = JSON.parse(saved);
-    return {
-      ...structuredClone(defaultState),
-      ...parsed,
-      profile: { ...defaultState.profile, ...(parsed.profile || {}) },
-      contacts: Array.isArray(parsed.contacts) ? parsed.contacts : [],
-      events: Array.isArray(parsed.events) ? parsed.events : [],
+    const assessment = inspectStoredState(parsed);
+    if (!assessment.safe) {
+      const error = new Error(assessment.message);
+      error.code = assessment.reason.toUpperCase();
+      throw error;
+    }
+    const normalized = reanalyzeState(assessment.state);
+    if (migratedLegacy) startupWarning = "已安全迁移旧版本地数据；下次保存将使用 v2 结构";
+    return normalized;
+  } catch (error) {
+    const reason = String(error?.code || "").toLowerCase();
+    storageRecovery = {
+      sourceKey,
+      raw: typeof saved === "string" ? saved : "",
+      reason: ["future", "capacity", "lossy"].includes(reason) ? reason : "unreadable",
     };
-  } catch {
-    return structuredClone(defaultState);
+    startupWarning =
+      {
+        future: "本地数据来自更新版本，已进入恢复保护状态且不会覆盖原始数据",
+        capacity: "旧版本地数据超过自动迁移容量，已进入恢复保护状态且不会被截断",
+        lossy: "自动迁移可能丢失部分记录，已进入恢复保护状态且不会覆盖原始数据",
+        unreadable: "本地数据无法读取，已进入恢复保护状态且不会覆盖原始数据",
+      }[storageRecovery.reason];
+    return reanalyzeState(cloneValue(defaultState));
   }
 }
 
-function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+function commitState(mutator) {
+  const next = cloneValue(state);
+  mutator(next);
+  const portable = toPortableState(next);
+  if (!writeState(portable)) return false;
+  state = reanalyzeState(portable);
+  return true;
+}
+
+function persistCurrentState() {
+  reanalyzeState(state);
+  return writeState(state);
+}
+
+function writeState(nextState, { replaceRecovery = false } = {}) {
+  if (storageRecovery && !replaceRecovery) {
+    showToast("现有本地数据正受恢复保护；请先导出原始副本，再导入备份或明确清空", 5600);
+    return false;
+  }
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(toPortableState(nextState)));
+    LEGACY_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+    storageRecovery = null;
+    return true;
+  } catch {
+    showToast("保存失败：浏览器存储不可用或空间不足。本次修改未写入本地。", 5200);
+    return false;
+  }
+}
+
+function reanalyzeState(targetState) {
+  const contacts = new Map(targetState.contacts.map((contact) => [contact.id, contact]));
+  targetState.events = targetState.events.map((item) => {
+    const contact = contacts.get(item.contactId);
+    return {
+      ...item,
+      analysis: analyzeEvent(item, {
+        voice: targetState.profile.voice,
+        goal: targetState.profile.goal,
+        anxiety: targetState.profile.anxiety,
+        boundaries: targetState.profile.boundaries,
+        contactBoundary: contact?.boundary || "",
+      }),
+    };
+  });
+  return targetState;
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast("回应选项已复制");
+    return;
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    textarea.remove();
+    showToast(copied ? "回应选项已复制" : "浏览器未允许复制，请手动选择文字");
+  }
+}
+
+function cloneValue(value) {
+  if (globalThis.structuredClone) return globalThis.structuredClone(value);
+  return JSON.parse(JSON.stringify(value));
 }
 
 function getContact(id) {
@@ -1247,11 +4659,11 @@ function syncProfileAvatar() {
   document.querySelector("#avatar-initial").textContent = initial;
 }
 
-function showToast(message) {
+function showToast(message, duration = 2300) {
   toast.textContent = message;
   toast.classList.add("is-visible");
   window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => toast.classList.remove("is-visible"), 2300);
+  toastTimer = window.setTimeout(() => toast.classList.remove("is-visible"), duration);
 }
 
 function todayISO() {
@@ -1276,6 +4688,10 @@ function clean(value) {
   return String(value || "").trim();
 }
 
+function isTypingTarget(target) {
+  return Boolean(target?.matches?.("input, textarea, select, [contenteditable='true']"));
+}
+
 function uid() {
   if (window.crypto?.randomUUID) return window.crypto.randomUUID();
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -1292,4 +4708,9 @@ function escapeHTML(value) {
 
 function escapeAttribute(value) {
   return escapeHTML(value).replaceAll("\n", "&#10;");
+}
+
+function cssEscape(value) {
+  if (globalThis.CSS?.escape) return globalThis.CSS.escape(String(value));
+  return String(value).replace(/[^A-Za-z0-9_-]/g, "\\$&");
 }

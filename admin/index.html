@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet" />
+    <meta name="referrer" content="no-referrer" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'"
+    />
+    <meta name="theme-color" content="#1c2638" />
+    <title>管理员登录 · GAME</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%231c2638'/%3E%3Cpath d='M16 18h32v28H16z' fill='none' stroke='%23b9c5fb' stroke-width='3'/%3E%3Cpath d='M24 34h16' stroke='%23aee8d0' stroke-width='4'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./zine-system.css" />
+  </head>
+  <body>
+    <a class="skip-link" id="skip-link" href="#login-title">跳到主要内容</a>
+
+    <main class="login-shell" id="login-shell">
+      <section class="login-panel" aria-labelledby="login-title">
+        <div class="login-brand" aria-hidden="true">
+          <span>GA</span>
+        </div>
+        <p class="eyebrow">GAME · 管理控制台</p>
+        <h1 id="login-title" tabindex="-1">管理员登录</h1>
+        <p class="login-intro">
+          仅限获授权的运营与安全人员。真实部署应使用同源、HttpOnly 会话，不在浏览器中保存管理令牌。
+        </p>
+
+        <form
+          id="login-form"
+          class="stack-form"
+          onsubmit="return false"
+        >
+          <div class="field">
+            <label for="admin-username">管理员用户名</label>
+            <input
+              id="admin-username"
+              name="username"
+              type="text"
+              autocomplete="username"
+              autocapitalize="none"
+              spellcheck="false"
+              required
+            />
+          </div>
+          <div class="field">
+            <label for="admin-password">密码</label>
+            <input
+              id="admin-password"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              required
+            />
+          </div>
+          <p class="form-message" id="login-message" role="alert" aria-live="assertive"></p>
+          <button class="button button--primary button--full" type="submit">
+            安全登录
+          </button>
+        </form>
+
+        <div class="demo-entry">
+          <p>尚未连接管理 API？可以只查看虚构数据原型。</p>
+          <button class="button button--quiet button--full" id="demo-login" type="button">
+            使用虚构数据预览
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <div class="admin-shell" id="admin-shell" hidden>
+      <aside class="sidebar" id="admin-sidebar" aria-label="管理员主导航">
+        <div class="sidebar-head">
+          <button class="brand-button" type="button" data-view="overview" aria-label="返回管理概览">
+            <span class="brand-mark" aria-hidden="true">GA</span>
+            <span>
+              <strong>GAME</strong>
+              <small>Admin Console</small>
+            </span>
+          </button>
+          <button class="sidebar-close" id="sidebar-close" type="button" aria-label="关闭导航">
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+
+        <nav class="nav-list" aria-label="管理功能">
+          <button class="nav-item" type="button" data-view="overview">
+            <span class="nav-index" aria-hidden="true">01</span>
+            <span>概览</span>
+          </button>
+          <button class="nav-item" type="button" data-view="users">
+            <span class="nav-index" aria-hidden="true">02</span>
+            <span>用户与授权</span>
+          </button>
+          <button class="nav-item" type="button" data-view="messages">
+            <span class="nav-index" aria-hidden="true">03</span>
+            <span>消息记录</span>
+          </button>
+          <button class="nav-item" type="button" data-view="audit">
+            <span class="nav-index" aria-hidden="true">04</span>
+            <span>行为审计</span>
+          </button>
+          <button class="nav-item" type="button" data-view="deepseek">
+            <span class="nav-index" aria-hidden="true">05</span>
+            <span>DeepSeek 配置</span>
+          </button>
+          <button class="nav-item" type="button" data-view="voice">
+            <span class="nav-index" aria-hidden="true">06</span>
+            <span>语音配置</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-foot">
+          <p>高风险操作必须由服务端鉴权、校验并写入审计日志。</p>
+          <span class="environment-badge" id="environment-badge">生产 API</span>
+        </div>
+      </aside>
+
+      <button class="sidebar-scrim" id="sidebar-scrim" type="button" aria-label="关闭导航" hidden></button>
+
+      <div class="workspace" id="admin-workspace">
+        <header class="topbar">
+          <button
+            class="mobile-menu"
+            id="mobile-menu"
+            type="button"
+            aria-controls="admin-sidebar"
+            aria-expanded="false"
+            aria-label="打开导航"
+          >
+            <span aria-hidden="true"></span>
+            <span aria-hidden="true"></span>
+          </button>
+          <div class="topbar-title">
+            <span class="eyebrow">管理员控制台</span>
+            <strong id="view-title">概览</strong>
+          </div>
+          <div class="topbar-actions">
+            <span class="demo-badge" id="demo-badge" hidden>演示模式 · 不保存</span>
+            <span class="admin-identity" id="admin-identity">管理员</span>
+            <button class="button button--quiet button--small" id="logout-button" type="button">
+              退出
+            </button>
+          </div>
+        </header>
+
+        <main id="admin-main" tabindex="-1">
+          <section class="view" id="view-overview" data-view-panel="overview" aria-labelledby="overview-title">
+            <header class="page-heading">
+              <div>
+                <p class="eyebrow">系统态势</p>
+                <h1 id="overview-title" tabindex="-1">管理概览</h1>
+                <p>展示运营汇总与服务状态；消息正文仅在单独的加密消息记录页按权限查看。</p>
+              </div>
+              <button class="button button--quiet" id="refresh-overview" type="button">刷新数据</button>
+            </header>
+
+            <div class="metric-grid" id="overview-metrics" aria-label="管理指标"></div>
+
+            <div class="overview-grid">
+              <article class="panel">
+                <div class="panel-heading">
+                  <div>
+                    <p class="eyebrow">服务状态</p>
+                    <h2>关键能力</h2>
+                  </div>
+                  <span class="status-pill status-pill--good" id="overall-status">正常</span>
+                </div>
+                <ul class="status-list" id="service-status-list"></ul>
+              </article>
+
+              <article class="panel panel--dark">
+                <p class="eyebrow">最小数据原则</p>
+                <h2>后台不应成为私密内容浏览器。</h2>
+                <p>
+                  默认只提供用户 ID、授权状态、时间、动作类型和请求 ID。排查问题时仍应遵守最小权限和用途限制。
+                </p>
+                <button class="button button--light" type="button" data-view="audit">查看元数据审计</button>
+              </article>
+            </div>
+          </section>
+
+          <section class="view" id="view-users" data-view-panel="users" aria-labelledby="users-title" hidden>
+            <header class="page-heading">
+              <div>
+                <p class="eyebrow">账户与权限</p>
+                <h1 id="users-title" tabindex="-1">用户与授权</h1>
+                <p>会员资格和 Agent 权限是独立授权。每次变更都需要理由并由服务端记录审计事件。</p>
+              </div>
+            </header>
+
+            <form class="filter-bar" id="user-filter-form" role="search">
+              <div class="field field--compact">
+                <label for="user-search">搜索用户</label>
+                <input id="user-search" name="query" type="search" placeholder="用户 ID 或匿名昵称" />
+              </div>
+              <div class="field field--compact">
+                <label for="entitlement-filter">授权状态</label>
+                <select id="entitlement-filter" name="entitlement">
+                  <option value="all">全部用户</option>
+                  <option value="member">已开通会员</option>
+                  <option value="agent">已授权 Agent</option>
+                  <option value="none">未授权</option>
+                </select>
+              </div>
+              <button class="button button--dark" type="submit">应用筛选</button>
+            </form>
+
+            <div class="result-summary">
+              <p id="user-result-count" role="status">正在加载用户列表…</p>
+            </div>
+            <ul class="record-list user-list" id="user-list" aria-label="用户列表"></ul>
+            <div class="pagination user-pagination">
+              <button class="button button--quiet" id="user-load-more" type="button" hidden>
+                加载更多用户
+              </button>
+            </div>
+            <div class="empty-panel" id="user-empty" hidden>
+              <h2>没有匹配用户</h2>
+              <p>请调整搜索词或授权筛选条件。</p>
+            </div>
+          </section>
+
+          <section class="view" id="view-messages" data-view-panel="messages" aria-labelledby="messages-title" hidden>
+            <header class="page-heading">
+              <div>
+                <p class="eyebrow">支持与排障</p>
+                <h1 id="messages-title" tabindex="-1">消息记录</h1>
+                <p>查看用户主动发送的 Agent/故事消息及对应模型回复。</p>
+              </div>
+              <button class="button button--quiet" id="refresh-messages" type="button">刷新本页</button>
+            </header>
+            <div class="metadata-notice" role="note">
+              <span aria-hidden="true">i</span>
+              <div>
+                <strong>正文已加密存储，读取会被审计</strong>
+                <p>仅限用户支持与故障排查。请勿复制、导出或扩散用户内容；对象档案 RAG 正文不在此页面展示。</p>
+              </div>
+            </div>
+            <form class="filter-bar" id="message-filter-form" role="search">
+              <div class="field field--compact">
+                <label for="message-user-id">用户 ID</label>
+                <input id="message-user-id" name="userId" inputmode="numeric" placeholder="留空查看全部" />
+              </div>
+              <div class="field field--compact">
+                <label for="message-channel">消息来源</label>
+                <select id="message-channel" name="channel">
+                  <option value="all">全部来源</option>
+                  <option value="agent">一起想想</option>
+                  <option value="story">开始记录</option>
+                </select>
+              </div>
+              <button class="button button--dark" type="submit">应用筛选</button>
+            </form>
+            <ol class="record-list message-list" id="message-list" aria-label="消息记录"></ol>
+            <div class="empty-panel" id="message-empty" hidden>
+              <h2>暂无消息</h2>
+              <p>用户成功发送 Agent 或故事对话后，记录会显示在这里。</p>
+            </div>
+            <nav class="pagination" aria-label="消息记录分页">
+              <button class="button button--quiet button--small" id="message-prev" type="button">上一页</button>
+              <span id="message-page-status" aria-live="polite">第 1 页</span>
+              <button class="button button--quiet button--small" id="message-next" type="button">下一页</button>
+            </nav>
+          </section>
+
+          <section class="view" id="view-audit" data-view-panel="audit" aria-labelledby="audit-title" hidden>
+            <header class="page-heading">
+              <div>
+                <p class="eyebrow">安全与问责</p>
+                <h1 id="audit-title" tabindex="-1">行为审计</h1>
+                <p>用于追踪管理操作与授权变化，默认按最新时间排序。</p>
+              </div>
+              <button class="button button--quiet" id="refresh-audit" type="button">刷新本页</button>
+            </header>
+
+            <div class="metadata-notice" role="note" aria-labelledby="metadata-title">
+              <span aria-hidden="true">i</span>
+              <div>
+                <strong id="metadata-title">此处只展示元数据</strong>
+                <p>
+                  此页仅展示时间、操作者 ID、动作、资源 ID、结果、固定原因代码和请求 ID。用户消息正文请前往“消息记录”，对象档案正文仍不展示。
+                </p>
+              </div>
+            </div>
+
+            <ol class="record-list audit-list" id="audit-list" aria-label="审计事件"></ol>
+            <nav class="pagination" aria-label="审计日志分页">
+              <button class="button button--quiet button--small" id="audit-prev" type="button">上一页</button>
+              <span id="audit-page-status" aria-live="polite">第 1 页</span>
+              <button class="button button--quiet button--small" id="audit-next" type="button">下一页</button>
+            </nav>
+          </section>
+
+          <section class="view" id="view-deepseek" data-view-panel="deepseek" aria-labelledby="deepseek-title" hidden>
+            <header class="page-heading">
+              <div>
+                <p class="eyebrow">模型服务</p>
+                <h1 id="deepseek-title" tabindex="-1">DeepSeek 配置</h1>
+                <p>浏览器只提交新密钥，不读取或回显已保存密钥。实际调用必须由服务端执行。</p>
+              </div>
+            </header>
+
+            <form
+              class="panel access-control-form"
+              id="agent-access-form"
+              method="post"
+              action="/api/admin/v1/integrations/deepseek/access"
+            >
+              <div class="config-status-row">
+                <div>
+                  <p class="eyebrow">访问总闸</p>
+                  <h2>Agent 全局授权</h2>
+                  <p>关闭时所有新 Agent 请求都会被服务端拒绝，包括管理员请求。</p>
+                </div>
+                <label class="toggle-field" for="agent-global-enabled">
+                  <span>允许 Agent 访问</span>
+                  <input id="agent-global-enabled" name="globalEnabled" type="checkbox" />
+                </label>
+              </div>
+              <p class="form-message" id="agent-access-message" role="alert" aria-live="assertive"></p>
+              <div class="button-row">
+                <button class="button button--primary button--small" type="submit">保存访问策略</button>
+              </div>
+            </form>
+
+            <div class="config-layout">
+              <form
+                class="panel stack-form"
+                id="deepseek-form"
+                method="post"
+                action="/api/admin/v1/integrations/deepseek"
+              >
+                <div class="config-status-row">
+                  <div>
+                    <h2>模型服务配置</h2>
+                    <p id="deepseek-updated">尚未加载配置</p>
+                  </div>
+                  <label class="toggle-field" for="deepseek-enabled">
+                    <span>启用模型服务</span>
+                    <input id="deepseek-enabled" name="enabled" type="checkbox" />
+                  </label>
+                </div>
+
+                <div class="field">
+                  <label for="deepseek-model">模型名称</label>
+                  <select id="deepseek-model" name="model" required>
+                    <option value="deepseek-v4-flash">deepseek-v4-flash</option>
+                    <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+                  </select>
+                  <small>供应商地址固定为 DeepSeek 官方 HTTPS 接口，不能在后台改写。</small>
+                </div>
+
+                <div class="field">
+                  <label for="deepseek-api-key">API Key</label>
+                  <input
+                    id="deepseek-api-key"
+                    name="apiKey"
+                    type="password"
+                    autocomplete="new-password"
+                    spellcheck="false"
+                    aria-describedby="api-key-help api-key-state"
+                    placeholder="输入新密钥以替换；留空则保留"
+                  />
+                  <small id="api-key-help">密钥不会写入页面、本地存储、日志或 GET 响应。</small>
+                  <strong class="key-state" id="api-key-state">正在检查配置状态…</strong>
+                </div>
+
+                <p class="form-message" id="deepseek-message" role="alert" aria-live="assertive"></p>
+                <div class="button-row">
+                  <button class="button button--primary" type="submit">保存配置</button>
+                  <button class="button button--quiet" id="reload-deepseek" type="button">放弃修改</button>
+                </div>
+              </form>
+
+              <aside class="panel panel--flat" aria-labelledby="config-guardrails-title">
+                <p class="eyebrow">配置护栏</p>
+                <h2 id="config-guardrails-title">密钥只属于服务端。</h2>
+                <ul class="principle-list">
+                  <li><span>01</span><p>GET 接口只返回是否已配置，不返回掩码片段或密钥尾号。</p></li>
+                  <li><span>02</span><p>配置变更需要 CSRF 防护、管理员角色校验与固定类型审计。</p></li>
+                  <li><span>03</span><p>模型服务与 Agent 访问总闸互相独立；任一关闭都会拒绝新的模型调用。</p></li>
+                  <li><span>04</span><p>错误提示不得包含请求正文、密钥或模型供应商响应原文。</p></li>
+                </ul>
+              </aside>
+            </div>
+          </section>
+
+          <section class="view" id="view-voice" data-view-panel="voice" aria-labelledby="voice-title" hidden>
+            <header class="page-heading"><h1 id="voice-title" tabindex="-1">本地 FunASR 语音输入</h1></header>
+            <div class="panel"><p>录音仅交给服务器本地 FunASR；失败直接返回错误，不使用云端回退。不提供语音合成。</p><p>在服务器环境中配置 FUNASR_BASE_URL（HTTP）或 FUNASR_WS_URL（WebSocket），二选一。建议 2 核 4G 使用单并发与 20 秒识别超时。</p><p>文字句读整理仍由 DeepSeek 提供，不上传音频。</p></div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <dialog class="change-dialog" id="entitlement-dialog" aria-labelledby="change-dialog-title">
+      <form method="dialog" id="entitlement-form" class="stack-form">
+        <div>
+          <p class="eyebrow">授权变更确认</p>
+          <h2 id="change-dialog-title">确认权限变更</h2>
+          <p id="change-dialog-summary"></p>
+        </div>
+        <div class="field">
+          <label for="change-reason-code">变更原因</label>
+          <select id="change-reason-code" name="reasonCode" required>
+            <option value="">请选择固定原因</option>
+            <option value="membership_approved">会员申请已批准</option>
+            <option value="membership_revoked">会员资格已撤销</option>
+            <option value="agent_approved">Agent 申请已批准</option>
+            <option value="agent_revoked">Agent 权限已撤销</option>
+            <option value="security_review">安全复核处理</option>
+            <option value="account_request">用户账户请求</option>
+          </select>
+          <small>只记录固定原因代码，不接收自由文本或关系内容。</small>
+        </div>
+        <p class="form-message" id="change-message" role="alert" aria-live="assertive"></p>
+        <div class="button-row button-row--end">
+          <button class="button button--quiet" value="cancel" type="button" id="change-cancel">取消</button>
+          <button class="button button--primary" type="submit">确认变更</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <noscript>
+      <div class="noscript-message">管理员控制台需要启用 JavaScript。请启用后重新加载页面。</div>
+    </noscript>
+    <script src="../runtime-config.js"></script>
+    <script src="./app.js" defer></script>
+  </body>
+</html>

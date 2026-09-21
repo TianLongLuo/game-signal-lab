@@ -1,0 +1,22 @@
+[
+  {
+    "id": "cafe",
+    "prompt": "Generate one landscape 16:9 environment background for a premium romantic visual novel with semi-realistic painterly illustrations. A quiet contemporary Japanese-style cafe on a rainy afternoon, large window to the left, wooden tables, two empty chairs, amber pendant lamps, muted teal shadows and warm coffee colors. No people or animals. Fine subtle brush texture, cinematic composition, realistic scale, natural depth, sophisticated restrained colors, emotionally evocative not fantasy. Frame a wide establishing shot at eye level. The center-right must have uncluttered midtone space so a character portrait can be overlaid later. Lower quarter calm with few details to support a readable dialogue UI. Full bleed, no typography, text, UI, logos, borders, collage, watermark. Original fictional setting."
+  },
+  {
+    "id": "rain",
+    "prompt": "Generate one landscape 16:9 environment background for a premium romantic visual novel with semi-realistic painterly illustrations. A romantic empty city street at blue hour after rain, wet pavement reflecting distant warm lamps, small bookshop awning, deep indigo air, believable architecture, soft mist. No people or animals. Fine subtle brush texture, cinematic composition, realistic scale, natural depth, sophisticated restrained colors, emotionally evocative not fantasy. Frame a wide establishing shot at eye level. The center-right must have uncluttered midtone space so a character portrait can be overlaid later. Lower quarter calm with few details to support a readable dialogue UI. Full bleed, no typography, text, UI, logos, borders, collage, watermark. Original fictional setting."
+  },
+  {
+    "id": "home",
+    "prompt": "Generate one landscape 16:9 environment background for a premium romantic visual novel with semi-realistic painterly illustrations. A welcoming adult's apartment living room in the evening, linen sofa, bookshelves, small reading lamp, warm light against a blue window, plants and two mugs on a low table. No people or animals. Fine subtle brush texture, cinematic composition, realistic scale, natural depth, sophisticated restrained colors, emotionally evocative not fantasy. Frame a wide establishing shot at eye level. The center-right must have uncluttered midtone space so a character portrait can be overlaid later. Lower quarter calm with few details to support a readable dialogue UI. Full bleed, no typography, text, UI, logos, borders, collage, watermark. Original fictional setting."
+  },
+  {
+    "id": "coast",
+    "prompt": "Generate one landscape 16:9 environment background for a premium romantic visual novel with semi-realistic painterly illustrations. A tranquil seaside promenade at sunset, delicate peach sky and blue water, empty wooden bench at left, distant lighthouse, warm glints across gentle waves, spacious horizon. No people or animals. Fine subtle brush texture, cinematic composition, realistic scale, natural depth, sophisticated restrained colors, emotionally evocative not fantasy. Frame a wide establishing shot at eye level. The center-right must have uncluttered midtone space so a character portrait can be overlaid later. Lower quarter calm with few details to support a readable dialogue UI. Full bleed, no typography, text, UI, logos, borders, collage, watermark. Original fictional setting."
+  },
+  {
+    "id": "garden",
+    "prompt": "Generate one landscape 16:9 environment background for a premium romantic visual novel with semi-realistic painterly illustrations. A lush quiet botanical garden in late afternoon, sun through green leaves, pale flowering trees and curved stone path, empty bench, dappled light, airy romantic atmosphere. No people or animals. Fine subtle brush texture, cinematic composition, realistic scale, natural depth, sophisticated restrained colors, emotionally evocative not fantasy. Frame a wide establishing shot at eye level. The center-right must have uncluttered midtone space so a character portrait can be overlaid later. Lower quarter calm with few details to support a readable dialogue UI. Full bleed, no typography, text, UI, logos, borders, collage, watermark. Original fictional setting."
+  }
+]

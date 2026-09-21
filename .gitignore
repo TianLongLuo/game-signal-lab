@@ -4,3 +4,4 @@ Thumbs.db
 .vscode/
 *.log
 .playwright-cli/
+dist/

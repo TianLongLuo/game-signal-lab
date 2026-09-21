@@ -1,0 +1,340 @@
+:root {
+  color-scheme: light;
+  --zine-paper: #e9e0cf;
+  --zine-sheet: #f6efe2;
+  --zine-ink: #1c1916;
+  --zine-muted: #6e655a;
+  --zine-line: #b8ad9c;
+  --zine-red: #e34131;
+  --zine-mono: "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  --zine-serif: "Songti SC", "STSong", "Noto Serif CJK SC", Georgia, serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  background: #d8cfbd;
+}
+
+body {
+  position: relative;
+  max-width: none !important;
+  min-height: 100vh;
+  margin: 0 !important;
+  padding: clamp(52px, 8vw, 112px) clamp(20px, 6vw, 96px) !important;
+  overflow-x: hidden;
+  background:
+    linear-gradient(rgba(80, 62, 43, .04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(80, 62, 43, .035) 1px, transparent 1px),
+    radial-gradient(circle at 10% 8%, rgba(255,255,255,.5), transparent 34rem),
+    var(--zine-paper) !important;
+  background-size: 25px 25px, 25px 25px, auto, auto !important;
+  color: var(--zine-ink) !important;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif !important;
+  font-size: 16px;
+  line-height: 1.9 !important;
+}
+
+body::before {
+  position: fixed;
+  z-index: 0;
+  top: 50%;
+  right: clamp(-130px, -5vw, -38px);
+  width: min(28vw, 410px);
+  aspect-ratio: 3 / 5;
+  border: 1px solid rgba(54, 43, 31, .22);
+  background: url("../assets/zine/signal-archive-v1.webp") center / cover no-repeat;
+  box-shadow: 12px 14px 0 rgba(38, 29, 21, .08);
+  content: "";
+  filter: saturate(.76) contrast(.94);
+  opacity: .22;
+  pointer-events: none;
+  transform: translateY(-50%) rotate(1.2deg);
+}
+
+body::after {
+  position: fixed;
+  z-index: 0;
+  top: 24px;
+  left: 24px;
+  width: 34px;
+  height: 6px;
+  background: var(--zine-red);
+  content: "";
+}
+
+body > * {
+  position: relative;
+  z-index: 1;
+  width: min(760px, calc(100vw - 40px));
+  margin-right: auto;
+  margin-left: max(0px, calc((100vw - min(760px, calc(100vw - 40px))) * .42));
+}
+
+::selection {
+  background: var(--zine-red);
+  color: var(--zine-sheet);
+}
+
+a {
+  color: var(--zine-ink) !important;
+  text-decoration-color: var(--zine-red) !important;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+
+a:hover {
+  color: var(--zine-red) !important;
+}
+
+a:focus-visible {
+  outline: 2px solid var(--zine-red);
+  outline-offset: 4px;
+}
+
+body > h1,
+.blog-header h1 {
+  max-width: 18ch;
+  margin: 0 0 18px !important;
+  color: var(--zine-ink) !important;
+  font-family: var(--zine-serif) !important;
+  font-size: clamp(38px, 6vw, 72px) !important;
+  font-weight: 600;
+  letter-spacing: -.05em;
+  line-height: 1.02 !important;
+  text-wrap: balance;
+}
+
+body > h1::before,
+.blog-header h1::before {
+  display: block;
+  margin-bottom: 20px;
+  color: var(--zine-red);
+  content: "GAME / FIELD NOTES";
+  font-family: var(--zine-mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .18em;
+}
+
+body > h2 {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 12px;
+  margin: 58px 0 16px !important;
+  color: var(--zine-ink) !important;
+  font-family: var(--zine-serif) !important;
+  font-size: clamp(22px, 3vw, 30px) !important;
+  font-weight: 600;
+  letter-spacing: -.02em;
+  line-height: 1.25;
+}
+
+body > h2::before {
+  width: 26px;
+  height: 4px;
+  margin-top: .65em;
+  background: var(--zine-red);
+  content: "";
+}
+
+body > p {
+  margin-bottom: 22px !important;
+  color: #3d3832 !important;
+  text-wrap: pretty;
+}
+
+.meta {
+  margin-bottom: 48px !important;
+  padding: 12px 0;
+  border-top: 1px solid var(--zine-ink);
+  border-bottom: 1px solid var(--zine-line);
+  color: var(--zine-muted) !important;
+  font-family: var(--zine-mono);
+  font-size: 11px !important;
+  letter-spacing: .03em;
+}
+
+blockquote {
+  position: relative;
+  margin: 38px 0 !important;
+  padding: 28px 30px 28px 46px !important;
+  border: 1px solid var(--zine-ink) !important;
+  border-left: 6px solid var(--zine-red) !important;
+  background: rgba(247, 240, 227, .58);
+  color: var(--zine-ink) !important;
+  font-family: var(--zine-serif);
+  font-size: 19px;
+  font-style: normal !important;
+  line-height: 1.7;
+  box-shadow: 7px 8px 0 rgba(45, 35, 25, .08);
+}
+
+blockquote::before {
+  position: absolute;
+  top: -12px;
+  right: 24px;
+  padding: 2px 8px;
+  background: var(--zine-red);
+  color: #fff8ec;
+  content: "QUOTE";
+  font-family: var(--zine-mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .16em;
+}
+
+.back {
+  margin-top: 72px !important;
+  padding-top: 22px;
+  border-top: 1px solid var(--zine-ink);
+  font-family: var(--zine-mono);
+  font-size: 11px !important;
+  letter-spacing: .04em;
+}
+
+.blog-header {
+  margin-bottom: 72px !important;
+  padding-bottom: 30px;
+  border-bottom: 1px solid var(--zine-ink);
+  text-align: left !important;
+}
+
+.blog-header p {
+  max-width: 58ch;
+  color: var(--zine-muted) !important;
+  font-family: var(--zine-mono);
+  font-size: 11px !important;
+}
+
+.section-title {
+  margin: 64px 0 24px !important;
+  padding: 10px 0 !important;
+  border-top: 1px solid var(--zine-ink);
+  border-bottom: 1px solid var(--zine-line) !important;
+  color: var(--zine-red) !important;
+  font-family: var(--zine-mono);
+  font-size: 10px !important;
+  font-weight: 850;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+
+.post-list {
+  gap: 0 !important;
+  border-bottom: 1px solid var(--zine-ink);
+}
+
+.post-card {
+  position: relative;
+  padding: 26px 8px 28px 60px !important;
+  border-top: 1px solid var(--zine-line);
+  border-bottom: 0 !important;
+  transition: background-color 160ms ease, transform 160ms cubic-bezier(.22,1,.36,1);
+}
+
+.post-card::before {
+  position: absolute;
+  top: 32px;
+  left: 8px;
+  color: var(--zine-red);
+  content: "↳";
+  font-family: var(--zine-mono);
+  font-size: 18px;
+}
+
+.post-card:hover {
+  background: rgba(247, 240, 227, .56);
+  transform: translateX(5px);
+}
+
+.post-card h2 {
+  max-width: 30em;
+  margin: 0 0 8px !important;
+  font-family: var(--zine-serif) !important;
+  font-size: clamp(19px, 2.5vw, 25px) !important;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.post-card .meta {
+  margin: 0 0 8px !important;
+  padding: 0;
+  border: 0;
+}
+
+.post-card .excerpt {
+  color: var(--zine-muted) !important;
+  font-size: 14px !important;
+  line-height: 1.75;
+}
+
+.lang-label {
+  display: inline-block;
+  margin-left: 9px !important;
+  padding: 1px 5px;
+  border: 1px solid var(--zine-red);
+  color: var(--zine-red) !important;
+  font-family: var(--zine-mono);
+  font-size: 8px !important;
+  vertical-align: .2em;
+}
+
+.footer {
+  margin-top: 72px !important;
+  padding: 20px 0;
+  border-top: 1px solid var(--zine-ink);
+  color: var(--zine-muted) !important;
+  font-family: var(--zine-mono);
+  font-size: 10px !important;
+  text-align: left !important;
+}
+
+@media (max-width: 900px) {
+  body::before {
+    right: -150px;
+    width: 340px;
+    opacity: .09;
+  }
+
+  body > * {
+    margin-left: auto;
+  }
+}
+
+@media (max-width: 620px) {
+  body {
+    padding: 38px 18px 64px !important;
+    font-size: 15px;
+  }
+
+  body::before {
+    display: none;
+  }
+
+  body > * {
+    width: 100%;
+  }
+
+  .post-card {
+    padding-left: 38px !important;
+  }
+
+  .post-card::before {
+    left: 2px;
+  }
+
+  blockquote {
+    padding: 24px !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .post-card,
+  a {
+    transition: none !important;
+  }
+}

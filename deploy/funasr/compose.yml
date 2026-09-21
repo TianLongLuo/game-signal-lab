@@ -1,0 +1,30 @@
+services:
+  funasr:
+    build:
+      context: .
+      args:
+        FUNASR_VERSION: "${FUNASR_VERSION:-1.4.0}"
+    image: game-signal-lab/funasr:1.4.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${FUNASR_HOST_PORT:-8000}:8000"
+    environment:
+      FUNASR_DEVICE: "${FUNASR_DEVICE:-cpu}"
+      FUNASR_MODEL: "${FUNASR_MODEL:-sensevoice}"
+      FUNASR_HUB: "${FUNASR_HUB:-ms}"
+      OMP_NUM_THREADS: "${FUNASR_CPU_THREADS:-2}"
+      MKL_NUM_THREADS: "${FUNASR_CPU_THREADS:-2}"
+      OPENBLAS_NUM_THREADS: "${FUNASR_CPU_THREADS:-2}"
+      NUMEXPR_NUM_THREADS: "${FUNASR_CPU_THREADS:-2}"
+    volumes:
+      - funasr-cache:/root/.cache
+    cpus: "${FUNASR_CPU_LIMIT:-1.75}"
+    mem_limit: "${FUNASR_MEMORY_LIMIT:-2500m}"
+    mem_reservation: "${FUNASR_MEMORY_RESERVATION:-1500m}"
+    pids_limit: 256
+    shm_size: "512mb"
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  funasr-cache:
